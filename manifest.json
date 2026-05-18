@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "CopyPaste Productivity Tool",
+  "version": "0.1.0",
+  "description": "A personal productivity tool for Chrome.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
