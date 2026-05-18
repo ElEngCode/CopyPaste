@@ -1,14 +1,22 @@
 {
   "manifest_version": 3,
-  "name": "CopyPaste Productivity Tool",
-  "version": "0.1.0",
-  "description": "A personal productivity tool for Chrome.",
+  "name": "CopyPaste",
+  "version": "1.0.0",
+  "description": "Manual step-by-step workflow automation between ChatGPT and Claude.",
   "permissions": [
-    "activeTab",
+    "tabs",
     "scripting",
-    "tabs"
+    "activeTab",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://*.chatgpt.com/*",
+    "https://chatgpt.com/*",
+    "https://*.claude.ai/*",
+    "https://claude.ai/*"
   ],
   "action": {
+    "default_title": "CopyPaste",
     "default_popup": "popup.html"
   },
   "background": {

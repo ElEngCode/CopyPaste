@@ -1,35 +1,168 @@
 <!doctype html>
-<html lang="ro">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>CopyPaste</title>
-    <style>
-      body {
-        min-width: 220px;
-        margin: 0;
-        padding: 16px;
-        font-family: Arial, sans-serif;
-      }
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CopyPaste</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --ink: #18212f;
+      --muted: #5f6b7a;
+      --line: #dce3ec;
+      --primary: #0f766e;
+      --primary-hover: #115e59;
+      --danger: #9f1239;
+      --danger-hover: #881337;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+    }
 
-      button {
-        width: 100%;
-        padding: 10px 12px;
-        border: 0;
-        border-radius: 6px;
-        background: #2563eb;
-        color: #ffffff;
-        cursor: pointer;
-        font-size: 14px;
-      }
+    * {
+      box-sizing: border-box;
+    }
 
-      button:hover {
-        background: #1d4ed8;
-      }
-    </style>
-  </head>
-  <body>
-    <button id="startBtn" type="button">Start workflow</button>
-    <script src="popup.js"></script>
-  </body>
+    body {
+      margin: 0;
+      width: 380px;
+      min-height: 560px;
+      background: linear-gradient(180deg, #eef3f8 0%, var(--bg) 100%);
+      color: var(--ink);
+    }
+
+    .shell {
+      padding: 16px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.2;
+    }
+
+    #status {
+      margin: 0 0 12px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #eefbf8;
+      color: #134e4a;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .field {
+      margin-bottom: 12px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 72px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 10px;
+      background: var(--panel);
+      color: var(--ink);
+      font: 13px/1.4 "Segoe UI", Tahoma, sans-serif;
+      outline: none;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+
+    textarea:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
+    }
+
+    #currentText {
+      min-height: 132px;
+    }
+
+    .actions {
+      display: grid;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    button {
+      width: 100%;
+      border: 0;
+      border-radius: 8px;
+      padding: 11px 12px;
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.7;
+      cursor: wait;
+    }
+
+    #nextBtn {
+      background: var(--primary);
+    }
+
+    #nextBtn:hover:not(:disabled) {
+      background: var(--primary-hover);
+    }
+
+    #saveBtn {
+      background: var(--danger);
+    }
+
+    #saveBtn:hover:not(:disabled) {
+      background: var(--danger-hover);
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <h1>CopyPaste</h1>
+    </header>
+
+    <div id="status">Loading state...</div>
+
+    <section class="field">
+      <label for="chatgptPrefix">ChatGPT wrapper</label>
+      <textarea id="chatgptPrefix">Analyze and improve this text: </textarea>
+    </section>
+
+    <section class="field">
+      <label for="claudePrefix">Claude wrapper</label>
+      <textarea id="claudePrefix">Critique and condense this text: </textarea>
+    </section>
+
+    <section class="field">
+      <label for="currentText">Current staged text</label>
+      <textarea id="currentText">mesaj de test</textarea>
+    </section>
+
+    <section class="actions">
+      <button id="nextBtn" type="button">🚀 Send to ChatGPT</button>
+      <button id="saveBtn" type="button">🛑 Stop &amp; Save Final Text</button>
+    </section>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
 </html>

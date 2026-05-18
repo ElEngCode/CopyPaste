@@ -1,185 +1,175 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function loadContentModule() {
+  delete global.window;
+  delete global.chrome;
+  delete require.cache[require.resolve("./content.js")];
+  return require("./content.js");
+}
 
-test("observeTypingFinished calls callback only after 2 seconds without DOM changes", async () => {
-  let observerCallback;
-  const container = { textContent: "" };
+test("handleWriteAndSend populates the prompt container, dispatches events, and submits the parent form", async () => {
+  const dispatchedEvents = [];
+  const buttonEvents = [];
+  const sendButton = {
+    disabled: false,
+    getAttribute(name) {
+      if (name === "data-testid") {
+        return "send-button";
+      }
 
-  global.document = {
-    querySelector(selector) {
-      assert.equal(selector, "#target");
-      return container;
-    }
-  };
+      if (name === "aria-label") {
+        return "Send";
+      }
 
-  global.MutationObserver = class {
-    constructor(callback) {
-      observerCallback = callback;
-    }
+      if (name === "type") {
+        return "submit";
+      }
 
-    observe(target, options) {
-      assert.equal(target, container);
-      assert.deepEqual(options, {
-        childList: true,
-        characterData: true,
-        subtree: true
-      });
-    }
-
-    disconnect() {}
-  };
-
-  const { observeTypingFinished } = require("./content.js");
-  const callbackCalls = [];
-  const stopObserving = observeTypingFinished("#target", (text) => {
-    callbackCalls.push(text);
-  });
-
-  container.textContent = "Hel";
-  observerCallback();
-
-  await wait(1000);
-  container.textContent = "Hello";
-  observerCallback();
-
-  await wait(1100);
-  assert.deepEqual(callbackCalls, []);
-
-  await wait(1000);
-  assert.deepEqual(callbackCalls, ["Hello"]);
-
-  stopObserving();
-});
-
-test("simulateReactTyping inserts text and dispatches React-compatible events", () => {
-  class FakeTextArea {
-    constructor() {
-      this._value = "old text";
-      this.dispatchedEvents = [];
-      this._valueTracker = {
-        calls: [],
-        setValue(value) {
-          this.calls.push(value);
-        }
-      };
-    }
-
+      return "";
+    },
     dispatchEvent(event) {
-      this.dispatchedEvents.push(event);
+      buttonEvents.push(event.type);
       return true;
-    }
-  }
-
-  Object.defineProperty(FakeTextArea.prototype, "value", {
-    get() {
-      return this._value;
     },
-    set(value) {
-      this.usedNativeSetter = true;
-      this._value = value;
+    click() {
+      buttonEvents.push("native-click");
     }
-  });
+  };
+  const form = {
+    querySelectorAll(selector) {
+      if (selector.includes("send-button") || selector.includes("submit") || selector.includes("Send") || selector.includes("svg")) {
+        return [sendButton];
+      }
 
-  const textarea = new FakeTextArea();
-
-  Object.defineProperty(textarea, "value", {
-    get() {
-      return this._value;
+      return [];
+    }
+  };
+  const promptNode = {
+    textContent: "",
+    innerText: "",
+    isContentEditable: true,
+    dispatchEvent(event) {
+      dispatchedEvents.push([event.type, event.bubbles]);
+      return true;
     },
-    set() {
-      throw new Error("Direct value assignment should not be used.");
+    closest(selector) {
+      assert.match(selector, /form/);
+      return form;
+    },
+    matches() {
+      return false;
     }
-  });
+  };
 
-  global.HTMLTextAreaElement = FakeTextArea;
   global.Event = class {
     constructor(type, options) {
       this.type = type;
       this.bubbles = options?.bubbles === true;
     }
   };
+  global.InputEvent = global.Event;
+  global.MouseEvent = global.Event;
+  global.KeyboardEvent = global.Event;
   global.document = {
+    execCommand() {
+      return false;
+    },
     querySelector(selector) {
-      assert.equal(selector, "#message");
-      return textarea;
+      if (selector === "#prompt-textarea") {
+        return promptNode;
+      }
+
+      return null;
+    },
+    querySelectorAll() {
+      return [];
     }
   };
 
-  const { simulateReactTyping } = require("./content.js");
-  const result = simulateReactTyping("#message", "hello React");
+  const { handleWriteAndSend } = loadContentModule();
+  const result = await handleWriteAndSend("hello workflow");
 
-  assert.equal(result, textarea);
-  assert.equal(textarea.value, "hello React");
-  assert.equal(textarea.usedNativeSetter, true);
-  assert.deepEqual(textarea._valueTracker.calls, ["old text"]);
-  assert.deepEqual(
-    textarea.dispatchedEvents.map((event) => [event.type, event.bubbles]),
-    [
-      ["input", true],
-      ["change", true]
-    ]
-  );
+  assert.deepEqual(result, {
+    ok: true,
+    status: "submitted",
+    submitMethod: "sendButtonMouseSequence",
+    textLength: 14,
+    previousText: ""
+  });
+  assert.equal(promptNode.textContent, "hello workflow");
+  assert.equal(promptNode.innerText, "hello workflow");
+  assert.deepEqual(buttonEvents, [
+    "pointerover",
+    "mouseover",
+    "pointermove",
+    "mousemove",
+    "pointerdown",
+    "mousedown",
+    "pointerup",
+    "mouseup",
+    "click",
+    "native-click"
+  ]);
+  assert.deepEqual(dispatchedEvents, [
+    ["beforeinput", true],
+    ["paste", true],
+    ["input", true],
+    ["change", true]
+  ]);
 });
 
-test("simulateHumanClick waits a human-like delay before dispatching mouse events", async () => {
-  class FakeButton {
-    constructor() {
-      this.dispatchedEvents = [];
+test("handleReadResponse waits for send control and ignores Thought placeholders until final markdown exists", async () => {
+  const sendButton = { disabled: false, offsetParent: {} };
+  const markdownNode = { innerText: "Thought for 8 seconds", textContent: "Thought for 8 seconds" };
+  const articles = [
+    {
+      innerText: "older raw article",
+      textContent: "older raw article",
+      querySelector(selector) {
+        return { innerText: "older answer", textContent: "older answer" };
+      }
+    },
+    {
+      innerText: "Thought for 8 seconds\n\nhidden chain",
+      textContent: "Thought for 8 seconds\n\nhidden chain",
+      querySelector(selector) {
+        return markdownNode;
+      }
     }
+  ];
 
-    dispatchEvent(event) {
-      this.dispatchedEvents.push(event);
-      return true;
-    }
-  }
-
-  const button = new FakeButton();
-  const originalRandom = Math.random;
-
-  global.HTMLButtonElement = FakeButton;
-  global.MouseEvent = class {
-    constructor(type, options) {
-      this.type = type;
-      this.bubbles = options?.bubbles === true;
-      this.cancelable = options?.cancelable === true;
-      this.view = options?.view;
-    }
-  };
-  global.window = { name: "test-window" };
   global.document = {
     querySelector(selector) {
-      assert.equal(selector, "#submit");
-      return button;
+      if (selector === "button[data-testid='send-button']") {
+        return sendButton;
+      }
+
+      return null;
+    },
+    querySelectorAll(selector) {
+      assert.equal(
+        selector,
+        "article"
+      );
+      return articles;
     }
   };
 
-  Math.random = () => 0.5;
+  const { handleReadResponse } = loadContentModule();
 
-  try {
-    const { simulateHumanClick } = require("./content.js");
-    const clickPromise = simulateHumanClick("#submit");
+  setTimeout(() => {
+    markdownNode.innerText = "  processed\n\n\noutput\u200b  ";
+    markdownNode.textContent = "  processed\n\n\noutput\u200b  ";
+  }, 5);
 
-    await wait(600);
-    assert.deepEqual(button.dispatchedEvents, []);
+  const result = await handleReadResponse({
+    intervalMs: 1,
+    timeoutMs: 50
+  });
 
-    const result = await clickPromise;
-    assert.equal(result, button);
-    assert.deepEqual(
-      button.dispatchedEvents.map((event) => [
-        event.type,
-        event.bubbles,
-        event.cancelable,
-        event.view
-      ]),
-      [
-        ["mousedown", true, true, global.window],
-        ["mouseup", true, true, global.window],
-        ["click", true, true, global.window]
-      ]
-    );
-  } finally {
-    Math.random = originalRandom;
-  }
+  assert.deepEqual(result, {
+    ok: true,
+    text: "processed\n\noutput"
+  });
 });

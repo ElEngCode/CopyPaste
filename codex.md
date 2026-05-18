@@ -1,25 +1,60 @@
 # Codex Progress
 
-## 2026-05-18
+## 2026-05-19
 
-- Initialized the Chrome Extension project structure.
-- Added `manifest.json` with Manifest V3, popup action, background service worker, and requested permissions: `activeTab`, `scripting`, and `tabs`.
-- Added `popup.html` with a simple button.
-- Added `popup.js` to send a runtime message when the button is clicked.
-- Added `background.js` to receive and acknowledge the popup message.
-- Added `architecture.md` with the current project x-ray, files, message flow, and tech stack.
-- Updated the popup button id to `startBtn`.
-- Updated `popup.js` to send `{ action: "START_LOOP" }` to the background service worker.
-- Updated `background.js` and `architecture.md` to match the workflow automation start message.
-- Added `content.test.js` to cover delayed text extraction after DOM mutations stop.
-- Added `content.js` with `observeTypingFinished(selector, onTypingFinished)` using `MutationObserver` and a 2 second debounce.
-- Updated `architecture.md` with the content observer flow and test coverage.
-- Added a TDD test for `simulateReactTyping(selector, textToInsert)`.
-- Added `simulateReactTyping` in `content.js` to set textarea text through the native setter, reset React's `_valueTracker`, and dispatch bubbling `input` and `change` events.
-- Updated `architecture.md` with the React typing simulation flow.
-- Added a TDD test for `simulateHumanClick(selector)`.
-- Added `simulateHumanClick` in `content.js` to wait a random 400-900 ms delay before dispatching bubbling `mousedown`, `mouseup`, and `click` events on a button.
-- Updated `architecture.md` with the human click simulation flow.
-- Added `background.test.js` to cover the `START_LOOP` cross-tab workflow.
-- Reworked `background.js` into async helper functions for tab discovery, write/send, read response, response forwarding, and workflow startup.
-- Updated `architecture.md` with the background workflow flow and Chrome tabs API usage.
+- Rebuilt the extension as a manual step-by-step workflow state machine:
+  - `manifest.json` now includes `downloads`.
+  - `popup.html` now exposes `chatgptPrefix`, `claudePrefix`, `currentText`, `status`, `nextBtn`, and `saveBtn`.
+  - `popup.js` now loads state with `GET_STATE`, executes one step with `EXECUTE_NEXT_STEP`, and saves output with `TRIGGER_SAVE`.
+  - `background.js` now maintains in-memory `stagedText = "mesaj de test"` and `nextTarget = "chatgpt"`, injects `content.js`, reads AI output, toggles target, and downloads `ai_final_output.txt`.
+  - `content.js` remains a universal ChatGPT/Claude automation script with input insertion, hardware-like submit events, response polling, thought-placeholder filtering, and sanitization.
+- Verified runtime file loading with Node.
+- Hardened `content.js` submit reliability after manual testing feedback:
+  - Removed generic icon-button matching from the main Send detection path.
+  - Added explicit ChatGPT/Claude Send/Submit selectors.
+  - Added ranked Send-button selection to avoid attach/voice/menu controls.
+  - Added submit retry and verification before returning `WRITE_AND_SEND` success.
+  - `WRITE_AND_SEND` now fails clearly if the prompt is inserted but submission never starts.
+- Added Claude-specific ProseMirror handling in `content.js`:
+  - Normalizes wrapper inputs to the nested `.ProseMirror[contenteditable='true']` editor.
+  - Dispatches `beforeinput`, `execCommand("insertText")`, paste fallback, then `input`/`change`.
+  - Falls back to `form.requestSubmit()`/submit event after Send-button click when Claude does not start generation.
+- Added a Claude-only real-key fallback in `background.js` using `chrome.debugger` and `Input.dispatchKeyEvent` for Enter when DOM-level submit fails after text insertion. Added the `debugger` permission to `manifest.json`.
+- Reworked Claude execution to always use `WRITE_ONLY` followed by a real Debugger Protocol Enter key event. Added `windows` permission and window focusing before tab activation so the Claude tab owns the key target.
+- Removed `debugger`/`windows` permissions and the Debugger Protocol path after the visible Chrome debugging banner was deemed unacceptable.
+- Restored Claude to a DOM-only `WRITE_AND_SEND` path with stronger Claude composer selectors, ProseMirror sync waiting, expanded Send selectors, mouseover/move/down/up/click sequence, and right/bottom-scored generic icon-button fallback.
+- Updated Claude handling from DOM evidence:
+  - Send button is `button[aria-label="Send message"]` and only appears after text exists.
+  - Click dispatch now scrolls the button into view and sends pointer/mouse events at the button center with realistic button state.
+  - Claude `READ_RESPONSE` no longer requires the Send button to be visible after submit; it waits for Stop to disappear and the latest response text to stabilize.
+- Fixed Claude response forwarding:
+  - `WRITE_AND_SEND` now snapshots the previous latest AI output before sending.
+  - `background.js` passes `previousText` and `sourceText` into `READ_RESPONSE`.
+  - `READ_RESPONSE` ignores the previous AI output and exact prompt echoes, then waits for a new stable Claude response before updating `stagedText`.
+- Updated Claude extraction from DOM evidence:
+  - Claude answer text lives in `.font-claude-response`, not `.font-claude-message`.
+  - `extractLatestFinalAnswerText` now prefers `.font-claude-response` blocks before generic message containers.
+
+- Rebuilt `manifest.json` as a strict Manifest V3 definition for CopyPaste with required permissions (`tabs`, `scripting`, `activeTab`) and host permissions for ChatGPT and Claude.
+- Rebuilt `popup.html` into a minimal one-action UI containing `#startBtn` (`Start workflow`).
+- Rebuilt `popup.js` with runtime-safe async messaging that sends `{ action: "START_LOOP", initialPrompt }` to the service worker and handles `chrome.runtime.lastError` / workflow errors.
+- Reconstructed `background.js` as a robust async/await service-worker orchestrator:
+  - Added Promise wrappers around `chrome.tabs.query`, `chrome.tabs.update`, `chrome.scripting.executeScript`, and `chrome.tabs.sendMessage`.
+  - Added strict `chrome.runtime.lastError` checks for every critical API callback.
+  - Implemented sequential `runWorkflow` pipeline: Faza 1 (ChatGPT write/send) -> monitoring (`READ_RESPONSE`) -> Faza 2 (Claude write/send).
+  - Enforced current-window tab targeting and active-tab prioritization for both ChatGPT and Claude.
+  - Injected `content.js` before each write/send dispatch to minimize dropped connections after SPA navigations.
+- Rebuilt `content.js` as an environment-aware automation engine with IIFE + `window.hasExtensionRun` guard:
+  - Added layered input resolution selectors for contenteditable and textarea fallbacks.
+  - Implemented framework-safe insertion using `document.execCommand("insertText")` with native setter + composed/bubbling `input`/`change` fallback.
+  - Implemented anti-block submission strategy with aggressive send-button selectors and full pointer/mouse sequence (`pointerdown` -> `mousedown` -> `pointerup` -> `mouseup` -> `click`).
+  - Added Enter-key full hardware-like fallback sequence (`keydown`, `keypress`, `keyup`) when no usable send button is available.
+  - Preserved robust `READ_RESPONSE` polling (1000ms cadence), stop/send completion guard, thought-placeholder bypass, and response sanitization.
+- Updated `architecture.md` to reflect the production-ready MV3 orchestration design and reliability hardening choices.
+- Performed syntax/load verification for `background.js`, `content.js`, and `popup.js`.
+- Added transport hardening in `background.js`: retryable `tabs.sendMessage` with transient-error detection, reinjection-before-retry, and bounded backoff to survive runtime port drops.
+- Improved `content.js` send targeting: de-duplicated multi-selector candidate collection, priority choice for explicit send/submit controls, and button-to-Enter fallback path if processing does not start.
+- Fixed no-send condition by normalizing `#prompt-textarea p`/textbox hits to the real editable root, clearing stale content before injection, and forcing a final native `.click()` after pointer/mouse dispatch chain.
+- Fixed the remaining no-send path by keeping the caret/selection inside the composer before `document.execCommand("insertText")`, waiting for a visible enabled Send/Submit button before submission, adding current ChatGPT/Claude submit selectors, and filtering non-send icon buttons such as attach/voice/menu controls.
+- Updated `content.test.js` for the asynchronous submit pipeline and verified `node --test content.test.js` passes.
+- Restored `background.js` test exports and updated `background.test.js` to match the current two-query ChatGPT/Claude pipeline, content-script reinjection before `READ_RESPONSE`, and Claude forwarding step. Verified `node --test background.test.js` passes.
