@@ -25,19 +25,28 @@ function filterTabs(tabs, queryInfo) {
   });
 }
 
-test("executeNextStep sends the staged text to ChatGPT and toggles next target", async () => {
+function createChromeMock({ storedNextTarget = "chatgpt", readText = "processed output" } = {}) {
   const operations = [];
+  const storageState = { nextTarget: storedNextTarget };
   const tabs = [
-    { id: 10, url: "https://chatgpt.com/c/background", active: false, currentWindow: false },
     { id: 12, url: "https://chatgpt.com/c/current-active", active: true, currentWindow: true },
     { id: 20, url: "https://claude.ai/chat/current", active: false, currentWindow: true }
   ];
 
   const chromeMock = {
     runtime: {
-      lastError: null,
-      onMessage: {
-        addListener() {}
+      lastError: null
+    },
+    storage: {
+      local: {
+        get(keys, callback) {
+          operations.push(["storage.get", keys]);
+          callback({ nextTarget: storageState.nextTarget });
+        },
+        set(items) {
+          operations.push(["storage.set", items]);
+          Object.assign(storageState, items);
+        }
       }
     },
     scripting: {
@@ -59,20 +68,26 @@ test("executeNextStep sends the staged text to ChatGPT and toggles next target",
         operations.push(["sendMessage", tabId, payload]);
 
         if (payload.action === "READ_RESPONSE") {
-          callback({ ok: true, text: "processed output" });
+          callback({ ok: true, text: readText });
           return;
         }
 
         callback({ ok: true, status: "submitted", previousText: "old output" });
       }
-    },
-    downloads: {
-      download() {}
     }
   };
 
-  const { executeNextStep } = loadBackgroundWithChromeMock(chromeMock);
-  const result = await executeNextStep({
+  return { chromeMock, operations, storageState };
+}
+
+test("runManualStep sends a ChatGPT step, reads output, and toggles to Claude", async () => {
+  const { chromeMock, operations, storageState } = createChromeMock({
+    storedNextTarget: "chatgpt",
+    readText: "chatgpt answer"
+  });
+  const { runManualStep } = loadBackgroundWithChromeMock(chromeMock);
+
+  const result = await runManualStep({
     chatgptPrefix: "Analyze: ",
     claudePrefix: "Critique: ",
     text: "initial prompt"
@@ -80,13 +95,13 @@ test("executeNextStep sends the staged text to ChatGPT and toggles next target",
 
   assert.deepEqual(result, {
     ok: true,
-    stagedText: "processed output",
+    target: "chatgpt",
     nextTarget: "claude",
-    isExecuting: false,
-    completedTarget: "chatgpt",
-    completedTabId: 12
+    text: "chatgpt answer"
   });
+  assert.equal(storageState.nextTarget, "claude");
   assert.deepEqual(operations, [
+    ["storage.get", ["nextTarget"]],
     [
       "query",
       {
@@ -114,101 +129,45 @@ test("executeNextStep sends the staged text to ChatGPT and toggles next target",
         sourceText: "Analyze: initial prompt",
         previousText: "old output"
       }
-    ]
+    ],
+    ["storage.set", { nextTarget: "claude" }]
   ]);
 });
 
-test("runtime listener supports GET_STATE, EXECUTE_NEXT_STEP, and TRIGGER_SAVE", async () => {
-  let runtimeListener;
-  const downloads = [];
+test("runManualStep uses the Claude prefix when persistent target is Claude", async () => {
+  const { chromeMock, operations, storageState } = createChromeMock({
+    storedNextTarget: "claude",
+    readText: "claude answer"
+  });
+  const { runManualStep } = loadBackgroundWithChromeMock(chromeMock);
 
-  const chromeMock = {
-    runtime: {
-      lastError: null,
-      onMessage: {
-        addListener(listener) {
-          runtimeListener = listener;
-        }
-      }
-    },
-    scripting: {
-      executeScript(_details, callback) {
-        callback([{ frameId: 0, result: true }]);
-      }
-    },
-    tabs: {
-      query(queryInfo, callback) {
-        const tabs = [
-          { id: 10, url: "https://chatgpt.com/c/test", active: true, currentWindow: true },
-          { id: 20, url: "https://claude.ai/chat/test", active: false, currentWindow: true }
-        ];
-        callback(filterTabs(tabs, queryInfo));
-      },
-      update(tabId, updateProperties, callback) {
-        callback({ id: tabId, active: updateProperties.active === true });
-      },
-      sendMessage(_tabId, payload, callback) {
-        callback(payload.action === "READ_RESPONSE"
-          ? { ok: true, text: "final answer" }
-          : { ok: true, previousText: "" });
-      }
-    },
-    downloads: {
-      download(options, callback) {
-        downloads.push(options);
-        callback(42);
-      }
-    }
-  };
+  const result = await runManualStep({
+    chatgptPrefix: "Analyze: ",
+    claudePrefix: "Critique: ",
+    text: "payload"
+  });
 
-  loadBackgroundWithChromeMock(chromeMock);
-
-  const stateResponses = [];
-  assert.equal(runtimeListener({ action: "GET_STATE" }, {}, (response) => stateResponses.push(response)), false);
-  assert.deepEqual(stateResponses, [
+  assert.deepEqual(result, {
+    ok: true,
+    target: "claude",
+    nextTarget: "chatgpt",
+    text: "claude answer"
+  });
+  assert.equal(storageState.nextTarget, "chatgpt");
+  assert.deepEqual(operations[1], [
+    "query",
     {
-      ok: true,
-      stagedText: "mesaj de test",
-      nextTarget: "chatgpt",
-      isExecuting: false
+      currentWindow: true,
+      url: ["*://claude.ai/*", "*://*.claude.ai/*"]
     }
   ]);
-
-  const stepResponses = [];
-  assert.equal(runtimeListener(
+  assert.deepEqual(operations[4], [
+    "sendMessage",
+    20,
     {
-      action: "EXECUTE_NEXT_STEP",
-      chatgptPrefix: "GPT: ",
-      claudePrefix: "Claude: ",
-      text: "from popup"
-    },
-    {},
-    (response) => stepResponses.push(response)
-  ), true);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  assert.deepEqual(stepResponses, [
-    {
-      ok: true,
-      stagedText: "final answer",
-      nextTarget: "claude",
-      isExecuting: false,
-      completedTarget: "chatgpt",
-      completedTabId: 10
+      action: "WRITE_AND_SEND",
+      text: "Critique: payload",
+      target: "claude"
     }
   ]);
-
-  const saveResponses = [];
-  assert.equal(runtimeListener(
-    { action: "TRIGGER_SAVE", text: "saved text" },
-    {},
-    (response) => saveResponses.push(response)
-  ), true);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  assert.equal(saveResponses[0].ok, true);
-  assert.equal(saveResponses[0].downloadId, 42);
-  assert.equal(saveResponses[0].stagedText, "saved text");
-  assert.equal(downloads[0].filename, "ai_final_output.txt");
-  assert.match(downloads[0].url, /^data:text\/plain;charset=utf-8,/);
 });

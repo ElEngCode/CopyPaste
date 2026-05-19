@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
-  "name": "CopyPaste",
+  "name": "CopyPaste Orchestrator",
   "version": "1.0.0",
-  "description": "Manual step-by-step workflow automation between ChatGPT and Claude.",
+  "description": "WebSocket-driven Chrome automation puppet for ChatGPT and Claude.",
   "permissions": [
     "tabs",
     "scripting",
     "activeTab",
-    "downloads"
+    "downloads",
+    "storage"
   ],
   "host_permissions": [
     "https://*.chatgpt.com/*",
@@ -15,9 +16,8 @@
     "https://*.claude.ai/*",
     "https://claude.ai/*"
   ],
-  "action": {
-    "default_title": "CopyPaste",
-    "default_popup": "popup.html"
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src ws://localhost:8080 http://localhost:8080;"
   },
   "background": {
     "service_worker": "background.js"

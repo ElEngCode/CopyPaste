@@ -1,28 +1,27 @@
-(function installCopyPasteContent(root) {
+(function installCopyPasteContentScript(root) {
   "use strict";
+
+  if (!root.window || root.window.hasExtensionRun) {
+    return;
+  }
+
+  root.window.hasExtensionRun = true;
 
   var LOG_PREFIX = "[CopyPaste][Content]";
   var READ_RESPONSE_INTERVAL_MS = 1000;
   var READ_RESPONSE_TIMEOUT_MS = 180000;
-  var SEND_READY_TIMEOUT_MS = 5000;
-  var SEND_READY_INTERVAL_MS = 100;
-  var SUBMIT_ATTEMPTS = 3;
-  var SUBMIT_VERIFY_TIMEOUT_MS = 2200;
-  var SUBMIT_VERIFY_INTERVAL_MS = 100;
-  var CLAUDE_RESPONSE_STABLE_POLLS = 2;
+  var SUBMIT_READY_TIMEOUT_MS = 7000;
+  var SUBMIT_READY_INTERVAL_MS = 100;
+  var STABLE_RESPONSE_POLLS = 2;
 
   var INPUT_SELECTORS = [
-    "#prompt-textarea",
     "#prompt-textarea p",
+    "#prompt-textarea",
     ".ProseMirror[contenteditable='true']",
     "[contenteditable='true'].ProseMirror",
     "[contenteditable='true'][data-placeholder]",
-    "[data-testid='chat-input']",
-    "[aria-label='Message Claude']",
-    "[aria-label='Talk to Claude']",
-    "[enterkeyhint='send']",
-    "div[contenteditable='true']",
     "[contenteditable='true'][role='textbox']",
+    "div[contenteditable='true']",
     "[role='textbox']",
     "textarea"
   ];
@@ -31,31 +30,17 @@
     "button[data-testid='send-button']",
     "button[data-testid='composer-submit-button']",
     "button[data-testid='send-message-button']",
-    "button[data-testid='composer-send-button']",
-    "button[data-testid='chat-input-send-button']",
     "button[data-testid*='send']",
     "button[data-testid*='submit']",
-    "button[aria-label='Send prompt']",
     "button[aria-label='Send message']",
     "button[aria-label='Send Message']",
-    "button[aria-label='Submit message']",
-    "button[aria-label='Submit Message']",
-    "button[aria-label='Send']",
-    "button[title='Send']",
-    "button[title='Send message']",
-    "button[title='Send Message']",
-    "button[aria-label*='Send message']",
-    "button[aria-label*='Send Message']",
+    "button[aria-label='Send prompt']",
+    "button[aria-label='Trimite']",
     "button[aria-label*='Send']",
     "button[aria-label*='send']",
-    "button[aria-label*='Submit']",
-    "button[aria-label*='submit']",
-    "form button[type='submit']"
-  ];
-
-  var SEND_BUTTON_FALLBACK_SELECTORS = [
-    "form button[type='submit']",
+    "button[aria-label*='Trimite']",
     "button[type='submit']",
+    "form button[type='submit']",
     "button:has(svg)"
   ];
 
@@ -64,57 +49,51 @@
     "button[data-testid*='stop']",
     "button[aria-label='Stop response']",
     "button[aria-label='Stop generating']",
-    "button[aria-label='Stop Generation']",
-    "button[aria-label*='Stop response']",
-    "button[aria-label*='Stop generating']",
     "button[aria-label*='Stop']",
     "button[aria-label*='stop']",
     "button[aria-label*='Cancel']",
     "button[aria-label*='cancel']"
   ];
 
-  var MESSAGE_CONTAINER_SELECTORS = [
+  var RESPONSE_CONTAINER_SELECTORS = [
     "article",
-    "[data-testid*='conversation-turn']",
-    "[data-testid*='message']",
-    "[data-message-author-role='assistant']",
-    "[data-is-streaming]",
     ".font-claude-response",
-    "[class*='claude-response']",
     ".font-claude-message",
-    "[class*='claude-message']"
+    "[class*='claude-response']",
+    "[class*='claude-message']",
+    "[data-testid='assistant-message']",
+    "[data-testid*='assistant-message']",
+    "[data-testid*='conversation-turn']",
+    "[data-message-author-role='assistant']",
+    "[data-is-streaming]"
   ];
 
-  var OUTPUT_SELECTORS = [
+  var RESPONSE_BODY_SELECTOR = [
     ".markdown",
     ".prose",
-    "[data-message-author-role='assistant'] .whitespace-pre-wrap",
     ".font-claude-response",
-    "[class*='claude-response']",
-    "[data-is-streaming] .font-claude-message",
-    "[data-is-streaming] .font-claude-response",
-    "[data-is-streaming='false']",
-    "[data-is-streaming='true']",
     ".font-claude-message",
-    "[class*='claude-message']"
+    "[class*='claude-response']",
+    "[class*='claude-message']",
+    "[data-message-author-role='assistant'] .whitespace-pre-wrap"
   ].join(", ");
 
-  function log() {
-    if (typeof console !== "undefined") {
-      console.log.apply(console, [LOG_PREFIX].concat(Array.from(arguments)));
+  function log(message, details) {
+    if (details) {
+      console.log(LOG_PREFIX, message, details);
+      return;
     }
+
+    console.log(LOG_PREFIX, message);
   }
 
-  function warn() {
-    if (typeof console !== "undefined") {
-      console.warn.apply(console, [LOG_PREFIX].concat(Array.from(arguments)));
+  function warn(message, details) {
+    if (details) {
+      console.warn(LOG_PREFIX, message, details);
+      return;
     }
-  }
 
-  function error() {
-    if (typeof console !== "undefined") {
-      console.error.apply(console, [LOG_PREFIX].concat(Array.from(arguments)));
-    }
+    console.warn(LOG_PREFIX, message);
   }
 
   function getDocument() {
@@ -125,53 +104,49 @@
     return document;
   }
 
-  function getHostName() {
-    return String(root.location && root.location.hostname || "").toLowerCase();
-  }
-
-  function isClaudeHost() {
-    return getHostName().indexOf("claude.ai") !== -1;
-  }
-
   function sleep(ms) {
-    return new Promise(function resolveSleep(resolve) {
+    return new Promise(function sleepPromise(resolve) {
       setTimeout(resolve, ms);
     });
   }
 
-  function queryFirst(selectors, rootNode) {
-    var scope = rootNode || getDocument();
+  function isClaudeHost() {
+    return String(root.location && root.location.hostname || "").toLowerCase().indexOf("claude.ai") !== -1;
+  }
+
+  function queryFirst(selectors, scope) {
+    var rootNode = scope || getDocument();
 
     for (var index = 0; index < selectors.length; index += 1) {
       try {
-        var element = scope.querySelector(selectors[index]);
+        var element = rootNode.querySelector(selectors[index]);
 
         if (element) {
           return element;
         }
       } catch (_selectorError) {
-        // Ignore selectors unsupported by older DOM implementations.
+        // Some browsers may not support every selector, especially :has().
       }
     }
 
     return null;
   }
 
-  function queryAll(selectors, rootNode) {
-    var scope = rootNode || getDocument();
+  function queryAll(selectors, scope) {
+    var rootNode = scope || getDocument();
     var results = [];
     var seen = new Set();
 
-    selectors.forEach(function eachSelector(selector) {
+    selectors.forEach(function querySelectorList(selector) {
       var nodes = [];
 
       try {
-        nodes = Array.from(scope.querySelectorAll(selector));
+        nodes = Array.from(rootNode.querySelectorAll(selector));
       } catch (_selectorError) {
         nodes = [];
       }
 
-      nodes.forEach(function addNode(node) {
+      nodes.forEach(function addUnique(node) {
         if (!seen.has(node)) {
           seen.add(node);
           results.push(node);
@@ -182,50 +157,34 @@
     return results;
   }
 
-  function normalizeInput(input) {
-    if (!input || typeof input.closest !== "function") {
-      return input;
+  function normalizeInputElement(element) {
+    if (!element) {
+      return null;
     }
 
-    if (typeof input.querySelector === "function") {
-      var nestedEditor = input.querySelector(".ProseMirror[contenteditable='true'], [contenteditable='true'][role='textbox']");
+    if (typeof element.querySelector === "function") {
+      var nestedEditable = element.querySelector(".ProseMirror[contenteditable='true'], [contenteditable='true'][role='textbox']");
 
-      if (nestedEditor) {
-        return nestedEditor;
+      if (nestedEditable) {
+        return nestedEditable;
       }
     }
 
-    if (input.matches && input.matches("#prompt-textarea p")) {
-      return input.closest("#prompt-textarea") || input.closest("[contenteditable='true']") || input;
+    if (typeof element.closest === "function" && element.matches && element.matches("#prompt-textarea p")) {
+      return element.closest("#prompt-textarea") || element.closest("[contenteditable='true']") || element;
     }
 
-    if (input.matches && input.matches("[role='textbox']")) {
-      return input.closest("[contenteditable='true']") || input;
-    }
-
-    return input;
+    return element;
   }
 
   function resolveInputContainer(doc) {
-    var input = normalizeInput(queryFirst(INPUT_SELECTORS, doc || getDocument()));
+    var input = normalizeInputElement(queryFirst(INPUT_SELECTORS, doc || getDocument()));
 
     if (!input) {
-      throw new Error("Could not resolve a prompt input container.");
+      throw new Error("Could not resolve an input container.");
     }
 
     return input;
-  }
-
-  function setNativeValue(element, value) {
-    var prototype = Object.getPrototypeOf(element);
-    var descriptor = prototype ? Object.getOwnPropertyDescriptor(prototype, "value") : null;
-
-    if (descriptor && typeof descriptor.set === "function") {
-      descriptor.set.call(element, value);
-      return;
-    }
-
-    element.value = value;
   }
 
   function focusInput(input) {
@@ -237,7 +196,7 @@
       try {
         input.click();
       } catch (_clickError) {
-        // Focus can still succeed without click.
+        // Focusing is enough for most editors.
       }
     }
   }
@@ -247,7 +206,7 @@
       try {
         input.setSelectionRange(0, input.value.length);
       } catch (_selectionError) {
-        // Textarea selection is a best-effort preparation.
+        // Not all value-based fields support setSelectionRange.
       }
       return;
     }
@@ -285,27 +244,21 @@
     selection.addRange(range);
   }
 
-  function createInputEvent(text) {
-    if (typeof InputEvent === "function") {
-      return new InputEvent("input", {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        inputType: "insertText",
-        data: text
-      });
+  function setNativeValue(element, value) {
+    var prototype = Object.getPrototypeOf(element);
+    var descriptor = prototype ? Object.getOwnPropertyDescriptor(prototype, "value") : null;
+
+    if (descriptor && typeof descriptor.set === "function") {
+      descriptor.set.call(element, value);
+      return;
     }
 
-    return new Event("input", {
-      bubbles: true,
-      cancelable: true,
-      composed: true
-    });
+    element.value = value;
   }
 
-  function createBeforeInputEvent(text) {
+  function createInputEvent(type, text) {
     if (typeof InputEvent === "function") {
-      return new InputEvent("beforeinput", {
+      return new InputEvent(type, {
         bubbles: true,
         cancelable: true,
         composed: true,
@@ -314,7 +267,7 @@
       });
     }
 
-    return new Event("beforeinput", {
+    return new Event(type, {
       bubbles: true,
       cancelable: true,
       composed: true
@@ -322,7 +275,8 @@
   }
 
   function dispatchInputEvents(input, text) {
-    input.dispatchEvent(createInputEvent(text));
+    input.dispatchEvent(createInputEvent("beforeinput", text));
+    input.dispatchEvent(createInputEvent("input", text));
     input.dispatchEvent(new Event("change", {
       bubbles: true,
       cancelable: true,
@@ -341,46 +295,8 @@
     try {
       input.innerText = text;
     } catch (_innerTextError) {
-      // Some DOM implementations expose read-only innerText.
+      // Some DOM implementations expose innerText as read-only.
     }
-  }
-
-  function inputContainsText(input, text) {
-    var expected = sanitizeExtractedText(text);
-    var actual = sanitizeExtractedText(getInputText(input));
-
-    if (!expected) {
-      return true;
-    }
-
-    return actual.indexOf(expected) !== -1;
-  }
-
-  function dispatchPasteEvent(input, text) {
-    var event = null;
-
-    try {
-      var dataTransfer = typeof DataTransfer === "function" ? new DataTransfer() : null;
-
-      if (dataTransfer) {
-        dataTransfer.setData("text/plain", text);
-      }
-
-      event = new ClipboardEvent("paste", {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        clipboardData: dataTransfer
-      });
-    } catch (_clipboardError) {
-      event = new Event("paste", {
-        bubbles: true,
-        cancelable: true,
-        composed: true
-      });
-    }
-
-    input.dispatchEvent(event);
   }
 
   function getInputText(input) {
@@ -395,13 +311,34 @@
     return String(input.innerText || input.textContent || "");
   }
 
-  function insertPromptText(input, text) {
+  function sanitizeText(text) {
+    return String(text || "")
+      .replace(/[\u200B-\u200D\uFEFF]/g, "")
+      .replace(/\u00A0/g, " ")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n[ \t]+/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  function inputContainsText(input, text) {
+    var expected = sanitizeText(text);
+    var actual = sanitizeText(getInputText(input));
+
+    if (!expected) {
+      return true;
+    }
+
+    return actual.indexOf(expected) !== -1;
+  }
+
+  function insertText(input, text) {
     var normalizedText = String(text || "");
     var inserted = false;
 
     focusInput(input);
     selectInputContents(input);
-    input.dispatchEvent(createBeforeInputEvent(normalizedText));
+    input.dispatchEvent(createInputEvent("beforeinput", normalizedText));
 
     try {
       if (typeof document.execCommand === "function") {
@@ -412,11 +349,6 @@
     }
 
     if (!inserted || !inputContainsText(input, normalizedText)) {
-      selectInputContents(input);
-      dispatchPasteEvent(input, normalizedText);
-    }
-
-    if (!inputContainsText(input, normalizedText)) {
       fallbackSetInput(input, normalizedText);
     }
 
@@ -424,7 +356,7 @@
     dispatchInputEvents(input, normalizedText);
   }
 
-  function isVisibleControl(element) {
+  function isVisibleAndEnabled(element) {
     if (!element || element.disabled) {
       return false;
     }
@@ -448,238 +380,59 @@
     return true;
   }
 
-  function dispatchPointerOrMouseEvent(target, type, point) {
-    var pointerEvent = type.indexOf("pointer") === 0 && typeof PointerEvent === "function";
-    var EventConstructor = pointerEvent ? PointerEvent : MouseEvent;
-    var isDown = type === "pointerdown" || type === "mousedown";
-    var isUpOrClick = type === "pointerup" || type === "mouseup" || type === "click";
-    var eventOptions = {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      button: 0,
-      buttons: isDown ? 1 : 0,
-      clientX: point ? point.x : 0,
-      clientY: point ? point.y : 0,
-      screenX: point ? point.x : 0,
-      screenY: point ? point.y : 0,
-      view: root.window || root
-    };
-
-    if (isUpOrClick) {
-      eventOptions.buttons = 0;
-    }
-
-    if (pointerEvent) {
-      eventOptions.pointerId = 1;
-      eventOptions.pointerType = "mouse";
-      eventOptions.isPrimary = true;
-    }
-
-    target.dispatchEvent(new EventConstructor(type, eventOptions));
-  }
-
-  function dispatchMouseSubmitSequence(button) {
-    if (typeof button.scrollIntoView === "function") {
-      button.scrollIntoView({
-        block: "center",
-        inline: "center"
-      });
-    }
-
-    if (typeof button.focus === "function") {
-      button.focus();
-    }
-
-    var rect = typeof button.getBoundingClientRect === "function" ? button.getBoundingClientRect() : null;
-    var point = rect
-      ? {
-        x: Math.max(0, rect.left + rect.width / 2),
-        y: Math.max(0, rect.top + rect.height / 2)
-      }
-      : { x: 0, y: 0 };
-
-    ["pointerover", "mouseover", "pointermove", "mousemove", "pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function dispatch(type) {
-      dispatchPointerOrMouseEvent(button, type, point);
-    });
-
-    if (typeof button.click === "function") {
-      button.click();
-    }
-  }
-
-  function submitNearestForm(input, button) {
-    var form = null;
-
-    if (button && typeof button.closest === "function") {
-      form = button.closest("form");
-    }
-
-    if (!form && input && typeof input.closest === "function") {
-      form = input.closest("form");
-    }
-
-    if (!form) {
-      return false;
-    }
-
-    if (typeof form.requestSubmit === "function") {
-      try {
-        form.requestSubmit(button || undefined);
-        return true;
-      } catch (_requestSubmitError) {
-        // Fall through to submit event dispatch below.
-      }
-    }
-
-    try {
-      var submitEvent = typeof SubmitEvent === "function"
-        ? new SubmitEvent("submit", {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          submitter: button || null
-        })
-        : new Event("submit", {
-          bubbles: true,
-          cancelable: true,
-          composed: true
-        });
-
-      form.dispatchEvent(submitEvent);
-      return true;
-    } catch (_submitEventError) {
-      return false;
-    }
-  }
-
-  function buttonLooksLikeSend(button) {
-    var blockedPattern = /(attach|upload|voice|mic|microphone|menu|more|settings|model|tools|stop|cancel)/;
+  function buttonLooksBlocked(button) {
     var data = [
-      button.getAttribute("data-testid") || "",
-      button.getAttribute("aria-label") || "",
-      button.getAttribute("title") || "",
-      button.getAttribute("type") || ""
-    ].join(" ").toLowerCase();
-
-    if (blockedPattern.test(data)) {
-      return false;
-    }
-
-    return data.indexOf("send") !== -1
-      || data.indexOf("submit") !== -1
-      || data.indexOf("composer-submit") !== -1
-      || String(button.getAttribute("type") || "").toLowerCase() === "submit";
-  }
-
-  function scoreSendButton(button) {
-    var data = [
-      button.getAttribute("data-testid") || "",
-      button.getAttribute("aria-label") || "",
-      button.getAttribute("title") || "",
-      button.getAttribute("type") || ""
-    ].join(" ").toLowerCase();
-
-    if (/(attach|upload|voice|mic|microphone|menu|more|settings|model|tools|stop|cancel)/.test(data)) {
-      return -100;
-    }
-
-    var score = 0;
-
-    if (data.indexOf("send") !== -1) {
-      score += 50;
-    }
-
-    if (data.indexOf("submit") !== -1) {
-      score += 35;
-    }
-
-    if (data.indexOf("composer") !== -1) {
-      score += 15;
-    }
-
-    if (String(button.getAttribute("type") || "").toLowerCase() === "submit") {
-      score += 10;
-    }
-
-    return score;
-  }
-
-  function bestButtonFromCandidates(candidates) {
-    var bestButton = null;
-    var bestScore = -Infinity;
-
-    candidates.forEach(function scoreCandidate(button) {
-      var score = scoreSendButton(button);
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestButton = button;
-      }
-    });
-
-    return bestScore > 0 ? bestButton : null;
-  }
-
-  function scoreGenericButton(button, input) {
-    var labelData = [
       button.getAttribute("data-testid") || "",
       button.getAttribute("aria-label") || "",
       button.getAttribute("title") || "",
       button.textContent || ""
     ].join(" ").toLowerCase();
 
-    if (/(attach|upload|voice|mic|microphone|menu|more|settings|model|tools|stop|cancel|file|image|plus)/.test(labelData)) {
+    return /(attach|upload|voice|mic|microphone|menu|more|settings|model|tools|stop|cancel|file|image|plus)/.test(data);
+  }
+
+  function scoreButton(button, input) {
+    if (buttonLooksBlocked(button)) {
       return -1000;
+    }
+
+    var data = [
+      button.getAttribute("data-testid") || "",
+      button.getAttribute("aria-label") || "",
+      button.getAttribute("title") || "",
+      button.getAttribute("type") || ""
+    ].join(" ").toLowerCase();
+    var score = 0;
+
+    if (data.indexOf("send") !== -1 || data.indexOf("trimite") !== -1) {
+      score += 200;
+    }
+
+    if (data.indexOf("submit") !== -1) {
+      score += 80;
+    }
+
+    if (String(button.getAttribute("type") || "").toLowerCase() === "submit") {
+      score += 40;
     }
 
     var buttonRect = typeof button.getBoundingClientRect === "function" ? button.getBoundingClientRect() : null;
     var inputRect = input && typeof input.getBoundingClientRect === "function" ? input.getBoundingClientRect() : null;
-    var score = 0;
-
-    if (buttonRect) {
-      score += buttonRect.right || 0;
-      score += (buttonRect.bottom || 0) * 0.5;
-    }
 
     if (buttonRect && inputRect) {
-      if (buttonRect.left >= inputRect.left - 20 && buttonRect.top >= inputRect.top - 80) {
-        score += 100;
+      if (buttonRect.left >= inputRect.left + inputRect.width * 0.6) {
+        score += 40;
       }
 
-      if (buttonRect.left >= inputRect.left + (inputRect.width * 0.65)) {
-        score += 120;
+      if (buttonRect.top >= inputRect.top - 80) {
+        score += 20;
       }
-
-      if (buttonRect.top >= inputRect.top + (inputRect.height * 0.35)) {
-        score += 60;
-      }
-    }
-
-    if (labelData.indexOf("send") !== -1 || labelData.indexOf("submit") !== -1) {
-      score += 300;
     }
 
     return score;
   }
 
-  function bestGenericButtonFromCandidates(candidates, input) {
-    var bestButton = null;
-    var bestScore = -Infinity;
-
-    candidates.forEach(function scoreCandidate(button) {
-      var score = scoreGenericButton(button, input);
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestButton = button;
-      }
-    });
-
-    return bestScore > -100 ? bestButton : null;
-  }
-
-  function findSendButton(input, allowGenericFallback) {
+  function findSubmitButton(input) {
     var doc = input.ownerDocument || getDocument();
     var scopes = [];
 
@@ -699,49 +452,90 @@
     scopes.push(doc);
 
     for (var scopeIndex = 0; scopeIndex < scopes.length; scopeIndex += 1) {
-      var candidates = queryAll(SEND_BUTTON_SELECTORS, scopes[scopeIndex]).filter(isVisibleControl);
-      var explicit = bestButtonFromCandidates(candidates);
+      var candidates = queryAll(SEND_BUTTON_SELECTORS, scopes[scopeIndex]).filter(isVisibleAndEnabled);
+      var best = null;
+      var bestScore = -Infinity;
 
-      if (explicit) {
-        return explicit;
-      }
-    }
+      candidates.forEach(function scoreCandidate(button) {
+        var score = scoreButton(button, input);
 
-    if (!allowGenericFallback) {
-      return null;
-    }
+        if (score > bestScore) {
+          best = button;
+          bestScore = score;
+        }
+      });
 
-    for (var fallbackScopeIndex = 0; fallbackScopeIndex < scopes.length; fallbackScopeIndex += 1) {
-      var fallbackCandidates = queryAll(SEND_BUTTON_FALLBACK_SELECTORS, scopes[fallbackScopeIndex])
-        .filter(isVisibleControl)
-        .filter(function rejectBlocked(button) {
-          return scoreSendButton(button) > -100;
-        });
-
-      var genericButton = bestGenericButtonFromCandidates(fallbackCandidates, input);
-
-      if (genericButton) {
-        return genericButton;
+      if (best && bestScore > -100) {
+        return best;
       }
     }
 
     return null;
   }
 
-  async function waitForSendButton(input) {
+  async function waitForSubmitButton(input) {
     var startedAt = Date.now();
 
-    while (Date.now() - startedAt <= SEND_READY_TIMEOUT_MS) {
-      var button = findSendButton(input, true);
+    while (Date.now() - startedAt <= SUBMIT_READY_TIMEOUT_MS) {
+      var button = findSubmitButton(input);
 
-      if (button && isVisibleControl(button)) {
+      if (button) {
         return button;
       }
 
-      await sleep(SEND_READY_INTERVAL_MS);
+      await sleep(SUBMIT_READY_INTERVAL_MS);
     }
 
     return null;
+  }
+
+  function dispatchPointerOrMouseEvent(target, type) {
+    var rect = typeof target.getBoundingClientRect === "function" ? target.getBoundingClientRect() : null;
+    var x = rect ? Math.max(0, rect.left + rect.width / 2) : 0;
+    var y = rect ? Math.max(0, rect.top + rect.height / 2) : 0;
+    var isPointer = type.indexOf("pointer") === 0 && typeof PointerEvent === "function";
+    var EventConstructor = isPointer ? PointerEvent : MouseEvent;
+    var eventOptions = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      button: 0,
+      buttons: 1,
+      clientX: x,
+      clientY: y,
+      screenX: x,
+      screenY: y,
+      view: root.window || root
+    };
+
+    if (isPointer) {
+      eventOptions.pointerId = 1;
+      eventOptions.pointerType = "mouse";
+      eventOptions.isPrimary = true;
+    }
+
+    target.dispatchEvent(new EventConstructor(type, eventOptions));
+  }
+
+  function clickSubmitButton(button) {
+    if (typeof button.scrollIntoView === "function") {
+      button.scrollIntoView({
+        block: "center",
+        inline: "center"
+      });
+    }
+
+    if (typeof button.focus === "function") {
+      button.focus();
+    }
+
+    ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function dispatch(type) {
+      dispatchPointerOrMouseEvent(button, type);
+    });
+
+    if (typeof button.click === "function") {
+      button.click();
+    }
   }
 
   function dispatchEnterFallback(input) {
@@ -761,95 +555,187 @@
     });
   }
 
-  function inputLooksCleared(input, beforeText) {
-    var currentText = sanitizeExtractedText(getInputText(input));
-    var originalText = sanitizeExtractedText(beforeText);
-    return originalText.length > 0 && currentText.length === 0;
-  }
-
-  function hasSubmitStarted(doc, input, beforeText) {
-    if (hasActiveStopControl(doc)) {
-      return true;
-    }
-
-    if (inputLooksCleared(input, beforeText)) {
-      return true;
-    }
-
-    var explicitSend = queryAll(SEND_BUTTON_SELECTORS, doc).filter(isVisibleControl);
-    return explicitSend.length === 0;
-  }
-
-  async function waitForSubmitStart(doc, input, beforeText) {
-    var startedAt = Date.now();
-
-    while (Date.now() - startedAt <= SUBMIT_VERIFY_TIMEOUT_MS) {
-      if (hasSubmitStarted(doc, input, beforeText)) {
-        return true;
+  function hasActiveStopControl(doc) {
+    return STOP_BUTTON_SELECTORS.some(function hasStop(selector) {
+      try {
+        return isVisibleAndEnabled(doc.querySelector(selector));
+      } catch (_selectorError) {
+        return false;
       }
-
-      await sleep(SUBMIT_VERIFY_INTERVAL_MS);
-    }
-
-    return false;
+    });
   }
 
-  async function waitForInputSync(input, expectedText) {
+  function hasActiveSendButton(doc) {
+    return SEND_BUTTON_SELECTORS.some(function hasSend(selector) {
+      try {
+        return isVisibleAndEnabled(doc.querySelector(selector));
+      } catch (_selectorError) {
+        return false;
+      }
+    });
+  }
+
+  function inputLooksCleared(input, beforeText) {
+    return sanitizeText(beforeText).length > 0 && sanitizeText(getInputText(input)).length === 0;
+  }
+
+  async function waitForSubmitStart(input, beforeText) {
+    var doc = input.ownerDocument || getDocument();
     var startedAt = Date.now();
 
-    while (Date.now() - startedAt <= 1200) {
-      if (inputContainsText(input, expectedText)) {
+    while (Date.now() - startedAt <= 2500) {
+      if (hasActiveStopControl(doc) || inputLooksCleared(input, beforeText)) {
         return true;
       }
 
       await sleep(100);
     }
 
-    return inputContainsText(input, expectedText);
+    return false;
   }
 
   async function submitPrompt(input) {
-    var doc = input.ownerDocument || getDocument();
+    var button = await waitForSubmitButton(input);
     var beforeText = getInputText(input);
-    var lastMethod = "none";
 
-    for (var attempt = 1; attempt <= SUBMIT_ATTEMPTS; attempt += 1) {
-      var button = await waitForSendButton(input);
+    if (button) {
+      clickSubmitButton(button);
 
-      if (button) {
-        focusInput(input);
-        dispatchMouseSubmitSequence(button);
-        lastMethod = "sendButtonMouseSequence";
-
-        if (await waitForSubmitStart(doc, input, beforeText)) {
-          return lastMethod;
-        }
-
-        if (submitNearestForm(input, button)) {
-          lastMethod = "formRequestSubmitAfterButton";
-
-          if (await waitForSubmitStart(doc, input, beforeText)) {
-            return lastMethod;
-          }
-        }
+      if (await waitForSubmitStart(input, beforeText)) {
+        return "submitButtonMouseChain";
       }
-
-      dispatchEnterFallback(input);
-      lastMethod = button ? "sendButtonThenEnterRetry" : "enterFallback";
-
-      if (await waitForSubmitStart(doc, input, beforeText)) {
-        return lastMethod;
-      }
-
-      await sleep(200 * attempt);
     }
 
-    throw new Error("Prompt was inserted, but submit did not start. Last method: " + lastMethod);
+    dispatchEnterFallback(input);
+
+    if (await waitForSubmitStart(input, beforeText)) {
+      return "enterKeyFallback";
+    }
+
+    return button ? "submitButtonMouseChainNoStartSignal" : "enterKeyFallbackNoStartSignal";
+  }
+
+  function stripReasoningPrelude(text) {
+    return sanitizeText(text)
+      .replace(/^thought\s+for\s+(?:\d+(?:\.\d+)?|a\s+couple(?:\s+of)?|several|few)\s*(?:seconds|second|secs|sec)?\b\s*>?\s*/i, "")
+      .trim();
+  }
+
+  function isReasoningPlaceholder(text) {
+    var normalized = sanitizeText(text).toLowerCase();
+
+    if (!normalized) {
+      return true;
+    }
+
+    if (/^thought\s+for\s+(?:\d+(\.\d+)?|a\s+couple(?:\s+of)?|several|few)\s*(seconds|second|secs|sec)?\b/.test(normalized)) {
+      return true;
+    }
+
+    if (/\bthought\s+for\s+(?:\d+(\.\d+)?|a\s+couple(?:\s+of)?|several|few)\s*(seconds|second|secs|sec)?\b/.test(normalized) && normalized.length < 300) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function extractTextFromContainer(container) {
+    if (!container) {
+      return "";
+    }
+
+    if (container.matches && (
+      container.matches(".markdown")
+      || container.matches(".prose")
+      || container.matches(".font-claude-response")
+      || container.matches(".font-claude-message")
+      || container.matches("[class*='claude-response']")
+      || container.matches("[class*='claude-message']")
+    )) {
+      return stripReasoningPrelude(container.innerText || container.textContent || "");
+    }
+
+    var body = null;
+
+    try {
+      body = container.querySelector(RESPONSE_BODY_SELECTOR);
+    } catch (_selectorError) {
+      body = null;
+    }
+
+    if (!body) {
+      body = container;
+    }
+
+    return stripReasoningPrelude(body.innerText || body.textContent || "");
+  }
+
+  function extractRawTextFromContainer(container) {
+    var body = null;
+
+    if (!container) {
+      return "";
+    }
+
+    try {
+      body = container.querySelector(RESPONSE_BODY_SELECTOR);
+    } catch (_selectorError) {
+      body = null;
+    }
+
+    if (!body) {
+      body = container;
+    }
+
+    return sanitizeText(body.innerText || body.textContent || "");
+  }
+
+  function extractLatestFinalAnswerText(doc) {
+    var rootDoc = doc || getDocument();
+    var claudeResponses = queryAll([
+      ".font-claude-response",
+      "[class*='claude-response']"
+    ], rootDoc);
+    var containers = claudeResponses.length ? claudeResponses : queryAll(RESPONSE_CONTAINER_SELECTORS, rootDoc);
+
+    for (var index = containers.length - 1; index >= 0; index -= 1) {
+      var rawText = extractRawTextFromContainer(containers[index]);
+      var text = extractTextFromContainer(containers[index]);
+
+      if ((rawText && isReasoningPlaceholder(rawText)) || (text && isReasoningPlaceholder(text))) {
+        return "";
+      }
+
+      if (text) {
+        return text;
+      }
+    }
+
+    return "";
+  }
+
+  function isSameText(first, second) {
+    return sanitizeText(first) === sanitizeText(second);
+  }
+
+  function isPromptEcho(text, sourceText) {
+    var normalizedText = sanitizeText(text);
+    var normalizedSource = sanitizeText(sourceText);
+
+    return Boolean(normalizedText && normalizedSource && normalizedText === normalizedSource);
+  }
+
+  function isProcessingComplete(doc) {
+    if (hasActiveStopControl(doc)) {
+      return false;
+    }
+
+    return true;
   }
 
   async function handleWriteAndSend(text) {
     var doc = getDocument();
-    var input = resolveInputContainer();
+    var input = resolveInputContainer(doc);
     var normalizedText = String(text || "");
     var previousText = extractLatestFinalAnswerText(doc);
 
@@ -857,9 +743,7 @@
       throw new Error("WRITE_AND_SEND text is empty.");
     }
 
-    insertPromptText(input, normalizedText);
-    await waitForInputSync(input, normalizedText);
-
+    insertText(input, normalizedText);
     var submitMethod = await submitPrompt(input);
 
     log("Prompt submitted.", {
@@ -876,162 +760,22 @@
     };
   }
 
-  async function handleWriteOnly(text) {
-    var input = resolveInputContainer();
-    var normalizedText = String(text || "");
-
-    if (!normalizedText.trim()) {
-      throw new Error("WRITE_ONLY text is empty.");
-    }
-
-    insertPromptText(input, normalizedText);
-    focusInput(input);
-    placeCaretAtEnd(input);
-
-    log("Prompt inserted without DOM submit.", {
-      textLength: normalizedText.length
-    });
-
-    return {
-      ok: true,
-      status: "inserted",
-      textLength: normalizedText.length
-    };
-  }
-
-  function hasActiveStopControl(doc) {
-    return STOP_BUTTON_SELECTORS.some(function hasStop(selector) {
-      try {
-        return isVisibleControl(doc.querySelector(selector));
-      } catch (_selectorError) {
-        return false;
-      }
-    });
-  }
-
-  function hasActiveSendControl(doc) {
-    return SEND_BUTTON_SELECTORS.some(function hasSend(selector) {
-      try {
-        return isVisibleControl(doc.querySelector(selector));
-      } catch (_selectorError) {
-        return false;
-      }
-    });
-  }
-
-  function isProcessingComplete(doc) {
-    if (isClaudeHost()) {
-      return !hasActiveStopControl(doc);
-    }
-
-    return !hasActiveStopControl(doc) && hasActiveSendControl(doc);
-  }
-
-  function sanitizeExtractedText(text) {
-    return String(text || "")
-      .replace(/[\u200B-\u200D\uFEFF]/g, "")
-      .replace(/\u00A0/g, " ")
-      .replace(/[ \t]+\n/g, "\n")
-      .replace(/\n[ \t]+/g, "\n")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-  }
-
-  function isThoughtPlaceholder(text) {
-    var normalizedText = sanitizeExtractedText(text).toLowerCase();
-
-    if (!normalizedText) {
-      return true;
-    }
-
-    if (/^thought\s+for\s+\d+(\.\d+)?\s*(second|seconds|sec|secs)\b/.test(normalizedText)) {
-      return true;
-    }
-
-    return /^thought\s+for\s+/.test(normalizedText) && normalizedText.length < 160;
-  }
-
-  function extractTextFromContainer(container) {
-    var output = null;
-
-    if (container.matches && (
-      container.matches(".font-claude-response")
-      || container.matches("[class*='claude-response']")
-      || container.matches(".markdown")
-      || container.matches(".prose")
-    )) {
-      return sanitizeExtractedText(container.innerText || container.textContent || "");
-    }
-
-    try {
-      output = container.querySelector(OUTPUT_SELECTORS);
-    } catch (_selectorError) {
-      output = null;
-    }
-
-    if (!output) {
-      output = container;
-    }
-
-    return sanitizeExtractedText(output.innerText || output.textContent || "");
-  }
-
-  function extractLatestFinalAnswerText(doc) {
-    var resolvedDoc = doc || getDocument();
-    var claudeResponses = queryAll([
-      ".font-claude-response",
-      "[class*='claude-response']"
-    ], resolvedDoc);
-    var containers = claudeResponses.length
-      ? claudeResponses
-      : queryAll(MESSAGE_CONTAINER_SELECTORS, resolvedDoc);
-
-    for (var index = containers.length - 1; index >= 0; index -= 1) {
-      var text = extractTextFromContainer(containers[index]);
-
-      if (text && isThoughtPlaceholder(text)) {
-        return "";
-      }
-
-      if (text) {
-        return text;
-      }
-    }
-
-    return "";
-  }
-
-  function isSameExtractedText(firstText, secondText) {
-    return sanitizeExtractedText(firstText) === sanitizeExtractedText(secondText);
-  }
-
-  function isPromptEcho(text, sourceText) {
-    var normalizedText = sanitizeExtractedText(text);
-    var normalizedSource = sanitizeExtractedText(sourceText);
-
-    if (!normalizedText || !normalizedSource) {
-      return false;
-    }
-
-    return normalizedText === normalizedSource;
-  }
-
   function handleReadResponse(options) {
     var doc = getDocument();
-    var intervalMs = (options && options.intervalMs) || READ_RESPONSE_INTERVAL_MS;
-    var timeoutMs = (options && options.timeoutMs) || READ_RESPONSE_TIMEOUT_MS;
-    var previousText = options && options.previousText || "";
-    var sourceText = options && options.sourceText || "";
+    var intervalMs = options && options.intervalMs ? Number(options.intervalMs) : READ_RESPONSE_INTERVAL_MS;
+    var timeoutMs = options && options.timeoutMs ? Number(options.timeoutMs) : READ_RESPONSE_TIMEOUT_MS;
+    var previousText = options && options.previousText ? String(options.previousText) : "";
+    var sourceText = options && options.sourceText ? String(options.sourceText) : "";
     var startedAt = Date.now();
-    var lastClaudeText = "";
-    var stableClaudePolls = 0;
+    var lastText = "";
+    var stablePolls = 0;
 
-    return new Promise(function monitor(resolve, reject) {
-      var intervalId = setInterval(function check() {
+    return new Promise(function readResponsePromise(resolve, reject) {
+      var intervalId = setInterval(function pollDom() {
         try {
           if (Date.now() - startedAt > timeoutMs) {
             clearInterval(intervalId);
-            reject(new Error("Timed out while waiting for response."));
+            reject(new Error("Timed out while waiting for AI response."));
             return;
           }
 
@@ -1041,29 +785,19 @@
 
           var text = extractLatestFinalAnswerText(doc);
 
-          if (!text) {
+          if (!text || isSameText(text, previousText) || isPromptEcho(text, sourceText)) {
             return;
           }
 
-          if (previousText && isSameExtractedText(text, previousText)) {
-            return;
+          if (text === lastText) {
+            stablePolls += 1;
+          } else {
+            lastText = text;
+            stablePolls = 1;
           }
 
-          if (isPromptEcho(text, sourceText)) {
+          if (stablePolls < STABLE_RESPONSE_POLLS) {
             return;
-          }
-
-          if (isClaudeHost()) {
-            if (text === lastClaudeText) {
-              stableClaudePolls += 1;
-            } else {
-              lastClaudeText = text;
-              stableClaudePolls = 1;
-            }
-
-            if (stableClaudePolls < CLAUDE_RESPONSE_STABLE_POLLS) {
-              return;
-            }
           }
 
           clearInterval(intervalId);
@@ -1071,25 +805,18 @@
             ok: true,
             text: text
           });
-        } catch (caughtError) {
+        } catch (error) {
           clearInterval(intervalId);
-          reject(caughtError);
+          reject(error);
         }
       }, intervalMs);
     });
   }
 
   function installRuntimeListener() {
-    if (!root.window || !root.chrome || !root.chrome.runtime || !root.chrome.runtime.onMessage) {
+    if (!root.chrome || !root.chrome.runtime || !root.chrome.runtime.onMessage) {
       return;
     }
-
-    if (root.window.hasExtensionRun) {
-      log("Already registered; skipping duplicate listener.");
-      return;
-    }
-
-    root.window.hasExtensionRun = true;
 
     root.chrome.runtime.onMessage.addListener(function onRuntimeMessage(message, sender, sendResponse) {
       if (!message || !message.action) {
@@ -1099,24 +826,11 @@
       if (message.action === "WRITE_AND_SEND") {
         handleWriteAndSend(message.text)
           .then(sendResponse)
-          .catch(function onWriteFailure(caughtError) {
-            error("WRITE_AND_SEND failed:", caughtError);
+          .catch(function handleWriteFailure(error) {
+            warn("WRITE_AND_SEND failed.", { error: error.message });
             sendResponse({
               ok: false,
-              error: caughtError.message
-            });
-          });
-        return true;
-      }
-
-      if (message.action === "WRITE_ONLY") {
-        handleWriteOnly(message.text)
-          .then(sendResponse)
-          .catch(function onWriteOnlyFailure(caughtError) {
-            error("WRITE_ONLY failed:", caughtError);
-            sendResponse({
-              ok: false,
-              error: caughtError.message
+              error: error.message
             });
           });
         return true;
@@ -1129,17 +843,16 @@
           target: message.target
         })
           .then(sendResponse)
-          .catch(function onReadFailure(caughtError) {
-            error("READ_RESPONSE failed:", caughtError);
+          .catch(function handleReadFailure(error) {
+            warn("READ_RESPONSE failed.", { error: error.message });
             sendResponse({
               ok: false,
-              error: caughtError.message
+              error: error.message
             });
           });
         return true;
       }
 
-      warn("Unknown action ignored.", { action: message.action });
       return false;
     });
   }
@@ -1148,13 +861,11 @@
 
   if (typeof module !== "undefined") {
     module.exports = {
+      extractLatestFinalAnswerText: extractLatestFinalAnswerText,
       handleReadResponse: handleReadResponse,
       handleWriteAndSend: handleWriteAndSend,
-      handleWriteOnly: handleWriteOnly,
-      insertPromptText: insertPromptText,
-      isProcessingComplete: isProcessingComplete,
       resolveInputContainer: resolveInputContainer,
-      sanitizeExtractedText: sanitizeExtractedText
+      sanitizeText: sanitizeText
     };
   }
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -2,7 +2,9 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 function loadContentModule() {
-  delete global.window;
+  global.window = global;
+  global.window.hasExtensionRun = false;
+  global.location = { hostname: "chatgpt.com" };
   delete global.chrome;
   delete require.cache[require.resolve("./content.js")];
   return require("./content.js");
@@ -11,6 +13,7 @@ function loadContentModule() {
 test("handleWriteAndSend populates the prompt container, dispatches events, and submits the parent form", async () => {
   const dispatchedEvents = [];
   const buttonEvents = [];
+  let promptNode;
   const sendButton = {
     disabled: false,
     getAttribute(name) {
@@ -30,10 +33,19 @@ test("handleWriteAndSend populates the prompt container, dispatches events, and 
     },
     dispatchEvent(event) {
       buttonEvents.push(event.type);
+      if (event.type === "click") {
+        promptNode.textContent = "";
+        promptNode.innerText = "";
+      }
       return true;
     },
     click() {
       buttonEvents.push("native-click");
+    },
+    focus() {},
+    scrollIntoView() {},
+    getBoundingClientRect() {
+      return { left: 200, top: 100, width: 32, height: 32 };
     }
   };
   const form = {
@@ -45,10 +57,13 @@ test("handleWriteAndSend populates the prompt container, dispatches events, and 
       return [];
     }
   };
-  const promptNode = {
+  promptNode = {
     textContent: "",
     innerText: "",
     isContentEditable: true,
+    ownerDocument: null,
+    focus() {},
+    click() {},
     dispatchEvent(event) {
       dispatchedEvents.push([event.type, event.bubbles]);
       return true;
@@ -70,12 +85,22 @@ test("handleWriteAndSend populates the prompt container, dispatches events, and 
   };
   global.InputEvent = global.Event;
   global.MouseEvent = global.Event;
+  global.PointerEvent = global.Event;
   global.KeyboardEvent = global.Event;
+  global.getComputedStyle = () => ({
+    display: "block",
+    visibility: "visible",
+    pointerEvents: "auto"
+  });
   global.document = {
     execCommand() {
       return false;
     },
     querySelector(selector) {
+      if (selector === "#prompt-textarea p") {
+        return promptNode;
+      }
+
       if (selector === "#prompt-textarea") {
         return promptNode;
       }
@@ -86,6 +111,7 @@ test("handleWriteAndSend populates the prompt container, dispatches events, and 
       return [];
     }
   };
+  promptNode.ownerDocument = global.document;
 
   const { handleWriteAndSend } = loadContentModule();
   const result = await handleWriteAndSend("hello workflow");
@@ -93,17 +119,13 @@ test("handleWriteAndSend populates the prompt container, dispatches events, and 
   assert.deepEqual(result, {
     ok: true,
     status: "submitted",
-    submitMethod: "sendButtonMouseSequence",
+    submitMethod: "submitButtonMouseChain",
     textLength: 14,
     previousText: ""
   });
-  assert.equal(promptNode.textContent, "hello workflow");
-  assert.equal(promptNode.innerText, "hello workflow");
+  assert.equal(promptNode.textContent, "");
+  assert.equal(promptNode.innerText, "");
   assert.deepEqual(buttonEvents, [
-    "pointerover",
-    "mouseover",
-    "pointermove",
-    "mousemove",
     "pointerdown",
     "mousedown",
     "pointerup",
@@ -113,7 +135,7 @@ test("handleWriteAndSend populates the prompt container, dispatches events, and 
   ]);
   assert.deepEqual(dispatchedEvents, [
     ["beforeinput", true],
-    ["paste", true],
+    ["beforeinput", true],
     ["input", true],
     ["change", true]
   ]);
@@ -148,13 +170,12 @@ test("handleReadResponse waits for send control and ignores Thought placeholders
       return null;
     },
     querySelectorAll(selector) {
-      assert.equal(
-        selector,
-        "article"
-      );
-      return articles;
+      return selector === "article" ? articles : [];
     }
   };
+  global.window = global;
+  global.window.hasExtensionRun = false;
+  global.location = { hostname: "chatgpt.com" };
 
   const { handleReadResponse } = loadContentModule();
 

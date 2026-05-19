@@ -58,3 +58,18 @@
 - Fixed the remaining no-send path by keeping the caret/selection inside the composer before `document.execCommand("insertText")`, waiting for a visible enabled Send/Submit button before submission, adding current ChatGPT/Claude submit selectors, and filtering non-send icon buttons such as attach/voice/menu controls.
 - Updated `content.test.js` for the asynchronous submit pipeline and verified `node --test content.test.js` passes.
 - Restored `background.js` test exports and updated `background.test.js` to match the current two-query ChatGPT/Claude pipeline, content-script reinjection before `READ_RESPONSE`, and Claude forwarding step. Verified `node --test background.test.js` passes.
+
+- Converted CopyPaste into the browser-side WebSocket automation puppet for the Electron controller in `F:\Projects\Next Step`:
+  - `manifest.json` now defines "CopyPaste Orchestrator" with `tabs`, `scripting`, `activeTab`, `downloads`, and `storage` permissions and no popup entry.
+  - `manifest.json` now includes an explicit extension-pages `connect-src` policy for `ws://localhost:8080`.
+  - `background.js` now connects to `ws://localhost:8080`, reconnects after drops, accepts one manual workflow payload at a time, chooses the next target from persistent state, injects `content.js`, writes/sends the prompt, reads the finished answer, toggles `nextTarget`, persists it, and returns `{ text }` to Electron.
+  - `content.js` now serves as the universal dynamic DOM interaction engine for ChatGPT and Claude with IIFE guard, framework-resilient insertion, send-button hardware event chain, Enter fallback, 1000ms response polling, reasoning placeholder bypass, stale-output filtering, and sanitization.
+- Left legacy `popup.html` and `popup.js` in place but inactive because the new manifest does not register a popup; Electron is now the controller UI.
+- Fixed the WebSocket reconnect implementation by replacing the named IIFE with a real `connectToElectron()` declaration visible to the reconnect scheduler.
+- Added a 25-second extension heartbeat message so the Electron server can observe the MV3 client and avoid silent idle drops.
+- Fixed a runtime stall where ChatGPT could finish generating but `READ_RESPONSE` kept waiting for an active Send button. The completion guard now waits for Stop controls to disappear and then relies on stable latest-output text.
+- Hardened reasoning prelude cleanup for variants such as `Thought for a couple of seconds` and fixed the `seconds` regex edge case.
+- Fixed latest-response extraction so an in-progress reasoning placeholder does not fall back to an older answer; the extractor now checks the same inner response body used for final text extraction before resolving `READ_RESPONSE`.
+- Updated `background.test.js` and `content.test.js` for the WebSocket orchestrator architecture and guarded Node imports from starting live WebSocket timers.
+- Verified extension syntax with `node --check background.js` and `node --check content.js`.
+- Verified extension regression tests with `node --test content.test.js background.test.js`.
