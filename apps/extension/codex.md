@@ -122,21 +122,7 @@ Project takeover audit, no code changes:
 - Validated `manifest.json` parses as JSON with PowerShell `ConvertFrom-Json`.
 - Noted release gaps: no setup documentation, no install/release checklist, no CI, no Chrome browser/manual test artifact, no packaged extension validation, and untracked execution-pack/text artifacts still present in the worktree.
 
-Monorepo migration:
-- Created branch `codex/monorepo-electron-extension`.
-- Added migration design spec at `docs/superpowers/specs/2026-05-25-monorepo-electron-extension-design.md`.
-- Added implementation plan at `docs/superpowers/plans/2026-05-25-monorepo-electron-extension.md`.
-- Created monorepo directories: `apps/desktop`, `apps/extension`, and `packages/protocol`.
-- Moved extension runtime files and tests into `apps/extension`.
-- Copied extension-specific `architecture.md` and `codex.md` into `apps/extension` before converting root docs to monorepo-level docs.
-- Copied the Electron app from `F:\Projects\Next Step` into `apps/desktop`, excluding `.git` and `node_modules`; the original source folder was not deleted.
-- Extracted `apps/desktop/shared/ai-project-builder-protocol.js` into `packages/protocol/index.js`.
-- Updated active desktop imports in `apps/desktop/renderer.js`, `apps/desktop/main/storage.js`, `apps/desktop/tests/ai-project-builder-protocol.test.js`, and `apps/desktop/renderer/index.html` to use the shared protocol package path.
-- Added root npm workspaces and scripts in `package.json`.
-- Added `apps/extension/package.json` with `check`, `test`, and `verify` scripts.
-- Added `packages/protocol/package.json`.
-- Added root `.gitignore` for generated dependency/build outputs.
-- Ran `npm.cmd install` from the monorepo root to install workspace dependencies and generate the root lockfile.
-- Verified `npm.cmd --workspace @copypaste/extension run verify` passes.
-- Verified `npm.cmd --workspace next-step test` passes after dependency install.
-- Verified `npm.cmd run verify` passes end-to-end.
+Monorepo migration note:
+- Extension files were moved from the repository root into `apps/extension`.
+- The Electron controller was copied into `apps/desktop`.
+- Root `architecture.md` and `codex.md` now describe the unified monorepo; this file preserves extension-specific history.

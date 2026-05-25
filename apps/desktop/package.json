@@ -1,0 +1,21 @@
+{
+  "name": "next-step",
+  "version": "1.0.0",
+  "description": "Electron master controller for the CopyPaste ChatGPT and Claude automation pipeline.",
+  "main": "main.js",
+  "private": true,
+  "author": "ElEngCode",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "node tests/run-tests.js"
+  },
+  "dependencies": {
+    "playwright": "^1.60.0",
+    "ws": "^8.20.1"
+  },
+  "devDependencies": {
+    "electron": "^42.1.0"
+  }
+}

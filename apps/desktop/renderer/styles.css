@@ -1,0 +1,68 @@
+﻿:root {
+  color-scheme: light;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  --bg: #f4f5f7;
+  --panel: #ffffff;
+  --ink: #111827;
+  --muted: #6b7280;
+  --line: #d1d5db;
+  --accent: #0f766e;
+  --error: #b91c1c;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); }
+.app-shell { min-height: 100vh; display: grid; grid-template-columns: 280px 1fr 420px; grid-template-rows: auto 1fr; gap: 12px; padding: 12px; }
+.top-bar { grid-column: 1 / 4; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+.top-bar h1 { margin: 0; font-size: 1.35rem; }
+.top-bar p { margin: 4px 0 0; color: var(--muted); }
+.layout-left,.layout-main,.layout-right { min-width: 0; }
+.layout-main { display: grid; gap: 12px; align-content: start; }
+.layout-right { display: grid; gap: 10px; align-content: start; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+h2, h3 { margin-top: 0; }
+.stacked-form { display: grid; gap: 8px; margin-bottom: 12px; }
+.block-label { display: block; margin: 8px 0 6px; font-weight: 600; }
+input, textarea, select, button { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: inherit; }
+textarea { min-height: 72px; resize: vertical; }
+button { background: var(--accent); color: #fff; border: none; cursor: pointer; }
+.columns { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 8px; }
+.column { border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: #fbfbfc; }
+.column h3 { font-size: 0.95rem; margin: 0 0 8px; }
+.task-list { display: grid; gap: 6px; }
+.task-item { text-align: left; background: #e5f3f1; color: #0b3d38; }
+.task-item.active { outline: 2px solid #0b3d38; }
+.toggle-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.check-row { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.check-row input { width: auto; margin: 0; }
+.button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.preview { border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: #fbfbfd; max-height: 180px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.preview.tall { max-height: 300px; }
+.logs { margin: 0; padding-left: 16px; display: grid; gap: 6px; max-height: 260px; overflow: auto; }
+.logs.compact { max-height: 120px; }
+.error { color: var(--error); }
+.muted { color: var(--muted); }
+@media (max-width: 1320px) {
+  .app-shell { grid-template-columns: 1fr; grid-template-rows: auto auto auto auto; }
+  .top-bar { grid-column: 1; }
+  .columns { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
+}
+
+.risk-notice { border: 1px solid #f59e0b; background: #fffbeb; color: #78350f; padding: 8px; border-radius: 8px; }
+.step-row.selected { background: #ecfeff; }
+.flaw-card { border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+.debate-grid { display: grid; grid-template-columns: 280px 1fr; gap: 12px; align-items: start; }
+.debate-detail { display: grid; gap: 10px; }
+.debate-detail h3 { margin: 4px 0 0; }
+.meta-grid { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 8px; }
+.meta-grid p { margin: 0; }
+.round-list, .final-prompts { display: grid; gap: 8px; }
+.round-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; background: #eef2ff; color: #1f2937; border: 1px solid var(--line); }
+.round-row.active { outline: 2px solid var(--accent); }
+.wide-buttons { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+.stage-card { border: 1px solid var(--line); border-radius: 8px; padding: 8px; display: grid; gap: 8px; background: #fbfbfc; }
+.stage-card .step-row { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.stage-card input[type="checkbox"] { width: auto; }
+@media (max-width: 900px) {
+  .debate-grid, .meta-grid { grid-template-columns: 1fr; }
+  .wide-buttons { grid-template-columns: 1fr; }
+}

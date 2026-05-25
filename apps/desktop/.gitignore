@@ -1,0 +1,9 @@
+﻿node_modules/
+profiles/
+.auth/
+*.storageState.json
+nextstep-db.json
+nextstep-db.backup.json
+nextstep-db.tmp
+debug/
+dist/
