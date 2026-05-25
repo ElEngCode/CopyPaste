@@ -200,3 +200,10 @@ Active Electron runtime hardening:
 - Updated root `renderer.js` to use the preload APIs for workflow dispatch, Prompt Vault operations, and WebSocket/status event subscriptions.
 - Kept the Prompt Vault handlers and channel names intact so existing vault state and UI actions continue to work.
 - Verified with `npm.cmd --workspace next-step test` and root `npm.cmd run verify`.
+
+WebSocket session handshake:
+- Added `main/ws-session.js` for random session-token generation, token file writing, and authenticated WebSocket gatekeeping.
+- Root `main.js` now writes `../extension/ws-session-token.json` on startup, waits for `EXTENSION_SESSION_HELLO`, and only then stores the socket as `extensionSocket`.
+- Unauthenticated local WebSocket clients are rejected with close code `4401`; authenticated extension messages continue through the existing workflow/status handling.
+- Added `tests/ws-session.test.js` and included it in the desktop runner.
+- Verified with root `npm.cmd run verify`.

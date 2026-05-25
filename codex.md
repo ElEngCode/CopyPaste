@@ -167,3 +167,12 @@ Electron runtime hardening:
 - Preserved Prompt Vault IPC channel names and the existing AI workflow/WebSocket contract.
 - Verified `npm.cmd --workspace next-step test` passes after the change.
 - Verified `npm.cmd run verify` passes end-to-end after the hardening.
+
+WebSocket session handshake:
+- Created branch `codex/ws-session-handshake`.
+- Added `apps/desktop/main/ws-session.js` for per-session token generation, token file writing, and server-side handshake validation.
+- Electron now writes an ignored `apps/extension/ws-session-token.json` file at startup and waits for `EXTENSION_SESSION_HELLO` before accepting a WebSocket client as the active extension socket.
+- Unauthenticated clients, wrong-token clients, invalid pre-auth messages, and missing handshakes are closed with code `4401`.
+- `apps/extension/background.js` now reads the generated token resource with `chrome.runtime.getURL`, sends the session hello first, then sends the existing `EXTENSION_CONNECTED` readiness message and heartbeats.
+- Added desktop and extension regression tests for token rotation, token file writing, valid handshakes, missing/wrong token rejection, token loading, and missing-token client failure.
+- Verified `npm.cmd run verify` passes end-to-end after the handshake change.

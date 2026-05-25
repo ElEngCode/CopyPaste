@@ -2,6 +2,11 @@ const path = require("node:path");
 const { app, BrowserWindow, ipcMain, clipboard, shell } = require("electron");
 const { WebSocketServer, WebSocket } = require("ws");
 const { createVaultStore } = require("./prompt-vault");
+const {
+  createSessionToken,
+  writeSessionTokenFile,
+  createSessionGate
+} = require("./main/ws-session");
 
 const WS_PORT = 8080;
 const EXTENSION_MESSAGE_CHANNEL = "AI_RESPONSE_RECEIVED";
@@ -20,6 +25,10 @@ let mainWindow = null;
 let extensionSocket = null;
 let connectionCounter = 0;
 let vaultStore = null;
+
+const extensionRoot = path.join(__dirname, "..", "extension");
+const wsSessionToken = createSessionToken();
+writeSessionTokenFile(extensionRoot, wsSessionToken);
 
 const wss = new WebSocketServer({ port: WS_PORT });
 
@@ -250,30 +259,52 @@ wss.on("connection", (ws, request) => {
   connectionCounter += 1;
   const connectionId = connectionCounter;
   const remoteAddress = request && request.socket ? request.socket.remoteAddress : "unknown";
+  const sessionGate = createSessionGate({
+    expectedToken: wsSessionToken,
+    onAuthenticated: (hello) => {
+      extensionSocket = ws;
+      logServer(`Extension authenticated (#${connectionId}).`, { remoteAddress });
+      sendWorkflowStatusToRenderer("Extension connected. Ready for next AI step.", "success", hello.nextTarget || "ChatGPT");
+    }
+  });
+  const handshakeTimer = setTimeout(() => {
+    if (!sessionGate.isAuthenticated()) {
+      logServer(`Closing unauthenticated extension socket (#${connectionId}).`, { remoteAddress });
+      ws.close(4401, "Missing session token.");
+    }
+  }, 5000);
 
-  extensionSocket = ws;
-  logServer(`Extension connected (#${connectionId}).`, { remoteAddress });
-  sendStatusToRenderer("Extension connected. Ready for next AI step.", "success");
+  logServer(`Extension socket connected (#${connectionId}); waiting for session handshake.`, { remoteAddress });
 
   ws.on("message", (rawData) => {
-    const rawText = rawData.toString("utf8");
-    let parsedData;
+    const sessionResult = sessionGate.handleMessage(ws, rawData);
 
-    try {
-      parsedData = JSON.parse(rawText);
-    } catch (error) {
-      logServer("Received invalid JSON from extension.", { rawText, error: error.message });
-      sendStatusToRenderer("Extension returned invalid JSON.", "error");
+    if (!sessionResult.ok) {
+      logServer("Rejected unauthenticated or invalid WebSocket message.", { error: sessionResult.error });
+      if (sessionGate.isAuthenticated()) {
+        const rawText = rawData.toString("utf8");
+        logServer("Received invalid JSON from extension.", { rawText, error: sessionResult.error });
+        sendStatusToRenderer("Extension returned invalid JSON.", "error");
+      } else {
+        sendStatusToRenderer("Extension WebSocket session rejected.", "error");
+      }
       return;
     }
 
+    if (sessionResult.handshake) {
+      clearTimeout(handshakeTimer);
+      return;
+    }
+
+    const parsedData = sessionResult.message;
+
     if (parsedData && parsedData.type === "EXTENSION_CONNECTED") {
       logServer("Extension client announced readiness.", parsedData);
-    sendWorkflowStatusToRenderer("Extension connected. Ready for next AI step.", "success", parsedData.nextTarget || "ChatGPT");
-    return;
-  }
+      sendWorkflowStatusToRenderer("Extension connected. Ready for next AI step.", "success", parsedData.nextTarget || "ChatGPT");
+      return;
+    }
 
-  if (parsedData && parsedData.type === "EXTENSION_HEARTBEAT") {
+    if (parsedData && parsedData.type === "EXTENSION_HEARTBEAT") {
       logServer("Extension heartbeat received.", {
         nextTarget: parsedData.nextTarget,
         timestamp: parsedData.timestamp
@@ -301,6 +332,7 @@ wss.on("connection", (ws, request) => {
   });
 
   ws.on("close", (code, reasonBuffer) => {
+    clearTimeout(handshakeTimer);
     const reason = reasonBuffer ? reasonBuffer.toString("utf8") : "";
 
     if (extensionSocket === ws) {

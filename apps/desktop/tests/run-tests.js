@@ -7,6 +7,7 @@ const tests = [
   "storage-debate.test.js",
   "prompt-vault.test.js",
   "electron-security.test.js",
+  "ws-session.test.js",
   "controller-ui.test.js"
 ];
 

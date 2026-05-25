@@ -109,6 +109,13 @@ Conservative Claude automation rollback:
 - Kept the Claude anti-microphone send fix: record/mic controls remain blocked and Claude still requires an explicit Send/Submit button before button-click submission, with Enter as fallback.
 - Rationale: the main app now asks ChatGPT and Claude for plain text/minimal Markdown, so the extension does not need broader hosted-widget access for the normal workflow.
 
+WebSocket session handshake:
+- `background.js` now loads the Electron-generated `ws-session-token.json` extension resource before announcing readiness.
+- The first WebSocket payload is `EXTENSION_SESSION_HELLO` with the per-session token and current next target.
+- If the token resource is missing or empty, the extension closes the socket with code `4401` and reconnects later.
+- Added `background.test.js` coverage for successful token loading and missing-token failure.
+- Verified through root `npm.cmd run verify`.
+
 ## 2026-05-25
 
 Project takeover audit, no code changes:

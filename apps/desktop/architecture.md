@@ -95,6 +95,9 @@ AI Project Builder protocol:
 
 CopyPaste Orchestrator bridge:
 - Root `main.js` starts a dedicated `WebSocketServer` on port `8080`.
+- Root `main.js` generates a fresh local WebSocket session token on process start and writes it to the ignored sibling extension file `../extension/ws-session-token.json`.
+- Extension sockets must send `EXTENSION_SESSION_HELLO` with the current token before Electron treats them as the active extension.
+- Missing-token, wrong-token, invalid pre-auth JSON, and handshake-timeout clients are rejected with close code `4401`.
 - The active Chrome extension connection is stored as `extensionSocket`.
 - Renderer UI sends `TRIGGER_AI_WORKFLOW` through Electron IPC with `{ chatgptPrefix, claudePrefix, text, targetProvider, currentStageId, currentStageLabel, currentRole }`.
 - For AI Project Builder, `renderer.js` creates the current stage-specific prompt from `../../packages/protocol`, stores the pending stage locally, and sends that prompt as `text`.

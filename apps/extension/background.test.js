@@ -221,3 +221,45 @@ test("runManualStep honors explicit targetProvider without modifying stored next
     {}
   ]);
 });
+
+test("loadSessionToken reads the extension session token resource", async () => {
+  const { chromeMock } = createChromeMock();
+  chromeMock.runtime.getURL = (resourcePath) => `chrome-extension://copy/${resourcePath}`;
+  global.fetch = async (url) => ({
+    ok: true,
+    async json() {
+      return {
+        token: url.endsWith("ws-session-token.json") ? "session-token-123" : ""
+      };
+    }
+  });
+
+  const { loadSessionToken, createSessionHello } = loadBackgroundWithChromeMock(chromeMock);
+  const token = await loadSessionToken();
+
+  assert.equal(token, "session-token-123");
+  assert.deepEqual(createSessionHello(token, "claude"), {
+    ok: true,
+    type: "EXTENSION_SESSION_HELLO",
+    token: "session-token-123",
+    nextTarget: "claude"
+  });
+});
+
+test("loadSessionToken rejects missing extension session token resource", async () => {
+  const { chromeMock } = createChromeMock();
+  chromeMock.runtime.getURL = (resourcePath) => `chrome-extension://copy/${resourcePath}`;
+  global.fetch = async () => ({
+    ok: true,
+    async json() {
+      return {};
+    }
+  });
+
+  const { loadSessionToken } = loadBackgroundWithChromeMock(chromeMock);
+
+  await assert.rejects(
+    () => loadSessionToken(),
+    /WebSocket session token is missing/
+  );
+});

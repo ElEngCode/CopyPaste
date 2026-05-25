@@ -9,6 +9,8 @@ let isExecuting = false;
 const ELECTRON_WS_URL = "ws://localhost:8080";
 const RECONNECT_DELAY_MS = 5000;
 const HEARTBEAT_INTERVAL_MS = 25000;
+const SESSION_TOKEN_FILE = "ws-session-token.json";
+const SESSION_HELLO_TYPE = "EXTENSION_SESSION_HELLO";
 const CHATGPT_URL_PATTERNS = ["*://chatgpt.com/*", "*://*.chatgpt.com/*"];
 const CLAUDE_URL_PATTERNS = ["*://claude.ai/*", "*://*.claude.ai/*"];
 
@@ -170,6 +172,33 @@ function safeSocketSend(payload) {
   return true;
 }
 
+async function loadSessionToken() {
+  const tokenUrl = chrome.runtime.getURL(SESSION_TOKEN_FILE);
+  const response = await fetch(tokenUrl, { cache: "no-store" });
+
+  if (!response.ok) {
+    throw new Error("WebSocket session token is unavailable.");
+  }
+
+  const payload = await response.json();
+  const token = payload && typeof payload.token === "string" ? payload.token : "";
+
+  if (!token) {
+    throw new Error("WebSocket session token is missing.");
+  }
+
+  return token;
+}
+
+function createSessionHello(token, currentNextTarget) {
+  return {
+    ok: true,
+    type: SESSION_HELLO_TYPE,
+    token,
+    nextTarget: currentNextTarget
+  };
+}
+
 function startHeartbeat() {
   stopHeartbeat();
 
@@ -284,13 +313,20 @@ function connectToElectron() {
 
   socket.onopen = async () => {
     log("Connected to Electron WebSocket server.");
-    await readStoredNextTarget();
-    safeSocketSend({
-      ok: true,
-      type: "EXTENSION_CONNECTED",
-      nextTarget
-    });
-    startHeartbeat();
+    try {
+      await readStoredNextTarget();
+      const sessionToken = await loadSessionToken();
+      safeSocketSend(createSessionHello(sessionToken, nextTarget));
+      safeSocketSend({
+        ok: true,
+        type: "EXTENSION_CONNECTED",
+        nextTarget
+      });
+      startHeartbeat();
+    } catch (error) {
+      warn("Could not authenticate Electron WebSocket session.", { error: error.message });
+      socket.close(4401, "Missing session token.");
+    }
   };
 
   socket.onmessage = (event) => {
@@ -348,7 +384,9 @@ if (typeof module !== "undefined" && module.exports) {
     readStoredNextTarget,
     writeStoredNextTarget,
     startHeartbeat,
-    stopHeartbeat
+    stopHeartbeat,
+    loadSessionToken,
+    createSessionHello
   };
 } else {
   connectToElectron();
