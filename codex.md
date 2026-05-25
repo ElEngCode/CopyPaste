@@ -111,6 +111,14 @@ Conservative Claude automation rollback:
 
 ## 2026-05-25
 
+GitHub Actions verify CI:
+- Created branch `codex/add-ci-verify`.
+- Added `.github/workflows/verify.yml`.
+- CI runs on `push` and `pull_request` with `windows-latest`.
+- CI installs with `npm.cmd ci` and verifies with `npm.cmd run verify`.
+- Updated `docs/release.md` with the CI behavior and noted that the workflow does not publish releases.
+- Rechecked the branch locally with `npm.cmd run verify`; extension syntax/tests and desktop tests passed.
+
 Project takeover audit, no code changes:
 - Inspected repo structure, tracked/untracked files, git status, recent commits, manifest, background service worker, content script, legacy popup files, regression tests, and existing docs.
 - Verified there is no `package.json`, lockfile, README, `.env.example`, TypeScript config, bundler config, or `.github` CI directory in `F:\Projects\CopyPaste`.

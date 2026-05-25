@@ -53,6 +53,7 @@ The product model stays the same: Electron owns the user-facing AI Project Build
 - `apps/desktop/renderer.js`: Root renderer logic for AI Project Builder and prompt vault flows; uses preload APIs at runtime rather than direct Electron IPC.
 - `apps/desktop/main/storage.js`: Desktop persistence helpers using the shared protocol.
 - `apps/desktop/tests/run-tests.js`: Desktop test runner.
+- `.github/workflows/verify.yml`: GitHub Actions workflow for Windows install plus `npm.cmd run verify` on push and pull request.
 - `apps/extension/manifest.json`: Chrome Manifest V3 definition.
 - `apps/extension/background.js`: Extension service worker and WebSocket client.
 - `apps/extension/content.js`: ChatGPT/Claude DOM automation and response extraction.
@@ -90,7 +91,7 @@ The product model stays the same: Electron owns the user-facing AI Project Build
 
 - `npm.cmd run verify` passes on Node `v24.13.0` and npm `11.6.2`.
 - `npm.cmd audit --omit=dev` reports 0 production vulnerabilities.
-- There is no root `.github` CI workflow, no `.env.example`, no lint/typecheck/build script, no Electron packaging script, and no Chrome Web Store packaging/signing workflow.
+- Root `.github/workflows/verify.yml` now provides install-and-verify CI. There is still no `.env.example`, lint/typecheck/build script, Electron packaging script, or Chrome Web Store packaging/signing workflow.
 - Main release risks are selector-based external provider automation, missing browser-level end-to-end verification, documentation drift between active and legacy desktop runtimes, and the fact that the local WebSocket token is written beside the unpacked extension for development-time loading.
 
 ## 2026-05-25 WebSocket Session Handshake
@@ -101,6 +102,12 @@ The product model stays the same: Electron owns the user-facing AI Project Build
 - Electron does not assign `extensionSocket` or forward workflow payloads until the handshake succeeds.
 - Clients that send no token, the wrong token, invalid JSON before authentication, or no handshake before the timeout are closed with code `4401`.
 - Regression coverage lives in `apps/desktop/tests/ws-session.test.js` and `apps/extension/background.test.js`.
+
+## 2026-05-25 GitHub Actions Verify CI
+
+- `.github/workflows/verify.yml` runs on `push` and `pull_request`.
+- The job runs on `windows-latest`, uses `actions/checkout@v4`, `actions/setup-node@v4` with Node `24`, installs with `npm.cmd ci`, and verifies with `npm.cmd run verify`.
+- The workflow is verification-only and does not publish release artifacts.
 
 ## 2026-05-25 Electron Runtime Hardening
 

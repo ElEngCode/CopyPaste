@@ -10,6 +10,22 @@ npm.cmd run verify
 
 Do not prepare a release if this command fails.
 
+## CI Verification
+
+GitHub Actions runs `.github/workflows/verify.yml` on every push and pull request. The workflow uses `windows-latest`, installs dependencies with:
+
+```powershell
+npm.cmd ci
+```
+
+and verifies with:
+
+```powershell
+npm.cmd run verify
+```
+
+The CI workflow is verification-only; it does not publish or create releases.
+
 ## Manual Browser Check
 
 1. Start Electron with `npm.cmd run desktop`.
@@ -43,8 +59,6 @@ There is no packaged installer workflow yet. Add one before a public release.
 
 ## Known Release Blockers
 
-- The local WebSocket bridge does not yet have authentication or a session handshake.
-- There is no automated browser e2e test against real ChatGPT/Claude pages.
+- There is no automated browser e2e test against real ChatGPT/Claude pages; provider login and verification stay manual.
 - Chrome Web Store packaging/signing is not configured.
 - Electron installer packaging is not configured.
-
