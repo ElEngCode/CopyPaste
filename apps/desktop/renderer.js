@@ -1,6 +1,11 @@
-const electron = require("electron");
-const ipcRenderer = electron && typeof electron === "object" ? electron.ipcRenderer : null;
-const projectBuilderProtocol = require("../../packages/protocol");
+const projectBuilderProtocol = typeof window !== "undefined" && window.copypasteProtocol
+  ? window.copypasteProtocol
+  : globalThis.NextStepAiProjectBuilderProtocol;
+const desktopApi = typeof window !== "undefined" ? window.copypasteDesktop : null;
+
+if (!projectBuilderProtocol) {
+  throw new Error("AI Project Builder protocol API is unavailable.");
+}
 
 const TRIGGER_WORKFLOW_CHANNEL = "TRIGGER_AI_WORKFLOW";
 const RESPONSE_CHANNEL = "AI_RESPONSE_RECEIVED";
@@ -613,7 +618,7 @@ function triggerWorkflowStep() {
   renderWorkflowStatus();
   renderDebateState();
   setStatus("Sending prompt to extension. Continue manually after the response returns.", "busy");
-  ipcRenderer.send(TRIGGER_WORKFLOW_CHANNEL, payload);
+  desktopApi.sendWorkflow(payload);
 }
 
 function updateWordCount() {
@@ -817,7 +822,7 @@ async function refreshVaultState() {
   setVaultBusy(true);
 
   try {
-    const response = await ipcRenderer.invoke(VAULT_GET_STATE_CHANNEL);
+    const response = await desktopApi.getVaultState();
 
     if (!response || response.ok === false) {
       throw new Error(response && response.error ? response.error : "Could not load prompt vault state.");
@@ -846,7 +851,7 @@ async function generatePromptPack() {
   setStatus("Generating Codex prompts...", "busy");
 
   try {
-    const response = await ipcRenderer.invoke(VAULT_GENERATE_PACK_CHANNEL, payload);
+    const response = await desktopApi.generatePromptPack(payload);
 
     if (!response || response.ok === false) {
       throw new Error(response && response.error ? response.error : "Could not generate Codex prompts.");
@@ -863,7 +868,7 @@ async function generatePromptPack() {
 }
 
 async function copyChunk(packId, chunkId) {
-  const response = await ipcRenderer.invoke(VAULT_COPY_CHUNK_CHANNEL, {
+  const response = await desktopApi.copyChunk({
     packId,
     chunkId
   });
@@ -876,7 +881,7 @@ async function copyChunk(packId, chunkId) {
 }
 
 async function copyLauncher(packId, chunkId) {
-  const response = await ipcRenderer.invoke(VAULT_COPY_LAUNCHER_CHANNEL, {
+  const response = await desktopApi.copyLauncher({
     packId,
     chunkId
   });
@@ -889,7 +894,7 @@ async function copyLauncher(packId, chunkId) {
 }
 
 async function markChunk(packId, chunkId, status) {
-  const response = await ipcRenderer.invoke(VAULT_MARK_CHUNK_CHANNEL, {
+  const response = await desktopApi.markChunk({
     packId,
     chunkId,
     status
@@ -904,7 +909,7 @@ async function markChunk(packId, chunkId, status) {
 }
 
 async function openFolder(folderPath) {
-  const response = await ipcRenderer.invoke(VAULT_OPEN_FOLDER_CHANNEL, {
+  const response = await desktopApi.openFolder({
     folderPath
   });
 
@@ -921,7 +926,7 @@ async function deletePack(packId, packTitle) {
     return;
   }
 
-  const response = await ipcRenderer.invoke(VAULT_DELETE_PACK_CHANNEL, {
+  const response = await desktopApi.deletePack({
     packId
   });
 
@@ -1041,15 +1046,15 @@ function installEventListeners() {
   elements.packList.addEventListener("click", handlePackListClick);
   elements.projectSelect.addEventListener("change", () => applyProject(elements.projectSelect.value));
 
-  ipcRenderer.on(RESPONSE_CHANNEL, (_event, text) => {
+  desktopApi.onResponse((text) => {
     renderResponse(text);
   });
 
-  ipcRenderer.on(STATUS_CHANNEL, (_event, payload) => {
+  desktopApi.onStatus((payload) => {
     renderStatus(payload);
   });
 
-  ipcRenderer.on(VAULT_STATE_CHANNEL, (_event, state) => {
+  desktopApi.onVaultState((state) => {
     renderVaultState(state);
   });
 }

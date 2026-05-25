@@ -54,8 +54,9 @@ function createWindow() {
     minHeight: 620,
     title: "AI Project Builder",
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false
     }
   });
 

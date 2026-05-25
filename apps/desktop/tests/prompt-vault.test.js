@@ -9,6 +9,7 @@ const {
   slugify,
   toCommitStyleTaskName
 } = require("../prompt-vault");
+globalThis.NextStepAiProjectBuilderProtocol = require("../../../packages/protocol");
 const { getTaskStatusLabel } = require("../renderer");
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "next-step-prompt-vault-"));

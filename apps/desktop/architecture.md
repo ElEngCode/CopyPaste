@@ -53,6 +53,14 @@ Security boundaries:
 - Preload exposes minimal explicit APIs.
 - Clipboard reads happen only on user action.
 
+Active root runtime security:
+- `package.json` starts `main.js`, which loads `index.html` and `renderer.js`.
+- Root `main.js` now configures the active `BrowserWindow` with `preload: path.join(__dirname, "preload.js")`, `contextIsolation: true`, and `nodeIntegration: false`.
+- `preload.js` exposes `window.copypasteDesktop` for the active AI Project Builder workflow, Prompt Vault operations, and renderer event subscriptions.
+- `preload.js` exposes `window.copypasteProtocol` for pure protocol helpers from `../../packages/protocol`.
+- Root `renderer.js` uses the preload APIs at runtime and does not access Electron IPC directly.
+- The legacy `nextstep*` preload APIs remain for the alternate `main/main.js` + `renderer/` runtime.
+
 Current MVP workflow:
 - Clarification -> Run AI -> Parse plan -> Flaw decisions -> Finalize -> Codex step picker -> Done.
 

@@ -26,7 +26,7 @@ The product model stays the same: Electron owns the user-facing AI Project Build
 2. Electron starts a WebSocket server on `ws://localhost:8080`.
 3. Load the unpacked Chrome extension from `apps/extension`.
 4. The extension background service worker connects to the Electron WebSocket server.
-5. The Electron renderer sends `TRIGGER_AI_WORKFLOW` IPC payloads to the main process.
+5. The Electron renderer calls the preload-exposed `window.copypasteDesktop.sendWorkflow()` API, which sends `TRIGGER_AI_WORKFLOW` IPC payloads to the main process.
 6. The main process forwards `{ chatgptPrefix, claudePrefix, text, targetProvider, currentStageId, currentStageLabel, currentRole }` to the extension.
 7. The extension selects the target ChatGPT or Claude tab, injects `content.js`, sends the prompt, waits for a stable response, and returns `{ ok, target, nextTarget, text }`.
 8. Electron receives the response through WebSocket and updates the AI Project Builder UI.
@@ -48,8 +48,9 @@ The product model stays the same: Electron owns the user-facing AI Project Build
 
 ## Critical Files
 
-- `apps/desktop/main.js`: Electron entry point, WebSocket server, IPC bridge, prompt vault handlers.
-- `apps/desktop/renderer.js`: Root renderer logic for AI Project Builder and prompt vault flows.
+- `apps/desktop/main.js`: Active Electron entry point, WebSocket server, IPC bridge, prompt vault handlers, and hardened BrowserWindow configuration.
+- `apps/desktop/preload.js`: Context-isolated bridge exposing the active `copypasteDesktop` workflow/vault API and `copypasteProtocol` wrappers to the renderer.
+- `apps/desktop/renderer.js`: Root renderer logic for AI Project Builder and prompt vault flows; uses preload APIs at runtime rather than direct Electron IPC.
 - `apps/desktop/main/storage.js`: Desktop persistence helpers using the shared protocol.
 - `apps/desktop/tests/run-tests.js`: Desktop test runner.
 - `apps/extension/manifest.json`: Chrome Manifest V3 definition.
@@ -67,3 +68,37 @@ The product model stays the same: Electron owns the user-facing AI Project Build
 - `popup.html` and `popup.js` remain in `apps/extension` as legacy inactive files because the current manifest does not register a popup action.
 - The old `F:\Projects\Next Step` directory was not deleted and remains available as a backup/source reference.
 
+## 2026-05-25 Takeover Audit Snapshot
+
+### Active Runtime
+
+- Root `package.json` defines npm workspaces for `apps/desktop`, `apps/extension`, and `packages/protocol`.
+- `apps/desktop/package.json` starts Electron with `main.js`; the active UI is `apps/desktop/index.html` plus `apps/desktop/renderer.js`.
+- `apps/desktop/main.js` creates the desktop window with preload, `contextIsolation: true`, and `nodeIntegration: false`; starts the WebSocket bridge on port `8080`; forwards `TRIGGER_AI_WORKFLOW` payloads to the extension; handles `AI_RESPONSE_RECEIVED`; and owns Prompt Vault IPC handlers.
+- `apps/extension/manifest.json` registers only `background.js` as the MV3 service worker; no popup action is active.
+- `apps/extension/background.js` connects to `ws://localhost:8080`, receives one command at a time, targets ChatGPT or Claude tabs, injects `content.js`, reads the response, and sends it back to Electron.
+- `packages/protocol/index.js` is the shared pure JS provider/workflow model for AI Project Builder stages.
+
+### Legacy Or Duplicate Runtime
+
+- `apps/desktop/main/main.js` and `apps/desktop/renderer/*` are an older alternate Electron architecture and are not the package entry point today. `apps/desktop/preload.js` is now shared by the active root runtime and the alternate runtime, with explicit active `copypaste*` APIs added for the root UI.
+- `apps/desktop/shared/ai-project-builder-protocol.js` is a compatibility copy; active imports use `packages/protocol`.
+- `apps/extension/popup.html` and `apps/extension/popup.js` are legacy inactive files and still reference old runtime actions (`GET_STATE`, `EXECUTE_NEXT_STEP`, `TRIGGER_SAVE`) that current `background.js` does not handle.
+- Root untracked files `2.txt` and `New Text Document.txt` are older prototype background scripts. Root untracked `codex-plans/copypaste-codex-execution-pack` is generated from the dummy source text `mesaj de test`.
+
+### Release State
+
+- `npm.cmd run verify` passes on Node `v24.13.0` and npm `11.6.2`.
+- `npm.cmd audit --omit=dev` reports 0 production vulnerabilities.
+- There is no root `.github` CI workflow, no `.env.example`, no lint/typecheck/build script, no Electron packaging script, and no Chrome Web Store packaging/signing workflow.
+- Main release risks are the unauthenticated local WebSocket bridge, selector-based external provider automation, missing browser-level end-to-end verification, and documentation drift between active and legacy desktop runtimes.
+
+## 2026-05-25 Electron Runtime Hardening
+
+- Active desktop launch path remains `apps/desktop/package.json` -> `apps/desktop/main.js` -> `apps/desktop/index.html` -> `apps/desktop/renderer.js`.
+- `apps/desktop/main.js` now creates the active `BrowserWindow` with `preload: path.join(__dirname, "preload.js")`, `contextIsolation: true`, and `nodeIntegration: false`.
+- `apps/desktop/preload.js` exposes `window.copypasteDesktop` for workflow dispatch, Prompt Vault invoke calls, and renderer event subscriptions.
+- `apps/desktop/preload.js` exposes `window.copypasteProtocol` for the pure AI Project Builder protocol helpers needed by the active renderer.
+- `apps/desktop/renderer.js` no longer imports Electron or accesses `ipcRenderer` directly at runtime; workflow and Prompt Vault calls go through the preload bridge.
+- Existing Prompt Vault behavior is preserved through the same main-process `VAULT_*` handlers and local `prompt-vault-db.json` persistence.
+- Regression coverage lives in `apps/desktop/tests/electron-security.test.js`, which checks the active window hardening, preload bridge exposure, and absence of direct Electron IPC in the active renderer.

@@ -140,3 +140,30 @@ Monorepo migration:
 - Verified `npm.cmd --workspace @copypaste/extension run verify` passes.
 - Verified `npm.cmd --workspace next-step test` passes after dependency install.
 - Verified `npm.cmd run verify` passes end-to-end.
+
+Takeover architecture/release audit, no code changes:
+- Inspected the monorepo root, workspaces, tracked files, untracked artifacts, docs, package scripts, Electron entry points, extension manifest/service worker/content script, protocol package, desktop Prompt Vault, tests, and git history.
+- Confirmed active branch is `codex/monorepo-electron-extension` at `215c0d2 chore: organize electron and extension monorepo`.
+- Confirmed git working tree has no tracked diff before the audit, with untracked legacy/generated artifacts: `2.txt`, `New Text Document.txt`, and `codex-plans/`.
+- Confirmed root `package.json` exposes `desktop`, `desktop:dev`, `desktop:test`, `extension:check`, `extension:test`, `extension:verify`, `test`, and `verify`; no lint/typecheck/build/package/deploy scripts exist.
+- Confirmed `apps/desktop/package.json` points to active `main.js`, while `apps/desktop/main/main.js` plus `preload.js` and `renderer/*` are stricter legacy/alternate runtime files not launched by `npm.cmd run desktop`.
+- Confirmed active desktop security posture is weaker than the legacy docs imply: `apps/desktop/main.js` enables `nodeIntegration: true` and `contextIsolation: false`.
+- Confirmed `apps/extension/manifest.json` has no popup action; `popup.html` and `popup.js` are inactive legacy files with message actions that current `background.js` does not implement.
+- Confirmed current persistence is local JSON under Electron `userData`: `prompt-vault-db.json` for Prompt Vault and legacy `nextstep-db.json` for the older desktop workflow.
+- Ran `npm.cmd run verify`; result: extension syntax checks passed, 9 extension tests passed, and all 6 desktop test files passed.
+- Ran `npm.cmd ls --workspaces --depth=0`; result: workspaces resolve to `@copypaste/extension`, `@copypaste/protocol`, and `next-step` with Electron, Playwright, and ws under desktop.
+- Ran `npm.cmd audit --omit=dev`; result: 0 production vulnerabilities.
+- Ran `node --version` and `npm.cmd --version`; result: Node `v24.13.0`, npm `11.6.2`.
+- Confirmed no project-level `.github` directory and no root `.env*` files.
+- Updated root `architecture.md` with the audit snapshot, active vs legacy runtime split, and release-state risks.
+
+Electron runtime hardening:
+- Created branch `codex/harden-electron-runtime`.
+- Added `apps/desktop/tests/electron-security.test.js` and included it in the desktop test runner.
+- Verified the new security regression failed against the active runtime because `apps/desktop/main.js` lacked preload and still used `nodeIntegration: true` / `contextIsolation: false`.
+- Hardened the active Electron window launched by `apps/desktop/package.json`: `apps/desktop/main.js` now loads `apps/desktop/preload.js`, enables `contextIsolation: true`, and disables `nodeIntegration`.
+- Extended `apps/desktop/preload.js` with explicit `copypasteDesktop` IPC methods for workflow and Prompt Vault operations plus `copypasteProtocol` wrappers for the shared AI Project Builder protocol.
+- Updated `apps/desktop/renderer.js` so the active renderer uses `window.copypasteDesktop` and `window.copypasteProtocol` at runtime instead of direct Electron IPC access.
+- Preserved Prompt Vault IPC channel names and the existing AI workflow/WebSocket contract.
+- Verified `npm.cmd --workspace next-step test` passes after the change.
+- Verified `npm.cmd run verify` passes end-to-end after the hardening.

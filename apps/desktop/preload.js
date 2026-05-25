@@ -1,4 +1,49 @@
 const { contextBridge, ipcRenderer } = require("electron");
+const projectBuilderProtocol = require("../../packages/protocol");
+
+const TRIGGER_WORKFLOW_CHANNEL = "TRIGGER_AI_WORKFLOW";
+const RESPONSE_CHANNEL = "AI_RESPONSE_RECEIVED";
+const STATUS_CHANNEL = "WORKFLOW_STATUS";
+const VAULT_STATE_CHANNEL = "VAULT_STATE_UPDATED";
+const VAULT_GET_STATE_CHANNEL = "VAULT_GET_STATE";
+const VAULT_GENERATE_PACK_CHANNEL = "VAULT_GENERATE_PACK";
+const VAULT_COPY_CHUNK_CHANNEL = "VAULT_COPY_CHUNK";
+const VAULT_COPY_LAUNCHER_CHANNEL = "VAULT_COPY_LAUNCHER";
+const VAULT_MARK_CHUNK_CHANNEL = "VAULT_MARK_CHUNK";
+const VAULT_OPEN_FOLDER_CHANNEL = "VAULT_OPEN_FOLDER";
+const VAULT_DELETE_PACK_CHANNEL = "VAULT_DELETE_PACK";
+
+function onChannel(channel, callback) {
+  if (typeof callback !== "function") {
+    return () => {};
+  }
+
+  const handler = (_event, payload) => callback(payload);
+  ipcRenderer.on(channel, handler);
+  return () => ipcRenderer.removeListener(channel, handler);
+}
+
+contextBridge.exposeInMainWorld("copypasteDesktop", {
+  sendWorkflow: (payload) => ipcRenderer.send(TRIGGER_WORKFLOW_CHANNEL, payload),
+  getVaultState: () => ipcRenderer.invoke(VAULT_GET_STATE_CHANNEL),
+  generatePromptPack: (payload) => ipcRenderer.invoke(VAULT_GENERATE_PACK_CHANNEL, payload),
+  copyChunk: (payload) => ipcRenderer.invoke(VAULT_COPY_CHUNK_CHANNEL, payload),
+  copyLauncher: (payload) => ipcRenderer.invoke(VAULT_COPY_LAUNCHER_CHANNEL, payload),
+  markChunk: (payload) => ipcRenderer.invoke(VAULT_MARK_CHUNK_CHANNEL, payload),
+  openFolder: (payload) => ipcRenderer.invoke(VAULT_OPEN_FOLDER_CHANNEL, payload),
+  deletePack: (payload) => ipcRenderer.invoke(VAULT_DELETE_PACK_CHANNEL, payload),
+  onResponse: (callback) => onChannel(RESPONSE_CHANNEL, callback),
+  onStatus: (callback) => onChannel(STATUS_CHANNEL, callback),
+  onVaultState: (callback) => onChannel(VAULT_STATE_CHANNEL, callback)
+});
+
+contextBridge.exposeInMainWorld("copypasteProtocol", {
+  listWorkflowSteps: () => projectBuilderProtocol.listWorkflowSteps(),
+  createProjectBuilderDebate: (input) => projectBuilderProtocol.createProjectBuilderDebate(input),
+  createNextDebatePrompt: (debate) => projectBuilderProtocol.createNextDebatePrompt(debate),
+  saveDebateRound: (debate, input) => projectBuilderProtocol.saveDebateRound(debate, input),
+  advanceDebateStage: (debate) => projectBuilderProtocol.advanceDebateStage(debate)
+});
 
 contextBridge.exposeInMainWorld("nextstepApp", {
   getVersion: () => process.versions.electron

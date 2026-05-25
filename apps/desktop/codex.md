@@ -191,3 +191,12 @@ Project Plan readability polish:
 - Round history now uses a short cleaned preview instead of slicing raw response text.
 - Added controller helper coverage for prelude cleanup, title/heading/list rendering, compact Claude responses without bullet markers, and HTML/script escaping.
 - Verified with `node --check renderer.js`, `node --check main.js`, `npm.cmd test`, and a Playwright Electron smoke check that rendered the readable Project Plan sample and saved `%TEMP%\ai-project-builder-readable-plan.png`.
+
+Active Electron runtime hardening:
+- Added `tests/electron-security.test.js` to lock the package entrypoint runtime to preload, `contextIsolation: true`, and `nodeIntegration: false`.
+- Confirmed the regression failed against the old root runtime before implementation.
+- Updated root `main.js` to load `preload.js` and disable renderer Node integration for `index.html` / `renderer.js`.
+- Extended `preload.js` with `window.copypasteDesktop` for workflow, Prompt Vault, and event subscription IPC, plus `window.copypasteProtocol` for AI Project Builder protocol helpers.
+- Updated root `renderer.js` to use the preload APIs for workflow dispatch, Prompt Vault operations, and WebSocket/status event subscriptions.
+- Kept the Prompt Vault handlers and channel names intact so existing vault state and UI actions continue to work.
+- Verified with `npm.cmd --workspace next-step test` and root `npm.cmd run verify`.
