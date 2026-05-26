@@ -88,7 +88,7 @@ try {
   });
   assert.equal(done.taskPrompt.status, "done");
   const nextEligible = store.getNextEligibleRoadmapItem(projectId);
-  assert.ok(nextEligible.nextItem);
+  assert.equal(nextEligible.nextItem.id, "roadmap_2");
 
   assert.ok(fs.existsSync(path.join(projectPath, "masterplan.md")));
   assert.ok(fs.existsSync(path.join(projectPath, "plan-roadmap.md")));

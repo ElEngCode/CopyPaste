@@ -1,5 +1,21 @@
 # Codex Progress
 
+## 2026-05-27 Repair Review Follow-up
+
+- Reproduced the roadmap task handoff bug with regression tests:
+  - task prompt creation was deleting its own persisted legacy chunk by writing a stale DB snapshot.
+  - workflow integration only checked that some next item existed, not the expected unlocked roadmap item.
+  - renderer still routed task improve/approve/copy/done through legacy chunk APIs.
+- Fixed `createTaskPromptFromRoadmapItem()` to create and persist the legacy chunk and taskPrompt in the same database snapshot.
+- Switched renderer task actions to first-class taskPrompt APIs:
+  - `prepareTaskImprovePrompt`
+  - `saveTaskImproveResponse`
+  - `approveTaskPrompt`
+  - `copyCodexHandoff`
+  - `markTaskPromptDone`
+- Roadmap AI responses are now saved as draft versions first; applying the roadmap is an explicit primary action.
+- Added regression assertions for exact next roadmap eligibility and for blocking legacy task-action calls in renderer.
+
 ## 2026-05-27 Task 016-024 Continuation
 
 - Added protocol helper `buildTaskImprovePrompt(project, taskPrompt, activeMasterPlan, runHistory)`.

@@ -494,6 +494,9 @@ try {
   const taskPromptCreated = store.createTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_2");
   assert.equal(taskPromptCreated.taskPrompt.roadmapItemId, "roadmap_2");
   assert.equal(taskPromptCreated.taskPrompt.status, "draft");
+  const stateAfterTaskPromptCreate = store.getState();
+  const packAfterTaskPromptCreate = stateAfterTaskPromptCreate.promptPacks.find((pack) => pack.id === taskPromptCreated.pack.id);
+  assert.ok(packAfterTaskPromptCreate.chunks.some((chunk) => chunk.id === taskPromptCreated.taskPrompt.sourceChunkId));
   assert.match(taskPromptCreated.taskPrompt.content, /Project name:/);
   assert.match(taskPromptCreated.taskPrompt.content, /Project path:/);
   assert.match(taskPromptCreated.taskPrompt.content, /Master plan file path:/);

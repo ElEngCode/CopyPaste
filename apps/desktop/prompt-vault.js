@@ -2137,8 +2137,16 @@ function createVaultStore({ dbPath }) {
     if (!item.eligible) throw new Error("Roadmap item is not ready.");
     const existingTaskPrompt = (database.taskPrompts || []).find((prompt) => prompt.projectId === project.id && prompt.roadmapItemId === roadmapItemId);
     if (existingTaskPrompt) throw new Error("Task prompt already exists for this roadmap item.");
-    const created = startRoadmapPrompt(pack.id, roadmapItemId);
-    const chunk = created.chunk;
+    const maxOrder = (pack.chunks || []).reduce((max, chunk) => Math.max(max, Number(chunk.order) || 0), 0);
+    const chunk = createPromptFromRoadmapItem({
+      project,
+      pack,
+      item,
+      order: maxOrder + 1
+    });
+    pack.chunks.push(chunk);
+    pack.activePromptId = chunk.id;
+    pack.updatedAt = createTimestamp();
     const taskPrompt = sanitizeTaskPrompt({
       id: createId("task_prompt"),
       projectId: project.id,
@@ -2168,11 +2176,12 @@ function createVaultStore({ dbPath }) {
     const taskFile = writeTaskPromptFile(project.path, taskPrompt);
     taskPrompt.taskFileName = taskFile.taskFileName;
     taskPrompt.taskFilePath = taskFile.taskFilePath;
+    refreshProjectProgress(project);
     return {
       taskPrompt,
       version,
       project,
-      pack: created.pack,
+      pack,
       chunk,
       state: writeDatabase(database)
     };
@@ -2184,6 +2193,7 @@ function createVaultStore({ dbPath }) {
     if (!taskPrompt) throw new Error("Task prompt not found.");
     const previousContent = String(taskPrompt.content || "");
     const nextContent = String(input && input.content || "");
+    const nextTitle = normalizeString(input && input.title);
     if (previousContent !== nextContent) {
       database.taskPromptVersions.unshift(sanitizeTaskPromptVersion({
         id: createId("task_prompt_version"),
@@ -2195,9 +2205,19 @@ function createVaultStore({ dbPath }) {
         updatedAt: createTimestamp()
       }));
     }
+    if (nextTitle) taskPrompt.title = nextTitle;
     taskPrompt.content = nextContent;
     taskPrompt.updatedAt = createTimestamp();
-    const taskFile = writeTaskPromptFile(getProjectById(database, taskPrompt.projectId).path, taskPrompt);
+    const project = getProjectById(database, taskPrompt.projectId);
+    const pack = getActivePackForProject(database, project);
+    const chunk = pack && (pack.chunks || []).find((item) => item.id === taskPrompt.sourceChunkId);
+    if (chunk) {
+      if (nextTitle) chunk.title = nextTitle;
+      chunk.prompt = nextContent;
+      chunk.updatedAt = createTimestamp();
+      pack.updatedAt = createTimestamp();
+    }
+    const taskFile = writeTaskPromptFile(project.path, taskPrompt);
     taskPrompt.taskFileName = taskFile.taskFileName;
     taskPrompt.taskFilePath = taskFile.taskFilePath;
     return { taskPrompt, state: writeDatabase(database) };
@@ -2233,6 +2253,13 @@ function createVaultStore({ dbPath }) {
     taskPrompt.activeVersionId = version.id;
     taskPrompt.updatedAt = createTimestamp();
     const project = getProjectById(database, taskPrompt.projectId);
+    const pack = getActivePackForProject(database, project);
+    const chunk = pack && (pack.chunks || []).find((item) => item.id === taskPrompt.sourceChunkId);
+    if (chunk) {
+      chunk.prompt = taskPrompt.content;
+      chunk.updatedAt = createTimestamp();
+      pack.updatedAt = createTimestamp();
+    }
     const taskFile = writeTaskPromptFile(project.path, taskPrompt);
     taskPrompt.taskFileName = taskFile.taskFileName;
     taskPrompt.taskFilePath = taskFile.taskFilePath;

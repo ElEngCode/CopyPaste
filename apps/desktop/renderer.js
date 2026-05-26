@@ -125,6 +125,7 @@ const drawerState = {
   lastImprovePrompt: "",
   activeRoadmapPackId: "",
   activeDebateWorkflowId: "",
+  activeTaskPromptId: "",
   pendingDebatePrompt: null,
   showAllProjects: false
 };
@@ -739,6 +740,21 @@ function getSelectedChunk() {
   return { pack, chunk };
 }
 
+function getTaskPromptForChunk(chunk) {
+  if (!chunk) return null;
+  const taskPrompts = Array.isArray(latestVaultState.taskPrompts) ? latestVaultState.taskPrompts : [];
+  return taskPrompts.find((item) => item.sourceChunkId === chunk.id)
+    || taskPrompts.find((item) => item.roadmapItemId && item.roadmapItemId === chunk.roadmapItemId)
+    || null;
+}
+
+function getSelectedTaskPrompt() {
+  const selected = getSelectedChunk();
+  if (!selected) return null;
+  const taskPrompt = getTaskPromptForChunk(selected.chunk);
+  return taskPrompt ? { ...selected, taskPrompt } : null;
+}
+
 function getTaskImprovePayload(chunk, runHistory, promptText) {
   return {
     targetProvider: "chatgpt",
@@ -747,7 +763,7 @@ function getTaskImprovePayload(chunk, runHistory, promptText) {
     currentRole: "planner",
     text: String(promptText || ""),
     taskName: String(chunk && chunk.title || ""),
-    taskContent: String(chunk && chunk.prompt || ""),
+    taskContent: String(chunk && (chunk.prompt || chunk.content) || ""),
     runHistory: Array.isArray(runHistory) ? runHistory.map((item) => String(item.note || "")) : []
   };
 }
@@ -863,6 +879,13 @@ function getLatestMasterPlanDraftVersion(project) {
     .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))[0] || null;
 }
 
+function getLatestRoadmapDraftVersion(pack) {
+  const versions = Array.isArray(pack && pack.roadmapVersions) ? pack.roadmapVersions : [];
+  return versions
+    .filter((item) => !item.appliedAt && item.status !== "archived")
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))[0] || null;
+}
+
 function getPrimaryActionState(input = {}) {
   const project = input.project || {};
   const pack = input.pack || null;
@@ -918,6 +941,16 @@ function getPrimaryActionState(input = {}) {
       label: "Apply Master Plan",
       enabled: false,
       handler: "",
+      roadmapItemId: ""
+    };
+  }
+  const draftRoadmap = getLatestRoadmapDraftVersion(pack);
+  if (!roadmapItems.length && draftRoadmap) {
+    return {
+      id: "apply_roadmap",
+      label: "Apply Roadmap",
+      enabled: true,
+      handler: "applyRoadmapDraft",
       roadmapItemId: ""
     };
   }
@@ -1078,9 +1111,10 @@ function renderWorkspace() {
   }
 
   const chunk = selected.chunk;
-  if (elements.workspaceTaskName) elements.workspaceTaskName.value = String(chunk.title || "");
-  if (elements.workspaceTaskContent) elements.workspaceTaskContent.value = String(chunk.prompt || "");
-  if (elements.workspaceTaskStatus) elements.workspaceTaskStatus.value = getStatusOption(chunk.status);
+  const taskPrompt = getTaskPromptForChunk(chunk);
+  if (elements.workspaceTaskName) elements.workspaceTaskName.value = String((taskPrompt && taskPrompt.title) || chunk.title || "");
+  if (elements.workspaceTaskContent) elements.workspaceTaskContent.value = String((taskPrompt && taskPrompt.content) || chunk.prompt || "");
+  if (elements.workspaceTaskStatus) elements.workspaceTaskStatus.value = getStatusOption((taskPrompt && taskPrompt.status) || chunk.status);
 }
 
 function renderInspector() {
@@ -1108,16 +1142,20 @@ function renderInspector() {
   }
 
   const chunk = selected.chunk;
+  const taskPrompt = getTaskPromptForChunk(chunk);
   if (elements.inspectorImprovePrompt) elements.inspectorImprovePrompt.value = drawerState.lastImprovePrompt || "";
 
-  const versions = Array.isArray(chunk.versions) ? chunk.versions : [];
+  const versions = taskPrompt
+    ? (Array.isArray(latestVaultState.taskPromptVersions) ? latestVaultState.taskPromptVersions : [])
+      .filter((version) => version.taskPromptId === taskPrompt.id)
+    : (Array.isArray(chunk.versions) ? chunk.versions : []);
   if (elements.inspectorVersionsList) {
     elements.inspectorVersionsList.innerHTML = versions.length
       ? versions.map((version) => `<div class="list-item">
           <div><strong>${escapeHtml(version.source || "ai_improve")}</strong> | ${escapeHtml(version.createdAt || "")}</div>
-          <div class="field-help">${escapeHtml(String(version.responseText || "").slice(0, 160))}</div>
+          <div class="field-help">${escapeHtml(String(version.content || version.responseText || "").slice(0, 160))}</div>
           <div class="actions" style="margin-top:6px;">
-            <button type="button" class="secondary-btn compact-btn" data-action="apply-version" data-pack-id="${escapeHtml(selected.pack.id)}" data-chunk-id="${escapeHtml(chunk.id)}" data-version-id="${escapeHtml(version.id)}">Apply</button>
+            <button type="button" class="secondary-btn compact-btn" data-action="${taskPrompt ? "apply-task-prompt-version" : "apply-version"}" data-pack-id="${escapeHtml(selected.pack.id)}" data-chunk-id="${escapeHtml(chunk.id)}" data-task-prompt-id="${escapeHtml(taskPrompt ? taskPrompt.id : "")}" data-version-id="${escapeHtml(version.id)}">Apply</button>
           </div>
         </div>`).join("")
       : '<div class="muted">No versions yet.</div>';
@@ -1131,7 +1169,7 @@ function renderInspector() {
   }
 
   if (elements.inspectorDetails) {
-    elements.inspectorDetails.innerHTML = `<strong>${escapeHtml(chunk.title || "")}</strong><br>${escapeHtml(getTaskStatusLabel(chunk.status || "ready"))}<br>${escapeHtml(selected.pack.title || "")}`;
+    elements.inspectorDetails.innerHTML = `<strong>${escapeHtml((taskPrompt && taskPrompt.title) || chunk.title || "")}</strong><br>${escapeHtml(getTaskStatusLabel((taskPrompt && taskPrompt.status) || chunk.status || "ready"))}<br>${escapeHtml(selected.pack.title || "")}`;
   }
 }
 
@@ -1462,41 +1500,31 @@ async function renderResponse(text) {
     if (!versionResponse || versionResponse.ok === false) {
       throw new Error(versionResponse && versionResponse.error ? versionResponse.error : "Could not save task roadmap version.");
     }
-    const applyResponse = await desktopApi.applyRoadmapVersion({
-      packId,
-      versionId: versionResponse.version.id
-    });
-    if (!applyResponse || applyResponse.ok === false) {
-      throw new Error(applyResponse && applyResponse.error ? applyResponse.error : "Could not apply task roadmap.");
-    }
     drawerState.activeWorkflowContext = "debate_plan";
     drawerState.activeRoadmapPackId = "";
     drawerState.lastImprovePrompt = "";
-    renderVaultState(applyResponse.state);
+    renderVaultState(versionResponse.state);
     setBusy(false);
-    setStatus("Task roadmap created. Use the primary Plan action to create the first Codex task.", "success");
+    setStatus("Roadmap draft saved. Use Apply Roadmap to make it active.", "success");
     return;
   }
 
   if (drawerState.activeWorkflowContext === "task_improve") {
-    const selected = getSelectedChunk();
-    if (selected) {
-      desktopApi.addChunkVersion({
-        packId: selected.pack.id,
-        chunkId: selected.chunk.id,
-        source: "ai_improve",
-        promptSnapshot: drawerState.lastImprovePrompt,
+    const selected = getSelectedTaskPrompt();
+    const taskPromptId = drawerState.activeTaskPromptId || (selected && selected.taskPrompt.id);
+    if (taskPromptId) {
+      const response = await desktopApi.saveTaskImproveResponse({
+        taskPromptId,
         responseText: String(text || "")
-      }).then((response) => {
-        if (response && response.ok !== false) {
-          renderVaultState(response.state);
-          setStatus("AI improve response saved as proposed version.", "success");
-        }
-      }).catch((error) => {
-        setStatus(error.message || "Could not save AI improve response.", "error");
       });
+      if (!response || response.ok === false) {
+        throw new Error(response && response.error ? response.error : "Could not save AI improve response.");
+      }
+      renderVaultState(response.state);
+      setStatus("AI improve response saved as proposed version.", "success");
     }
     drawerState.activeWorkflowContext = "debate_plan";
+    drawerState.activeTaskPromptId = "";
     setBusy(false);
     return;
   }
@@ -2135,6 +2163,21 @@ async function handleProjectBrowserClick(event) {
       setStatus(error.message, "error");
     }
   }
+  if (action === "apply-task-prompt-version") {
+    try {
+      const response = await desktopApi.applyTaskPromptVersion({
+        taskPromptId: actionEl.dataset.taskPromptId,
+        versionId: actionEl.dataset.versionId
+      });
+      if (!response || response.ok === false) {
+        throw new Error(response && response.error ? response.error : "Could not apply task prompt version.");
+      }
+      renderVaultState(response.state);
+      setStatus("Version applied to task prompt.", "success");
+    } catch (error) {
+      setStatus(error.message, "error");
+    }
+  }
 }
 
 function hideProjectContextMenu() {
@@ -2255,7 +2298,21 @@ async function saveWorkspaceTask() {
     setStatus("Select a task first.", "error");
     return;
   }
+  const selectedTask = getSelectedTaskPrompt();
   const requestedStatus = elements.workspaceTaskStatus ? elements.workspaceTaskStatus.value : String(selected.chunk.status || "ready");
+  if (selectedTask) {
+    const response = await desktopApi.updateTaskPromptContentById({
+      taskPromptId: selectedTask.taskPrompt.id,
+      title: elements.workspaceTaskName.value,
+      content: elements.workspaceTaskContent.value
+    });
+    if (!response || response.ok === false) {
+      throw new Error(response && response.error ? response.error : "Could not save task prompt.");
+    }
+    renderVaultState(response.state);
+    setStatus("Task content saved.", "success");
+    return;
+  }
   const response = await desktopApi.updateChunkContent({
     packId: selected.pack.id,
     chunkId: selected.chunk.id,
@@ -2419,6 +2476,28 @@ async function applyMasterPlanDraft() {
   setStatus("Master plan applied.", "success");
 }
 
+async function applyRoadmapDraft() {
+  const selected = getSelectedPlanProjectAndPack();
+  if (!selected.project || !selected.pack) {
+    setStatus("Select a saved project with a roadmap draft first.", "error");
+    return;
+  }
+  const draft = getLatestRoadmapDraftVersion(selected.pack);
+  if (!draft) {
+    setStatus("No roadmap draft is ready to apply.", "error");
+    return;
+  }
+  const response = await desktopApi.applyRoadmapVersion({
+    packId: selected.pack.id,
+    versionId: draft.id
+  });
+  if (!response || response.ok === false) {
+    throw new Error(response && response.error ? response.error : "Could not apply roadmap.");
+  }
+  renderVaultState(response.state);
+  setStatus("Roadmap applied. Use the primary Plan action to create the first task.", "success");
+}
+
 async function runPlanPrimaryAction() {
   const selected = getSelectedPlanProjectAndPack();
   const action = getPlanPrimaryAction({
@@ -2439,6 +2518,8 @@ async function runPlanPrimaryAction() {
     await saveProjectBriefFromWorkspace();
   } else if (action.handler === "applyMasterPlanDraft") {
     await applyMasterPlanDraft();
+  } else if (action.handler === "applyRoadmapDraft") {
+    await applyRoadmapDraft();
   } else if (action.handler === "createTaskRoadmap") {
     await createTaskRoadmap();
   } else if (action.handler === "startNextTask") {
@@ -2447,18 +2528,18 @@ async function runPlanPrimaryAction() {
 }
 
 async function buildImprovePromptForDrawer() {
-  const selected = getSelectedChunk();
+  const selected = getSelectedTaskPrompt();
   if (!selected) {
     setStatus("Select a task first.", "error");
     return;
   }
-  const response = await desktopApi.buildChunkImprovePrompt({
-    packId: selected.pack.id,
-    chunkId: selected.chunk.id
+  const response = await desktopApi.prepareTaskImprovePrompt({
+    taskPromptId: selected.taskPrompt.id
   });
   if (!response || response.ok === false) {
     throw new Error(response && response.error ? response.error : "Could not build improve prompt.");
   }
+  drawerState.activeTaskPromptId = selected.taskPrompt.id;
   drawerState.lastImprovePrompt = String(response.prompt || "");
   if (elements.inspectorImprovePrompt) {
     elements.inspectorImprovePrompt.value = drawerState.lastImprovePrompt;
@@ -2468,7 +2549,7 @@ async function buildImprovePromptForDrawer() {
 }
 
 async function sendImprovePrompt() {
-  const selected = getSelectedChunk();
+  const selected = getSelectedTaskPrompt();
   if (!selected) {
     setStatus("Select a task first.", "error");
     return;
@@ -2477,8 +2558,9 @@ async function sendImprovePrompt() {
     await buildImprovePromptForDrawer();
   }
   drawerState.activeWorkflowContext = "task_improve";
+  drawerState.activeTaskPromptId = selected.taskPrompt.id;
   setBusy(true);
-  const improvePayload = getTaskImprovePayload(selected.chunk, selected.chunk.runHistory || [], drawerState.lastImprovePrompt);
+  const improvePayload = getTaskImprovePayload(selected.taskPrompt, [], drawerState.lastImprovePrompt);
   const response = await desktopApi.sendWorkflow({
     chatgptPrefix: "",
     claudePrefix: "",
@@ -2600,41 +2682,42 @@ async function openSelectedProjectFolder() {
 }
 
 async function approveSelectedPrompt() {
-  const selected = getSelectedChunk();
+  const selected = getSelectedTaskPrompt();
   if (!selected) {
     setStatus("Select a task first.", "error");
     return;
   }
-  const response = await desktopApi.approvePrompt({ packId: selected.pack.id, chunkId: selected.chunk.id });
+  const response = await desktopApi.approveTaskPrompt({ taskPromptId: selected.taskPrompt.id });
   if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not approve prompt.");
   renderVaultState(response.state);
   setStatus("Task approved.", "success");
 }
 
 async function copySelectedPromptToCodex() {
-  const selected = getSelectedChunk();
+  const selected = getSelectedTaskPrompt();
   if (!selected) {
     setStatus("Select a task first.", "error");
     return;
   }
-  const response = await desktopApi.copyPromptToCodex({ packId: selected.pack.id, chunkId: selected.chunk.id });
+  const response = await desktopApi.copyCodexHandoff({ taskPromptId: selected.taskPrompt.id });
   if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not copy prompt to Codex.");
   renderVaultState(response.state);
   setStatus("Approved task copied for Codex.", "success");
 }
 
 async function markSelectedPromptDone() {
-  const selected = getSelectedChunk();
+  const selected = getSelectedTaskPrompt();
   if (!selected) {
     setStatus("Select a task first.", "error");
     return;
   }
   const note = elements.workspacePromptRunNote ? elements.workspacePromptRunNote.value : "";
-  const response = await desktopApi.markPromptDone({
-    packId: selected.pack.id,
-    chunkId: selected.chunk.id,
+  const response = await desktopApi.markTaskPromptDone({
+    taskPromptId: selected.taskPrompt.id,
     note,
-    source: "codex_run"
+    result: "",
+    commitHash: "",
+    verificationSummary: ""
   });
   if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not mark prompt done.");
   if (elements.workspacePromptRunNote) elements.workspacePromptRunNote.value = "";
@@ -2643,14 +2726,7 @@ async function markSelectedPromptDone() {
 }
 
 async function copySelectedRoadmapHandoff() {
-  const selected = getSelectedChunk();
-  if (!selected) throw new Error("Select a task first.");
-  const selector = elements.codexTaskSelector ? String(elements.codexTaskSelector.value || "").trim() : "";
-  if (!selector) throw new Error("Task selector is required (example: 1-3).");
-  const response = await desktopApi.copyRoadmapHandoff({ packId: selected.pack.id, selector });
-  if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not copy Codex handoff.");
-  renderVaultState(response.state);
-  setStatus(`Copied Codex handoff for tasks: ${response.selector}`, "success");
+  await copySelectedPromptToCodex();
 }
 
 function installDomReferences() {

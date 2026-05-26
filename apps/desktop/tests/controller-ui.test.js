@@ -311,6 +311,25 @@ assert.deepEqual(getPlanPrimaryAction({
     activeMasterPlanVersionId: "mp_1"
   },
   pack: {
+    roadmap: { items: [] },
+    roadmapVersions: [{ id: "roadmap_version_1", responseText: "{\"items\":[]}", createdAt: "2024-01-01T00:00:00.000Z", appliedAt: "" }],
+    chunks: []
+  }
+}), {
+  id: "apply_roadmap",
+  label: "Apply Roadmap",
+  enabled: true,
+  handler: "applyRoadmapDraft",
+  roadmapItemId: ""
+});
+assert.deepEqual(getPlanPrimaryAction({
+  project: {
+    id: "project_1",
+    idea: "Build a planner.",
+    masterPlan: "# Master Plan\n\nReal plan",
+    activeMasterPlanVersionId: "mp_1"
+  },
+  pack: {
     roadmap: { items: [{ id: "roadmap_1", order: 1, title: "Audit workspace", dependsOn: [] }] },
     chunks: []
   }
@@ -391,7 +410,18 @@ assert.match(rootHtml, /data-context-action="copy-task"/);
 assert.match(rootHtml, /data-context-action="delete-task"/);
 assert.match(rendererJs, /projectContextMenu\.dataset\.open !== "true"/);
 assert.match(rendererJs, /async function createTaskRoadmap/);
+assert.match(rendererJs, /async function applyRoadmapDraft/);
 assert.match(rendererJs, /async function startNextTask/);
+assert.doesNotMatch(rendererJs, /desktopApi\.approvePrompt\(/);
+assert.doesNotMatch(rendererJs, /desktopApi\.copyPromptToCodex\(/);
+assert.doesNotMatch(rendererJs, /desktopApi\.markPromptDone\(/);
+assert.doesNotMatch(rendererJs, /desktopApi\.buildChunkImprovePrompt\(/);
+assert.doesNotMatch(rendererJs, /desktopApi\.addChunkVersion\(/);
+assert.match(rendererJs, /desktopApi\.approveTaskPrompt\(/);
+assert.match(rendererJs, /desktopApi\.copyCodexHandoff\(/);
+assert.match(rendererJs, /desktopApi\.markTaskPromptDone\(/);
+assert.match(rendererJs, /desktopApi\.prepareTaskImprovePrompt\(/);
+assert.match(rendererJs, /desktopApi\.saveTaskImproveResponse\(/);
 assert.match(rootHtml, /Task name/);
 assert.match(rootHtml, /Save Task/);
 assert.match(rootHtml, /Improve Task/);

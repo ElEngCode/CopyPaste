@@ -1,5 +1,19 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-27 Workflow Repair Notes
+
+- `apps/desktop/prompt-vault.js`
+  - `createTaskPromptFromRoadmapItem()` now performs roadmap chunk creation and taskPrompt creation in one DB snapshot to preserve `promptPacks[].chunks`.
+  - Task prompt content/version application also mirrors content back to the source chunk for legacy tree compatibility.
+- `apps/desktop/renderer.js`
+  - Task improve, approval, Codex handoff, and done actions now use taskPrompt IPC APIs instead of legacy chunk APIs.
+  - Roadmap generation persists an AI response as a draft roadmap version; `applyRoadmapDraft()` applies it only after user action.
+  - Primary action state now includes `apply_roadmap` for unapplied roadmap draft versions.
+- Tests
+  - `prompt-vault.test.js` verifies task prompt creation leaves its source chunk persisted.
+  - `workflow-integration.test.js` verifies completing task 001 unlocks exact next item `roadmap_2`.
+  - `controller-ui.test.js` guards renderer against reintroducing legacy task-action APIs.
+
 ## 2026-05-27 Task Prompt Versioning + Handoff Gate
 
 - Protocol now provides `buildTaskImprovePrompt(...)` for deterministic AI task-improvement prompt generation.
