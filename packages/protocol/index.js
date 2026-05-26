@@ -519,6 +519,41 @@
     ].filter(Boolean).join("\n");
   }
 
+  function buildTaskImprovePrompt(project = {}, taskPrompt = {}, activeMasterPlan = "", runHistory = []) {
+    const projectName = asText(project.name) || "Untitled Project";
+    const projectPath = asText(project.path) || "(project path not set)";
+    const taskTitle = asText(taskPrompt.title) || "Task Prompt";
+    const taskContent = asText(taskPrompt.content || taskPrompt.prompt);
+    const masterPlan = asText(activeMasterPlan) || "No active master plan provided.";
+    const runs = Array.isArray(runHistory) ? runHistory : [];
+    const runLines = runs.length
+      ? runs.map((run, index) => `- ${index + 1}. ${asText(run.note || run.result || run.verificationSummary || "") || "No details provided."}`)
+      : ["- No previous run history."];
+    return [
+      "Improve the task prompt while keeping scope strict to one roadmap item.",
+      "",
+      `Project name: ${projectName}`,
+      `Project path: ${projectPath}`,
+      `Task title: ${taskTitle}`,
+      "",
+      "Current task prompt:",
+      taskContent || "(empty task prompt)",
+      "",
+      "Active master plan:",
+      masterPlan,
+      "",
+      "Run history:",
+      ...runLines,
+      "",
+      "Acceptance criteria:",
+      "- keep strict scope to current task only",
+      "- keep concrete target files and verification commands",
+      "- do not introduce future task work",
+      "",
+      "Return only improved prompt."
+    ].join("\n");
+  }
+
   function normalizeRoadmap(roadmap = {}) {
     const sourceItems = Array.isArray(roadmap.items) ? roadmap.items : [];
     return {
@@ -600,6 +635,7 @@
     createProjectBuilderDebate,
     buildPlanningDebatePrompt,
     buildRoadmapPrompt,
+    buildTaskImprovePrompt,
     parseRoadmapResponse,
     validateRoadmap,
     normalizeRoadmap,

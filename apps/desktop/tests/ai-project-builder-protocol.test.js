@@ -157,6 +157,13 @@ const roadmapPrompt = protocol.buildRoadmapPrompt(
 );
 assert.match(roadmapPrompt, /Generate a project roadmap strictly from the applied master plan/);
 assert.match(roadmapPrompt, /Return JSON only with shape/);
+const improveTaskPrompt = protocol.buildTaskImprovePrompt(
+  { name: "Planner", path: "F:\\Projects\\Planner" },
+  { title: "Task 1", content: "Current prompt body" },
+  "# Master Plan\n\nBody",
+  [{ note: "Run #1 completed." }]
+);
+assert.match(improveTaskPrompt, /Return only improved prompt/);
 
 const parsedDirectRoadmap = protocol.parseRoadmapResponse(JSON.stringify({
   items: [{
