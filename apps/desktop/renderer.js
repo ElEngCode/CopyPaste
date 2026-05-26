@@ -869,6 +869,7 @@ function getPlanPrimaryAction(input = {}) {
   const projectIdea = String(input.projectIdea || project.idea || "").trim();
   const masterPlan = String(input.masterPlanText || project.masterPlan || "").trim();
   const draftMasterPlan = getLatestMasterPlanDraftVersion(project);
+  const hasAppliedMasterPlan = Boolean(project && project.activeMasterPlanVersionId);
 
   if (draftMasterPlan) {
     return {
@@ -891,6 +892,15 @@ function getPlanPrimaryAction(input = {}) {
   }
 
   const roadmapItems = pack && pack.roadmap && Array.isArray(pack.roadmap.items) ? pack.roadmap.items : [];
+  if (!hasAppliedMasterPlan) {
+    return {
+      id: "master_plan_required",
+      label: "Apply Master Plan",
+      enabled: false,
+      handler: "",
+      roadmapItemId: ""
+    };
+  }
   if (!roadmapItems.length) {
     return {
       id: "roadmap",

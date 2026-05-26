@@ -267,6 +267,21 @@ assert.deepEqual(getPlanPrimaryAction({
   project: { id: "project_1", idea: "Build a planner.", masterPlan: "# Master Plan\n\nReal plan" },
   pack: { roadmap: { items: [] }, chunks: [] }
 }), {
+  id: "master_plan_required",
+  label: "Apply Master Plan",
+  enabled: false,
+  handler: "",
+  roadmapItemId: ""
+});
+assert.deepEqual(getPlanPrimaryAction({
+  project: {
+    id: "project_1",
+    idea: "Build a planner.",
+    masterPlan: "# Master Plan\n\nReal plan",
+    activeMasterPlanVersionId: "mp_1"
+  },
+  pack: { roadmap: { items: [] }, chunks: [] }
+}), {
   id: "roadmap",
   label: "Create Task Roadmap",
   enabled: true,
@@ -274,7 +289,12 @@ assert.deepEqual(getPlanPrimaryAction({
   roadmapItemId: ""
 });
 assert.deepEqual(getPlanPrimaryAction({
-  project: { id: "project_1", idea: "Build a planner.", masterPlan: "# Master Plan\n\nReal plan" },
+  project: {
+    id: "project_1",
+    idea: "Build a planner.",
+    masterPlan: "# Master Plan\n\nReal plan",
+    activeMasterPlanVersionId: "mp_1"
+  },
   pack: {
     roadmap: { items: [{ id: "roadmap_1", order: 1, title: "Audit workspace", dependsOn: [] }] },
     chunks: []
@@ -287,7 +307,12 @@ assert.deepEqual(getPlanPrimaryAction({
   roadmapItemId: "roadmap_1"
 });
 assert.deepEqual(getPlanPrimaryAction({
-  project: { id: "project_1", idea: "Build a planner.", masterPlan: "# Master Plan\n\nReal plan" },
+  project: {
+    id: "project_1",
+    idea: "Build a planner.",
+    masterPlan: "# Master Plan\n\nReal plan",
+    activeMasterPlanVersionId: "mp_1"
+  },
   pack: {
     roadmap: { items: [{ id: "roadmap_1", order: 1, title: "Audit workspace", dependsOn: [] }] },
     chunks: [{ roadmapItemId: "roadmap_1", status: "in_progress" }]
