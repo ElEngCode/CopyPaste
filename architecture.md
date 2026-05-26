@@ -1,5 +1,9 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-26 Project History Documentation
+
+- Added `PROJECT_HISTORY.md` as the human-readable project evolution record: original purpose, expected workflow, major evolution stages, current runtime, current data model, repository link, and active PR link.
+
 ## 2026-05-26 Planning Workflow File Sync + Ergonomic Primary Action
 
 - Prompt Vault DB remains the canonical planning store, but applied planning state now mirrors back to project files:

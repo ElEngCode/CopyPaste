@@ -1,5 +1,10 @@
 # Codex Progress
 
+## 2026-05-26 Project History Documentation
+
+- Added `PROJECT_HISTORY.md` at the repository root.
+- The document explains how CopyPaste started, what it was meant to do, how it evolved, what it does now, and where the online repository/PR live.
+
 ## 2026-05-26 Planning Workflow Repair
 
 - Reproduced the planning fracture with failing tests:
