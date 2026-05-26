@@ -150,3 +150,36 @@ const synthesisPrompt = protocol.buildPlanningDebatePrompt(
   debate.rounds
 );
 assert.match(synthesisPrompt.prompt, /final master plan/i);
+
+const roadmapPrompt = protocol.buildRoadmapPrompt(
+  { name: "Planner", path: "F:\\Projects\\Planner" },
+  "# Master Plan\n\nUse staged delivery."
+);
+assert.match(roadmapPrompt, /Generate a project roadmap strictly from the applied master plan/);
+assert.match(roadmapPrompt, /Return JSON only with shape/);
+
+const parsedDirectRoadmap = protocol.parseRoadmapResponse(JSON.stringify({
+  items: [{
+    id: "roadmap_1",
+    order: 1,
+    title: "Task 1",
+    goal: "Goal",
+    why: "Why",
+    targetFiles: ["a.js"],
+    researchNeeded: [],
+    acceptanceCriteria: [],
+    verificationCommands: ["npm.cmd run verify"],
+    dependsOn: [],
+    parallelGroup: ""
+  }]
+}));
+assert.equal(parsedDirectRoadmap.items.length, 1);
+assert.equal(parsedDirectRoadmap.items[0].id, "roadmap_1");
+
+const parsedFencedRoadmap = protocol.parseRoadmapResponse("```json\n{\"items\":[{\"id\":\"roadmap_1\",\"order\":1,\"title\":\"Task 1\",\"goal\":\"Goal\",\"why\":\"Why\",\"targetFiles\":[],\"researchNeeded\":[],\"acceptanceCriteria\":[],\"verificationCommands\":[\"npm.cmd run verify\"],\"dependsOn\":[],\"parallelGroup\":\"\"}]}\n```");
+assert.equal(parsedFencedRoadmap.items[0].title, "Task 1");
+
+assert.throws(
+  () => protocol.parseRoadmapResponse("{\"items\":[{\"id\":\"roadmap_1\",\"order\":1,\"title\":\"A\",\"goal\":\"G\",\"why\":\"W\",\"targetFiles\":[],\"researchNeeded\":[],\"acceptanceCriteria\":[],\"verificationCommands\":[\"npm.cmd run verify\"],\"dependsOn\":[\"roadmap_2\"],\"parallelGroup\":\"\"}]}"),
+  /Invalid roadmap response/
+);
