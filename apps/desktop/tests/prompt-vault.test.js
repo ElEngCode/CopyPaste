@@ -306,6 +306,49 @@ try {
   assert.equal(savedBrief.project.masterPlan, "Master plan v1");
   assert.ok(savedBrief.project.activePromptPackId);
 
+  const createdWorkflow = store.createDebateWorkflow(savedBrief.project.id);
+  assert.equal(createdWorkflow.workflow.projectId, savedBrief.project.id);
+  assert.equal(createdWorkflow.workflow.currentStageId, "gpt_clarifier");
+  assert.equal(createdWorkflow.workflow.status, "ready_for_user");
+  assert.deepEqual(createdWorkflow.workflow.rounds, []);
+
+  const activeWorkflow = store.getActiveDebateWorkflow(savedBrief.project.id);
+  assert.equal(activeWorkflow.workflow.id, createdWorkflow.workflow.id);
+
+  const savedRound = store.saveDebateRound(createdWorkflow.workflow.id, {
+    stageId: "gpt_clarifier",
+    provider: "chatgpt",
+    role: "clarifier",
+    promptText: "Clarify idea",
+    responseText: "Clarified response"
+  });
+  assert.equal(savedRound.round.stageId, "gpt_clarifier");
+  assert.equal(savedRound.round.provider, "chatgpt");
+  assert.equal(savedRound.workflow.rounds.length, 1);
+
+  const advancedOne = store.advanceDebateWorkflow(createdWorkflow.workflow.id);
+  assert.equal(advancedOne.workflow.currentStageId, "gpt_planner");
+  assert.equal(advancedOne.workflow.status, "ready_for_user");
+
+  let advancedWorkflow = advancedOne.workflow;
+  for (let step = 0; step < 6; step += 1) {
+    advancedWorkflow = store.advanceDebateWorkflow(createdWorkflow.workflow.id).workflow;
+  }
+  assert.equal(advancedWorkflow.status, "complete");
+  assert.ok(advancedWorkflow.completedAt);
+
+  const afterCompleteActive = store.getActiveDebateWorkflow(savedBrief.project.id);
+  assert.equal(afterCompleteActive.workflow, null);
+
+  const manualWorkflow = store.createDebateWorkflow(savedBrief.project.id).workflow;
+  const manuallyCompleted = store.completeDebateWorkflow(manualWorkflow.id);
+  assert.equal(manuallyCompleted.workflow.status, "complete");
+
+  const reloadedStore = createVaultStore({ dbPath });
+  const reloadedWorkflow = reloadedStore.getDebateWorkflow(createdWorkflow.workflow.id);
+  assert.equal(reloadedWorkflow.workflow.rounds.length, 1);
+  assert.equal(reloadedWorkflow.workflow.status, "complete");
+
   const masterVersion = store.addMasterPlanVersion(savedBrief.project.id, {
     source: "ai_improve",
     promptSnapshot: "Improve master plan",

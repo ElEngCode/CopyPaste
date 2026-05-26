@@ -1,5 +1,26 @@
 # Codex Progress
 
+## 2026-05-27 Task 004 Persistent Debate Workflow Methods
+
+- Added persistent debate workflow stage order in Prompt Vault store:
+  - `gpt_clarifier`
+  - `gpt_planner`
+  - `claude_critic`
+  - `gpt_rebuttal`
+  - `gpt_revised_plan`
+  - `claude_final_review`
+  - `gpt_final_synthesis`
+- Implemented store methods:
+  - `createDebateWorkflow(projectId)`
+  - `getActiveDebateWorkflow(projectId)`
+  - `getDebateWorkflow(workflowId)`
+  - `saveDebateRound(workflowId, input)`
+  - `advanceDebateWorkflow(workflowId)`
+  - `completeDebateWorkflow(workflowId)`
+- Debate rounds now persist stage/provider/role/prompt/response and timestamps in DB, and workflow stage progression survives reloads.
+- Exposed the new store methods through desktop IPC channels and preload bridge APIs.
+- Added Prompt Vault tests for create/get/save/advance/complete behavior and persisted reload checks.
+
 ## 2026-05-27 Task 003 Persistent Workflow Schema
 
 - Added schema v2 persistence fields to Prompt Vault database shape:

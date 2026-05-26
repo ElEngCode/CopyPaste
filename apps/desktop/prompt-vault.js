@@ -10,6 +10,15 @@ const DEFAULT_GIT_MODE = "every_chunk";
 const VALID_GIT_MODES = new Set(["none", "final_only", "every_chunk"]);
 const VALID_CHUNK_STATUSES = new Set(["draft", "ready", "approved", "copied", "launcher_copied", "in_progress", "done"]);
 const VALID_CHUNK_STRATEGIES = new Set(["simple_3", "steps_1_3", "architecture_implementation_tests_release"]);
+const PLANNING_DEBATE_STAGES = [
+  "gpt_clarifier",
+  "gpt_planner",
+  "claude_critic",
+  "gpt_rebuttal",
+  "gpt_revised_plan",
+  "claude_final_review",
+  "gpt_final_synthesis"
+];
 
 function createId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -1668,6 +1677,96 @@ function createVaultStore({ dbPath }) {
     return project;
   }
 
+  function createDebateWorkflow(projectId) {
+    const database = readDatabase();
+    const project = getProjectById(database, projectId);
+    const workflow = sanitizeDebateWorkflow({
+      id: createId("debate_workflow"),
+      projectId: project.id,
+      status: "ready_for_user",
+      currentStageId: PLANNING_DEBATE_STAGES[0],
+      rounds: [],
+      createdAt: createTimestamp(),
+      updatedAt: createTimestamp(),
+      completedAt: ""
+    });
+    database.debateWorkflows.unshift(workflow);
+    return { workflow, state: writeDatabase(database) };
+  }
+
+  function getActiveDebateWorkflow(projectId) {
+    const database = readDatabase();
+    getProjectById(database, projectId);
+    const workflow = database.debateWorkflows
+      .filter((item) => item.projectId === projectId)
+      .sort((left, right) => String(right.updatedAt || right.createdAt || "").localeCompare(String(left.updatedAt || left.createdAt || "")))
+      .find((item) => item.status !== "complete") || null;
+    return { workflow, state: writeDatabase(database) };
+  }
+
+  function getDebateWorkflow(workflowId) {
+    const database = readDatabase();
+    const workflow = database.debateWorkflows.find((item) => item.id === workflowId);
+    if (!workflow) {
+      throw new Error("Debate workflow not found.");
+    }
+    return { workflow, state: writeDatabase(database) };
+  }
+
+  function saveDebateRound(workflowId, input) {
+    const database = readDatabase();
+    const workflow = database.debateWorkflows.find((item) => item.id === workflowId);
+    if (!workflow) {
+      throw new Error("Debate workflow not found.");
+    }
+    const responseText = String(input && input.responseText || input && input.responseReceived || "");
+    const round = sanitizeDebateRound({
+      id: createId("debate_round"),
+      workflowId: workflow.id,
+      stageId: normalizeString(input && input.stageId) || workflow.currentStageId || PLANNING_DEBATE_STAGES[0],
+      provider: normalizeString(input && input.provider),
+      role: normalizeString(input && input.role),
+      promptText: String(input && input.promptText || input && input.promptSent || ""),
+      responseText,
+      createdAt: createTimestamp(),
+      updatedAt: createTimestamp()
+    });
+    workflow.rounds.push(round);
+    workflow.updatedAt = createTimestamp();
+    return { workflow, round, state: writeDatabase(database) };
+  }
+
+  function advanceDebateWorkflow(workflowId) {
+    const database = readDatabase();
+    const workflow = database.debateWorkflows.find((item) => item.id === workflowId);
+    if (!workflow) {
+      throw new Error("Debate workflow not found.");
+    }
+    const currentStageId = normalizeString(workflow.currentStageId) || PLANNING_DEBATE_STAGES[0];
+    const stageIndex = PLANNING_DEBATE_STAGES.indexOf(currentStageId);
+    const nextStageId = stageIndex >= 0 ? PLANNING_DEBATE_STAGES[stageIndex + 1] : "";
+    if (!nextStageId) {
+      workflow.status = "complete";
+      workflow.completedAt = createTimestamp();
+    } else {
+      workflow.currentStageId = nextStageId;
+    }
+    workflow.updatedAt = createTimestamp();
+    return { workflow, state: writeDatabase(database) };
+  }
+
+  function completeDebateWorkflow(workflowId) {
+    const database = readDatabase();
+    const workflow = database.debateWorkflows.find((item) => item.id === workflowId);
+    if (!workflow) {
+      throw new Error("Debate workflow not found.");
+    }
+    workflow.status = "complete";
+    workflow.completedAt = createTimestamp();
+    workflow.updatedAt = createTimestamp();
+    return { workflow, state: writeDatabase(database) };
+  }
+
   function addMasterPlanVersion(projectId, input) {
     const database = readDatabase();
     const project = getProjectById(database, projectId);
@@ -2020,6 +2119,12 @@ function createVaultStore({ dbPath }) {
     addChunkRunHistory,
     createManualChunk,
     buildChunkImprovePrompt,
+    createDebateWorkflow,
+    getActiveDebateWorkflow,
+    getDebateWorkflow,
+    saveDebateRound,
+    advanceDebateWorkflow,
+    completeDebateWorkflow,
     addMasterPlanVersion,
     applyMasterPlanVersion,
     addRoadmapVersion,

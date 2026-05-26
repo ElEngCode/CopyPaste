@@ -1,5 +1,19 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-27 Debate Workflow Store API
+
+- Prompt Vault now stores debate workflows as first-class persisted records under `debateWorkflows`.
+- New store API methods:
+  - `createDebateWorkflow(projectId)`
+  - `getActiveDebateWorkflow(projectId)`
+  - `getDebateWorkflow(workflowId)`
+  - `saveDebateRound(workflowId, input)`
+  - `advanceDebateWorkflow(workflowId)`
+  - `completeDebateWorkflow(workflowId)`
+- Round persistence includes stage id, provider, role, prompt text, response text, and timestamps.
+- Stage advancement is explicit and human-gated: one call advances one stage; final stage transition marks workflow `complete`.
+- Main-process IPC handlers and preload bridge now expose the debate workflow API for renderer use without local-only debate state.
+
 ## 2026-05-27 Schema v2 Baseline
 
 - Prompt Vault DB now carries `schemaVersion: 2` as the canonical workflow schema marker.

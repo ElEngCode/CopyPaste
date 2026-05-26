@@ -32,6 +32,12 @@ const VAULT_ADD_CHUNK_RUN_HISTORY_CHANNEL = "VAULT_ADD_CHUNK_RUN_HISTORY";
 const VAULT_CREATE_MANUAL_CHUNK_CHANNEL = "VAULT_CREATE_MANUAL_CHUNK";
 const VAULT_BUILD_CHUNK_IMPROVE_PROMPT_CHANNEL = "VAULT_BUILD_CHUNK_IMPROVE_PROMPT";
 const VAULT_SAVE_PROJECT_BRIEF_CHANNEL = "VAULT_SAVE_PROJECT_BRIEF";
+const VAULT_CREATE_DEBATE_WORKFLOW_CHANNEL = "VAULT_CREATE_DEBATE_WORKFLOW";
+const VAULT_GET_ACTIVE_DEBATE_WORKFLOW_CHANNEL = "VAULT_GET_ACTIVE_DEBATE_WORKFLOW";
+const VAULT_GET_DEBATE_WORKFLOW_CHANNEL = "VAULT_GET_DEBATE_WORKFLOW";
+const VAULT_SAVE_DEBATE_ROUND_CHANNEL = "VAULT_SAVE_DEBATE_ROUND";
+const VAULT_ADVANCE_DEBATE_WORKFLOW_CHANNEL = "VAULT_ADVANCE_DEBATE_WORKFLOW";
+const VAULT_COMPLETE_DEBATE_WORKFLOW_CHANNEL = "VAULT_COMPLETE_DEBATE_WORKFLOW";
 const VAULT_ADD_MASTER_PLAN_VERSION_CHANNEL = "VAULT_ADD_MASTER_PLAN_VERSION";
 const VAULT_APPLY_MASTER_PLAN_VERSION_CHANNEL = "VAULT_APPLY_MASTER_PLAN_VERSION";
 const VAULT_ADD_ROADMAP_VERSION_CHANNEL = "VAULT_ADD_ROADMAP_VERSION";
@@ -680,6 +686,43 @@ ipcMain.handle(VAULT_SAVE_PROJECT_BRIEF_CHANNEL, (_event, payload) => invokeSafe
   const result = getVaultStore().saveProjectBrief(payload || {});
   sendVaultStateToRenderer(result.state);
   return { ok: true, project: result.project, state: result.state };
+}));
+
+ipcMain.handle(VAULT_CREATE_DEBATE_WORKFLOW_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().createDebateWorkflow(String(payload && payload.projectId || ""));
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, workflow: result.workflow, state: result.state };
+}));
+
+ipcMain.handle(VAULT_GET_ACTIVE_DEBATE_WORKFLOW_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().getActiveDebateWorkflow(String(payload && payload.projectId || ""));
+  return { ok: true, workflow: result.workflow, state: result.state };
+}));
+
+ipcMain.handle(VAULT_GET_DEBATE_WORKFLOW_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().getDebateWorkflow(String(payload && payload.workflowId || ""));
+  return { ok: true, workflow: result.workflow, state: result.state };
+}));
+
+ipcMain.handle(VAULT_SAVE_DEBATE_ROUND_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().saveDebateRound(
+    String(payload && payload.workflowId || ""),
+    payload || {}
+  );
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, workflow: result.workflow, round: result.round, state: result.state };
+}));
+
+ipcMain.handle(VAULT_ADVANCE_DEBATE_WORKFLOW_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().advanceDebateWorkflow(String(payload && payload.workflowId || ""));
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, workflow: result.workflow, state: result.state };
+}));
+
+ipcMain.handle(VAULT_COMPLETE_DEBATE_WORKFLOW_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().completeDebateWorkflow(String(payload && payload.workflowId || ""));
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, workflow: result.workflow, state: result.state };
 }));
 
 ipcMain.handle(VAULT_ADD_MASTER_PLAN_VERSION_CHANNEL, (_event, payload) => invokeSafely(async () => {
