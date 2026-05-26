@@ -1,5 +1,13 @@
 # Codex Progress
 
+Planning workflow repair:
+- Added regression coverage for master-plan and roadmap file mirroring in `prompt-vault.test.js`.
+- Added UI regression coverage for the reduced Plan action row and `getPlanPrimaryAction()` labels.
+- Prompt Vault now writes applied planning state back to `masterplan.md`, `plan-roadmap.md`, and roadmap task files.
+- Existing projects with DB roadmaps and scaffold-only roadmap files are repaired during vault state load.
+- The active Plan UI now shows `Save Draft` and one stage-aware primary action instead of multiple competing planning buttons.
+- Verified with `npm.cmd run desktop:test` and root `npm.cmd run verify`.
+
 Completed baseline:
 - Electron shell + preload bridge + vanilla renderer.
 - Local JSON persistence with migration/sanitize + startup recovery.

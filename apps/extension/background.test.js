@@ -35,7 +35,16 @@ function createChromeMock({ storedNextTarget = "chatgpt", readText = "processed 
 
   const chromeMock = {
     runtime: {
-      lastError: null
+      lastError: null,
+      getURL(resourcePath) {
+        operations.push(["runtime.getURL", resourcePath]);
+        return `chrome-extension://copy/${resourcePath}`;
+      },
+      onMessage: {
+        addListener(listener) {
+          operations.push(["runtime.onMessage.addListener", typeof listener]);
+        }
+      }
     },
     storage: {
       local: {
@@ -80,6 +89,14 @@ function createChromeMock({ storedNextTarget = "chatgpt", readText = "processed 
         }
 
         done({ ok: true, status: "submitted", previousText: "old output" });
+      },
+      remove(tabId, callback) {
+        operations.push(["remove", tabId]);
+        if (callback) callback();
+      },
+      create(createProperties, callback) {
+        operations.push(["create", createProperties]);
+        callback({ id: 88, url: createProperties.url });
       }
     }
   };
@@ -261,5 +278,128 @@ test("loadSessionToken rejects missing extension session token resource", async 
   await assert.rejects(
     () => loadSessionToken(),
     /WebSocket session token is missing/
+  );
+});
+
+test("connectToElectron does not create a duplicate socket while connecting", () => {
+  const { chromeMock } = createChromeMock();
+  const sockets = [];
+  class FakeWebSocket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+
+    constructor(url) {
+      this.url = url;
+      this.readyState = FakeWebSocket.CONNECTING;
+      sockets.push(this);
+    }
+  }
+  global.WebSocket = FakeWebSocket;
+
+  const { connectToElectron } = loadBackgroundWithChromeMock(chromeMock);
+
+  connectToElectron();
+  connectToElectron();
+
+  assert.equal(sockets.length, 1);
+  assert.equal(sockets[0].url, "ws://localhost:8080");
+});
+
+test("handleWakeMessage reads the fresh token, handshakes, and closes the wake tab", async () => {
+  const { chromeMock, operations } = createChromeMock({ storedNextTarget: "claude" });
+  const fetchCalls = [];
+  const sentMessages = [];
+  const sockets = [];
+
+  global.fetch = async (url, options) => {
+    fetchCalls.push([url, options]);
+    return {
+      ok: true,
+      async json() {
+        return { token: "fresh-token-456" };
+      }
+    };
+  };
+
+  class FakeWebSocket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSED = 3;
+
+    constructor(url) {
+      this.url = url;
+      this.readyState = FakeWebSocket.CONNECTING;
+      sockets.push(this);
+    }
+
+    send(rawPayload) {
+      sentMessages.push(JSON.parse(rawPayload));
+    }
+
+    close(code, reason) {
+      this.readyState = FakeWebSocket.CLOSED;
+      if (this.onclose) {
+        this.onclose({ code, reason });
+      }
+    }
+
+    open() {
+      this.readyState = FakeWebSocket.OPEN;
+      if (this.onopen) {
+        this.onopen();
+      }
+    }
+  }
+  global.WebSocket = FakeWebSocket;
+
+  const { handleWakeMessage, stopHeartbeat } = loadBackgroundWithChromeMock(chromeMock);
+  const wakeResultPromise = handleWakeMessage({ tab: { id: 99 } });
+  sockets[0].open();
+  const wakeResult = await wakeResultPromise;
+  stopHeartbeat();
+
+  assert.deepEqual(wakeResult, {
+    ok: true,
+    connected: true
+  });
+  assert.deepEqual(fetchCalls, [
+    ["chrome-extension://copy/ws-session-token.json", { cache: "no-store" }]
+  ]);
+  assert.deepEqual(sentMessages[0], {
+    ok: true,
+    type: "EXTENSION_SESSION_HELLO",
+    token: "fresh-token-456",
+    nextTarget: "claude"
+  });
+  assert.deepEqual(sentMessages[1], {
+    ok: true,
+    type: "EXTENSION_CONNECTED",
+    nextTarget: "claude"
+  });
+  assert.deepEqual(operations.at(-1), ["remove", 99]);
+});
+
+test("createTab opens chrome://extensions from extension context", async () => {
+  const { chromeMock, operations } = createChromeMock();
+  const { createTab } = loadBackgroundWithChromeMock(chromeMock);
+
+  await createTab("chrome://extensions/");
+
+  assert.deepEqual(operations.at(-1), ["create", { url: "chrome://extensions/" }]);
+});
+
+test("createTab surfaces chrome.tabs.create lastError", async () => {
+  const { chromeMock } = createChromeMock();
+  chromeMock.tabs.create = (createProperties, callback) => {
+    chromeMock.runtime.lastError = { message: "not allowed" };
+    callback(null);
+    chromeMock.runtime.lastError = null;
+  };
+
+  const { createTab } = loadBackgroundWithChromeMock(chromeMock);
+
+  await assert.rejects(
+    () => createTab("chrome://extensions/"),
+    /chrome\.tabs\.create failed: not allowed/
   );
 });

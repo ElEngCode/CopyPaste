@@ -4,7 +4,7 @@
   "private": true,
   "description": "Chrome extension automation puppet for the CopyPaste AI Project Builder workflow.",
   "scripts": {
-    "check": "node --check background.js && node --check content.js && node --check popup.js",
+    "check": "node --check background.js && node --check content.js && node --check popup.js && node --check wake.js",
     "test": "node --test background.test.js content.test.js",
     "verify": "npm run check && npm run test"
   }

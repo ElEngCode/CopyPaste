@@ -32,6 +32,9 @@ try {
   assert.equal(toCommitStyleTaskName("Improve response extraction for Claude output"), "Improve Claude response extraction");
   assert.equal(toCommitStyleTaskName("Reparam voice generation settings"), "Reparam voice");
   assert.equal(getTaskStatusLabel("launcher_copied"), "Copied");
+  assert.equal(getTaskStatusLabel("ready"), "In Progress");
+  assert.equal(getTaskStatusLabel("draft"), "In Progress");
+  assert.equal(getTaskStatusLabel("approved"), "Approved");
 
   const finalPlanText = JSON.stringify({
     project_name: "AI Project Builder",
@@ -119,7 +122,7 @@ try {
     "Wire gated stage sending",
     "Polish project builder UI"
   ]);
-  assert.ok(finalPlanResult.pack.chunks.every((chunk) => chunk.status === "ready"));
+  assert.ok(finalPlanResult.pack.chunks.every((chunk) => chunk.status === "in_progress"));
   assert.ok(finalPlanResult.pack.chunks.every((chunk) => chunk.gitAction === "commit_and_push"));
   assert.ok(finalPlanResult.pack.chunks.every((chunk) => chunk.commitMessage === chunk.title));
   assert.ok(finalPlanResult.pack.chunks[0].scope.includes("Store project ideas"));
@@ -149,6 +152,43 @@ try {
 
   assert.equal(copiedChunk.status, "copied");
   assert.ok(copiedChunk.copiedAt);
+  assert.deepEqual(copiedChunk.versions, []);
+  assert.deepEqual(copiedChunk.runHistory, []);
+
+  const noteResult = store.addChunkRunHistory(result.pack.id, result.pack.chunks[0].id, {
+    note: "Implemented sidebar tree and drawer shell.",
+    source: "codex_run"
+  });
+  assert.equal(noteResult.chunk.runHistory.length, 1);
+  assert.equal(noteResult.chunk.runHistory[0].note, "Implemented sidebar tree and drawer shell.");
+
+  const improvePrompt = store.buildChunkImprovePrompt(result.pack.id, result.pack.chunks[0].id);
+  assert.match(improvePrompt.prompt, /Task name:/);
+  assert.match(improvePrompt.prompt, /Recent run history/);
+
+  const versionResult = store.addChunkVersion(result.pack.id, result.pack.chunks[0].id, {
+    source: "ai_improve",
+    promptSnapshot: copiedChunk.prompt,
+    responseText: "Improved prompt output"
+  });
+  assert.equal(versionResult.chunk.versions.length, 1);
+  assert.equal(versionResult.chunk.versions[0].responseText, "Improved prompt output");
+
+  const applyVersionResult = store.applyChunkVersion(
+    result.pack.id,
+    result.pack.chunks[0].id,
+    versionResult.chunk.versions[0].id
+  );
+  assert.equal(applyVersionResult.chunk.prompt, "Improved prompt output");
+  assert.ok(applyVersionResult.chunk.versions[0].appliedAt);
+
+  const updatedChunkResult = store.updateChunkContent(result.pack.id, result.pack.chunks[0].id, {
+    title: "Sidebar and drawer task",
+    prompt: "Edited task prompt body"
+  });
+  assert.equal(updatedChunkResult.chunk.title, "Sidebar and drawer task");
+  assert.equal(updatedChunkResult.chunk.prompt, "Edited task prompt body");
+  assert.ok(updatedChunkResult.chunk.versions.length >= 2);
 
   const launcherData = store.getChunkLauncher(result.pack.id, result.pack.chunks[1].id);
   assert.ok(launcherData.launcher.includes("master-plan.md"));
@@ -158,7 +198,7 @@ try {
 
   const launcherCopied = store.updateChunkStatus(result.pack.id, result.pack.chunks[1].id, "launcher_copied");
   const launcherCopiedPack = launcherCopied.state.promptPacks.find((pack) => pack.id === result.pack.id);
-  assert.equal(launcherCopiedPack.chunks[1].status, "launcher_copied");
+  assert.equal(launcherCopiedPack.chunks[1].status, "copied");
   assert.ok(launcherCopiedPack.chunks[1].launcherCopiedAt);
 
   const promptData = store.getChunkPrompt(result.pack.id, result.pack.chunks[1].id);
@@ -186,6 +226,179 @@ try {
   ]);
   assert.ok(fallbackResult.pack.chunks.every((chunk) => chunk.gitAction === "commit_and_push"));
   assert.ok(fallbackResult.pack.chunks.every((chunk) => chunk.commitMessage === chunk.title));
+
+  const manualChunkResult = store.createManualChunk(finalPlanResult.pack.id, {
+    title: "Manual follow-up task",
+    prompt: "Manual prompt",
+    scope: "Manual scope"
+  });
+  assert.equal(manualChunkResult.chunk.title, "Manual follow-up task");
+  assert.equal(manualChunkResult.chunk.status, "in_progress");
+  assert.ok(Number(manualChunkResult.chunk.order) > 0);
+
+  const planningProjectPath = path.join(tmpRoot, "PlanningFlow");
+  fs.mkdirSync(planningProjectPath, { recursive: true });
+
+  const savedBrief = store.saveProjectBrief({
+    projectName: "CopyPaste",
+    projectPath: planningProjectPath,
+    idea: "Build a controlled Codex prompt pipeline.",
+    masterPlan: "Master plan v1"
+  });
+  assert.equal(savedBrief.project.idea, "Build a controlled Codex prompt pipeline.");
+  assert.equal(savedBrief.project.masterPlan, "Master plan v1");
+  assert.ok(savedBrief.project.activePromptPackId);
+
+  const masterVersion = store.addMasterPlanVersion(savedBrief.project.id, {
+    source: "ai_improve",
+    promptSnapshot: "Improve master plan",
+    responseText: "Master plan v2"
+  });
+  assert.equal(masterVersion.version.responseText, "Master plan v2");
+  assert.equal(masterVersion.project.masterPlanVersions.length, 1);
+
+  const appliedMaster = store.applyMasterPlanVersion(savedBrief.project.id, masterVersion.version.id);
+  assert.equal(appliedMaster.project.masterPlan, "Master plan v2");
+  assert.ok(appliedMaster.project.masterPlanVersions[0].appliedAt);
+  assert.equal(fs.readFileSync(path.join(planningProjectPath, "masterplan.md"), "utf8"), "Master plan v2");
+  assert.equal(appliedMaster.project.stage, "Roadmap");
+  assert.equal(appliedMaster.project.nextAction, "Generate Roadmap");
+
+  const roadmapItems = [{
+    id: "roadmap_1",
+    order: 1,
+    title: "Architecture and data model",
+    goal: "Define storage and migration model.",
+    whyThisExists: "Everything depends on clean storage semantics.",
+    targetFiles: ["apps/desktop/prompt-vault.js"],
+    researchNeeded: ["Inspect existing prompt vault schema."],
+    acceptanceCriteria: ["Legacy prompt packs still load."],
+    verificationCommands: ["npm.cmd run desktop:test"],
+    dependsOn: [],
+    parallelGroup: ""
+  }, {
+    id: "roadmap_2",
+    order: 2,
+    title: "Prompt UI",
+    goal: "Build prompt workspace.",
+    whyThisExists: "Users edit one prompt at a time.",
+    targetFiles: ["apps/desktop/index.html", "apps/desktop/renderer.js"],
+    researchNeeded: [],
+    acceptanceCriteria: ["AI Debate tab is not visible."],
+    verificationCommands: ["npm.cmd run desktop:test"],
+    dependsOn: ["roadmap_1"],
+    parallelGroup: ""
+  }, {
+    id: "roadmap_3",
+    order: 3,
+    title: "Docs and tests",
+    goal: "Document and verify behavior.",
+    whyThisExists: "The workflow must stay maintainable.",
+    targetFiles: ["architecture.md", "codex.md"],
+    researchNeeded: [],
+    acceptanceCriteria: ["Verification passes."],
+    verificationCommands: ["npm.cmd run verify"],
+    dependsOn: ["roadmap_1"],
+    parallelGroup: "A"
+  }];
+
+  const roadmapVersion = store.addRoadmapVersion(savedBrief.project.activePromptPackId, {
+    source: "ai_roadmap",
+    responseText: JSON.stringify({ items: roadmapItems })
+  });
+  assert.equal(roadmapVersion.version.responseText.includes("Architecture and data model"), true);
+
+  const appliedRoadmap = store.applyRoadmapVersion(savedBrief.project.activePromptPackId, roadmapVersion.version.id);
+  assert.equal(appliedRoadmap.pack.roadmap.items.length, 3);
+  assert.equal(appliedRoadmap.pack.roadmap.items[2].parallelGroup, "A");
+  assert.equal(appliedRoadmap.project.stage, "Tasks");
+  assert.equal(appliedRoadmap.project.nextAction, "Create Task Details");
+  const roadmapFile = fs.readFileSync(path.join(planningProjectPath, "plan-roadmap.md"), "utf8");
+  assert.match(roadmapFile, /# Plan Roadmap/);
+  assert.match(roadmapFile, /## 001\. Architecture and data model/);
+  assert.match(roadmapFile, /Dependencies: none/);
+  assert.match(roadmapFile, /Parallel group: A/);
+
+  fs.writeFileSync(path.join(planningProjectPath, "plan-roadmap.md"), "# Plan Roadmap\n\n", "utf8");
+  store.getState();
+  const backfilledRoadmapFile = fs.readFileSync(path.join(planningProjectPath, "plan-roadmap.md"), "utf8");
+  assert.match(backfilledRoadmapFile, /## 001\. Architecture and data model/);
+
+  const eligibleBefore = store.getRoadmapEligibility(savedBrief.project.activePromptPackId);
+  assert.deepEqual(eligibleBefore.items.map((item) => ({ id: item.id, eligible: item.eligible, blocked: item.blockedBy })), [
+    { id: "roadmap_1", eligible: true, blocked: [] },
+    { id: "roadmap_2", eligible: false, blocked: ["roadmap_1"] },
+    { id: "roadmap_3", eligible: false, blocked: ["roadmap_1"] }
+  ]);
+
+  const startedPrompt = store.startRoadmapPrompt(savedBrief.project.activePromptPackId, "roadmap_1");
+  assert.equal(startedPrompt.chunk.title, "Architecture and data model");
+  assert.equal(startedPrompt.chunk.status, "in_progress");
+  assert.equal(startedPrompt.chunk.roadmapItemId, "roadmap_1");
+  assert.match(startedPrompt.chunk.prompt, /Define storage and migration model/);
+  assert.equal(startedPrompt.project.stage, "Codex");
+  assert.equal(startedPrompt.project.nextAction, "Copy Codex Handoff");
+
+  assert.throws(
+    () => store.startRoadmapPrompt(savedBrief.project.activePromptPackId, "roadmap_2"),
+    /blocked by dependencies/
+  );
+
+  const approvedPrompt = store.approvePrompt(startedPrompt.pack.id, startedPrompt.chunk.id);
+  assert.equal(approvedPrompt.chunk.status, "approved");
+
+  const copiedPrompt = store.copyPromptToCodex(startedPrompt.pack.id, startedPrompt.chunk.id);
+  assert.equal(copiedPrompt.chunk.status, "copied");
+  assert.ok(copiedPrompt.chunk.copiedAt);
+  assert.match(copiedPrompt.handoffPrompt, /Project path:/);
+  assert.match(copiedPrompt.handoffPrompt, /Verification commands/);
+
+  assert.throws(
+    () => store.markPromptDone(startedPrompt.pack.id, startedPrompt.chunk.id, { note: "" }),
+    /Run history note is required/
+  );
+
+  const donePrompt = store.markPromptDone(startedPrompt.pack.id, startedPrompt.chunk.id, {
+    note: "Implemented storage model.",
+    source: "codex_run"
+  });
+  assert.equal(donePrompt.chunk.status, "done");
+  assert.equal(donePrompt.chunk.runHistory[0].note, "Implemented storage model.");
+
+  const eligibleAfter = store.getRoadmapEligibility(savedBrief.project.activePromptPackId);
+  const availableAfter = eligibleAfter.items.filter((item) => item.eligible).map((item) => item.id);
+  assert.deepEqual(availableAfter, ["roadmap_2", "roadmap_3"]);
+
+  const settingsResult = store.updateSettings({ projectsBasePath: path.join(tmpRoot, "Tasks") });
+  assert.equal(settingsResult.state.projectsBasePath, path.join(tmpRoot, "Tasks"));
+  const customBaseProject = store.saveProject({
+    name: "Proiectul pulii",
+    git: { remote: "origin", defaultBranch: "master", branchPrefix: "codex/" },
+    defaults: { gitMode: "final_only", chunkStrategy: "simple_3", chunkCount: 3, commitMessage: "Custom base" }
+  });
+  assert.equal(customBaseProject.project.path, path.join(tmpRoot, "Tasks", "Proiectul pulii"));
+  assert.ok(fs.existsSync(path.join(tmpRoot, "Tasks", "Proiectul pulii", "tasks")));
+  const secondProject = store.saveProject({
+    name: "Alt Proiect",
+    git: { remote: "origin", defaultBranch: "master", branchPrefix: "codex/" },
+    defaults: { gitMode: "final_only", chunkStrategy: "simple_3", chunkCount: 3, commitMessage: "Second" }
+  });
+  const stateWithAllProjects = store.getState();
+  assert.ok(stateWithAllProjects.projects.some((project) => project.id === customBaseProject.project.id));
+  assert.ok(stateWithAllProjects.projects.some((project) => project.id === secondProject.project.id));
+  assert.ok(stateWithAllProjects.projects.some((project) => project.path === projectPath));
+
+  const deleteTaskResult = store.deleteTask(startedPrompt.pack.id, startedPrompt.chunk.id);
+  assert.equal(deleteTaskResult.deletedTask.id, startedPrompt.chunk.id);
+  assert.ok(!deleteTaskResult.state.promptPacks
+    .find((pack) => pack.id === startedPrompt.pack.id)
+    .chunks.some((chunk) => chunk.id === startedPrompt.chunk.id));
+
+  const deleteProjectResult = store.deleteProject(customBaseProject.project.id);
+  assert.equal(deleteProjectResult.deletedProject.id, customBaseProject.project.id);
+  assert.ok(!deleteProjectResult.state.projects.some((project) => project.id === customBaseProject.project.id));
+  assert.ok(deleteProjectResult.state.deletedProjectPaths.includes(customBaseProject.project.path.toLowerCase()));
+  assert.ok(fs.existsSync(customBaseProject.project.path));
 
   const oldDbPath = path.join(tmpRoot, "old-db.json");
   fs.writeFileSync(oldDbPath, JSON.stringify({
@@ -228,6 +441,9 @@ try {
   assert.equal(oldLauncher.chunk.commitMessage, "Old generated chunk");
   assert.ok(oldLauncher.launcher.includes("Execute only task 001 - Old generated chunk."));
   assert.ok(oldLauncher.launcher.includes("Use commit message: Old generated chunk."));
+  assert.equal(oldLauncher.chunk.status, "in_progress");
+  assert.deepEqual(oldLauncher.chunk.versions, []);
+  assert.deepEqual(oldLauncher.chunk.runHistory, []);
 
   const deleteResult = store.deletePromptPack(result.pack.id);
   assert.equal(deleteResult.deletedPack.id, result.pack.id);

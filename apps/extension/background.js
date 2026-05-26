@@ -2,15 +2,19 @@
 
 let socket = null;
 let nextTarget = "chatgpt";
-let reconnectTimer = null;
 let heartbeatTimer = null;
 let isExecuting = false;
+let sessionHelloSent = false;
+let lastConnectionError = null;
 
 const ELECTRON_WS_URL = "ws://localhost:8080";
-const RECONNECT_DELAY_MS = 5000;
 const HEARTBEAT_INTERVAL_MS = 25000;
+const WAKE_CONNECT_TIMEOUT_MS = 7000;
+const WAKE_POLL_INTERVAL_MS = 25;
 const SESSION_TOKEN_FILE = "ws-session-token.json";
 const SESSION_HELLO_TYPE = "EXTENSION_SESSION_HELLO";
+const WAKE_MESSAGE_TYPE = "COPYPASTE_WAKE";
+const OPEN_EXTENSIONS_PAGE_MESSAGE = "OPEN_EXTENSIONS_PAGE";
 const CHATGPT_URL_PATTERNS = ["*://chatgpt.com/*", "*://*.chatgpt.com/*"];
 const CLAUDE_URL_PATTERNS = ["*://claude.ai/*", "*://*.claude.ai/*"];
 
@@ -221,6 +225,36 @@ function stopHeartbeat() {
   heartbeatTimer = null;
 }
 
+function removeTab(tabId) {
+  return new Promise((resolve) => {
+    if (!Number.isInteger(tabId) || !chrome.tabs || !chrome.tabs.remove) {
+      resolve();
+      return;
+    }
+
+    chrome.tabs.remove(tabId, () => {
+      const error = getLastErrorMessage();
+      if (error) {
+        warn("Could not close CopyPaste wake tab.", { error });
+      }
+      resolve();
+    });
+  });
+}
+
+function createTab(url) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.create({ url }, (tab) => {
+      const error = getLastErrorMessage();
+      if (error) {
+        reject(new Error("chrome.tabs.create failed: " + error));
+        return;
+      }
+      resolve(tab || null);
+    });
+  });
+}
+
 async function runManualStep(command) {
   if (isExecuting) {
     throw new Error("A workflow step is already running.");
@@ -292,23 +326,14 @@ async function runManualStep(command) {
   }
 }
 
-function scheduleReconnect() {
-  if (reconnectTimer) {
-    return;
-  }
-
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    connectToElectron();
-  }, RECONNECT_DELAY_MS);
-}
-
 function connectToElectron() {
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
-    return;
+    return socket;
   }
 
   log("Connecting to Electron WebSocket server.", { url: ELECTRON_WS_URL });
+  sessionHelloSent = false;
+  lastConnectionError = null;
   socket = new WebSocket(ELECTRON_WS_URL);
 
   socket.onopen = async () => {
@@ -322,8 +347,10 @@ function connectToElectron() {
         type: "EXTENSION_CONNECTED",
         nextTarget
       });
+      sessionHelloSent = true;
       startHeartbeat();
     } catch (error) {
+      lastConnectionError = error;
       warn("Could not authenticate Electron WebSocket session.", { error: error.message });
       socket.close(4401, "Missing session token.");
     }
@@ -347,6 +374,22 @@ function connectToElectron() {
     }
 
     if (command && typeof command.type === "string" && command.type !== "RUN_WORKFLOW") {
+      if (command.type === OPEN_EXTENSIONS_PAGE_MESSAGE) {
+        createTab("chrome://extensions/")
+          .then(() => {
+            safeSocketSend({
+              ok: true,
+              type: "EXTENSION_MANAGE_PAGE_OPENED"
+            });
+          })
+          .catch((error) => {
+            safeSocketSend({
+              ok: false,
+              type: "EXTENSION_MANAGE_PAGE_FAILED",
+              error: error.message || "Could not open chrome://extensions."
+            });
+          });
+      }
       log("Ignoring WebSocket control message from Electron.", command);
       return;
     }
@@ -361,18 +404,88 @@ function connectToElectron() {
   };
 
   socket.onerror = (error) => {
+    lastConnectionError = error instanceof Error ? error : new Error("CopyPaste desktop WebSocket connection failed.");
     warn("WebSocket error.", error);
   };
 
   socket.onclose = (event) => {
-    warn("WebSocket connection closed; reconnecting.", {
+    warn("WebSocket connection closed.", {
       code: event.code,
       reason: event.reason
     });
     stopHeartbeat();
     socket = null;
-    scheduleReconnect();
+    sessionHelloSent = false;
   };
+
+  return socket;
+}
+
+function waitForSessionHandshake(timeoutMs = WAKE_CONNECT_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs;
+
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      if (socket && socket.readyState === WebSocket.OPEN && sessionHelloSent) {
+        resolve();
+        return;
+      }
+
+      if (lastConnectionError) {
+        reject(lastConnectionError);
+        return;
+      }
+
+      if (!socket || socket.readyState === WebSocket.CLOSED) {
+        reject(new Error("CopyPaste desktop is not running. Start the desktop app, then click Connect extension."));
+        return;
+      }
+
+      if (Date.now() >= deadline) {
+        reject(new Error("CopyPaste desktop did not accept the extension WebSocket handshake."));
+        return;
+      }
+
+      setTimeout(check, WAKE_POLL_INTERVAL_MS);
+    };
+
+    check();
+  });
+}
+
+async function handleWakeMessage(sender = {}) {
+  connectToElectron();
+  await waitForSessionHandshake();
+  const tabId = sender && sender.tab ? sender.tab.id : null;
+  await removeTab(tabId);
+
+  return {
+    ok: true,
+    connected: true
+  };
+}
+
+function handleRuntimeMessage(message, sender, sendResponse) {
+  if (!message || message.type !== WAKE_MESSAGE_TYPE) {
+    return false;
+  }
+
+  handleWakeMessage(sender)
+    .then((result) => sendResponse(result))
+    .catch((error) => sendResponse({
+      ok: false,
+      error: error.message || "CopyPaste desktop is not running. Start the desktop app, then click Connect extension."
+    }));
+
+  return true;
+}
+
+function registerWakeMessageHandler() {
+  if (!chrome.runtime || !chrome.runtime.onMessage || !chrome.runtime.onMessage.addListener) {
+    return;
+  }
+
+  chrome.runtime.onMessage.addListener(handleRuntimeMessage);
 }
 
 if (typeof module !== "undefined" && module.exports) {
@@ -386,8 +499,13 @@ if (typeof module !== "undefined" && module.exports) {
     startHeartbeat,
     stopHeartbeat,
     loadSessionToken,
-    createSessionHello
+    createSessionHello,
+    handleWakeMessage,
+    handleRuntimeMessage,
+    waitForSessionHandshake,
+    createTab
   };
 } else {
+  registerWakeMessageHandler();
   connectToElectron();
 }

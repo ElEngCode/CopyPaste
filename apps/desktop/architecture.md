@@ -1,5 +1,12 @@
 # NextStep Architecture X-Ray
 
+Active planning workflow repair:
+- Active runtime remains root `apps/desktop/main.js` loading `apps/desktop/index.html` and `apps/desktop/renderer.js`.
+- Prompt Vault persists canonical planning state in `prompt-vault-db.json`, then mirrors applied state to project files under the selected project directory.
+- Applied master-plan versions write `masterplan.md`; applied roadmap versions write `plan-roadmap.md`; roadmap task starts write `tasks/task-###-*.md`.
+- Vault state load backfills scaffold-only roadmap files when DB already contains roadmap items.
+- The Plan workspace exposes one secondary draft save and one computed primary action from `getPlanPrimaryAction()`, instead of separate master-plan, roadmap, and next-task buttons.
+
 Tech stack:
 - Electron main process + preload bridge
 - Vanilla JS renderer (event delegation, single app root listeners)

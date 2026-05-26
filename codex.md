@@ -1,5 +1,100 @@
 # Codex Progress
 
+## 2026-05-26 Planning Workflow Repair
+
+- Reproduced the planning fracture with failing tests:
+  - applied master-plan versions stayed in DB while `masterplan.md` kept older text
+  - applied roadmap versions stayed in DB while `plan-roadmap.md` stayed at `# Plan Roadmap`
+  - UI exposed separate `Improve Master Plan`, `Create Task Roadmap`, and opaque `Start Next Task` buttons
+- Implemented Prompt Vault file mirroring for applied master plans, applied roadmaps, and started roadmap task files.
+- Added startup backfill so existing DB roadmaps rewrite scaffold-only `plan-roadmap.md` files on the next vault state load.
+- Added project progress refresh after file writes so stage and next action follow actual project files.
+- Replaced the Plan action row with `Save Draft` plus one state-aware primary action.
+- Added regression coverage for storage/file sync, roadmap backfill, project progress, and the simplified Plan UI contract.
+- Verification during implementation:
+  - `npm.cmd run desktop:test` passed
+  - `npm.cmd run verify` passed
+
+## 2026-05-26 Master Plan Ping-Pong + Roadmap Button Repair
+
+- Root cause found:
+  - `Create/Improve Master Plan` was wired as a single ChatGPT request.
+  - `Create Task Roadmap` and `Start Next Task` existed in the UI but had no working click workflow.
+- Added regression coverage for ChatGPT draft -> Claude critique -> ChatGPT revision payloads, JSON task-roadmap payloads, next eligible roadmap item selection, and button wiring.
+- Implemented `getMasterPlanPingPongPayload()`, `getTaskRoadmapPayload()`, and `getNextEligibleRoadmapItem()` in `apps/desktop/renderer.js`.
+- Master plan creation/improvement now runs ChatGPT -> Claude critique -> ChatGPT revision, then saves the final plan as an `ai_master_plan_pingpong` version.
+- `Create Task Roadmap` now saves the project, sends the master plan to AI, saves the roadmap version, and applies it to the active project pack.
+- `Start Next Task` now creates the first eligible Codex task from the roadmap, skipping already-started tasks and blocked dependencies.
+- Selecting a saved project now refreshes `Project idea` and `Master Plan` immediately.
+- Verification so far: `npm.cmd run desktop:test` passed.
+
+## 2026-05-26
+
+- Implemented task-first cleanup and project settings:
+  - project draft paths now preserve readable folder names (`Proiectul pulii` -> `F:\Projects\CopyPaste\Projects\Proiectul pulii`)
+  - added visible `Default projects folder` setting in Plan and `VAULT_UPDATE_SETTINGS` IPC/preload support
+  - blank saved-project dropdown option now starts a new draft instead of leaving stale project state active
+  - saving a project reselects it while preserving the full saved project list
+  - Project Browser now shows only the active draft/selected project by default, with `See all projects` available from the dropdown and sidebar button
+  - added right-click Project Browser menu:
+    - project rows can copy path or remove the project from the browser
+    - task rows can copy task content or delete the task
+  - project deletion is a soft browser removal; files stay on disk and deleted paths are tombstoned to avoid automatic re-import
+  - fixed Project Browser dropdown after project deletion by making the global context-menu close handler no-op when the menu is already closed
+  - wired `Improve Master Plan` so it saves the project brief, sends the project idea to AI, and fills the returned master plan into the editor
+  - made the master-plan button state-aware: it says `Create Master Plan` before a real plan exists and `Improve Master Plan` after one exists
+  - primary UI now says `Tasks`, `Task Roadmap`, `Task name`, `Task content`, `Save Task`, and `Improve Task`
+- Kept internal `promptPacks` / `chunks` storage names for compatibility with existing saved data.
+- Added regression coverage in `controller-ui.test.js` and `prompt-vault.test.js` for preserved project names, configurable base folder, multi-project persistence, and task-first copy.
+- Verification run:
+  - `npm.cmd run desktop:test` passed
+  - `npm.cmd run verify` passed
+
+- Fixed Project Browser alignment for navigation readability:
+  - overridden sidebar button layout for `.tree-project`, `.tree-pack`, `.tree-item`
+  - enforced left alignment and stable wrapping for long labels
+  - kept task-row status pills consistently aligned without shifting task titles
+- Replaced `window.prompt()` New Project flow with in-workspace draft initialization:
+  - `createProjectFromSidebar()` now clears project/pack/chunk selection and switches to `Plan` workspace
+  - initializes draft form values (`Project name`, `Project path`, empty `Project idea`, empty `Master Plan`)
+  - focuses and selects `Project name` for immediate typing
+- Added draft synchronization in renderer:
+  - `Project name` input now auto-updates draft path via slug (`F:\Projects\CopyPaste\Projects\<slug>`)
+  - auto-fills legacy defaults (`packTitle`, `branchName`, `commitMessage`) when fields are still empty
+  - stops path auto-overwrite after manual `Project path` edits
+- Added/updated desktop UI tests in `apps/desktop/tests/controller-ui.test.js`:
+  - assert no `window.prompt()` usage in renderer
+  - assert draft path/default helper behavior
+  - assert sidebar left-alignment CSS overrides exist
+- Verification run:
+  - `npm.cmd run desktop:test` passed
+  - `npm.cmd run verify` passed
+
+- Implemented guided file-first project flow for the desktop app with permanent sidebar project memory.
+- Added automatic project scaffolding in `F:\Projects\CopyPaste\Projects`:
+  - `<project>/codex.md`
+  - `<project>/architecture.md`
+  - `<project>/masterplan.md`
+  - `<project>/plan-roadmap.md`
+  - `<project>/tasks/`
+- Updated prompt vault state hydration to sync projects from filesystem folders and compute:
+  - current stage (`Idea`, `Master Plan`, `Roadmap`, `Tasks`, `Codex`)
+  - `nextAction`
+- Extended roadmap parsing to support markdown tables and heading/list sections in addition to JSON.
+- Added task-selection Codex handoff builder with selectors (`1`, `1-3`, `5,7`) that copies:
+  - shared project files (`architecture.md`, `codex.md`, `masterplan.md`, `plan-roadmap.md`)
+  - selected task files
+- Added new IPC bridge for roadmap-based handoff copy:
+  - `VAULT_COPY_ROADMAP_HANDOFF` in `apps/desktop/main.js`
+  - `copyRoadmapHandoff()` in `apps/desktop/preload.js`
+- Updated active UI:
+  - sidebar project cards now display stage and next action
+  - added `New Project` and `Open Folder` sidebar actions
+  - prompts workspace now includes task selector and `Copy Codex Handoff`
+- Verification run:
+  - `npm.cmd run desktop:test` passed
+  - `npm.cmd run verify` passed
+
 ## 2026-05-19
 
 - Rebuilt the extension as a manual step-by-step workflow state machine:
@@ -111,6 +206,99 @@ Conservative Claude automation rollback:
 
 ## 2026-05-25
 
+Electron/extension readiness bug plan review:
+- Reviewed the active desktop/extension integration files for the reported false-ready state: `apps/desktop/main.js`, `apps/desktop/preload.js`, `apps/desktop/renderer.js`, `apps/desktop/index.html`, `apps/extension/background.js`, and `apps/extension/manifest.json`.
+- Confirmed the likely false-positive path: Chrome remote-debugging service-worker detection can produce a success-toned renderer status before the authenticated WebSocket handshake assigns `extensionSocket`.
+- Confirmed the renderer currently derives connection state from `tone` and message text, while workflow dispatch uses fire-and-forget IPC, so a failed dispatch can leave the UI in a misleading busy/connected state.
+- Prepared an implementation/test critique recommending explicit `extensionState` propagation, invoke-based dispatch result handling, and diagnostics around token loading, handshake acceptance/rejection, socket close, and service-worker-only detection.
+
+Electron/extension readiness bug fix:
+
+## 2026-05-26
+
+Project Browser Sidebar + Task Drawer implementation:
+- Rebuilt `apps/desktop/index.html` into a 3-region layout:
+  - left persistent `Project Browser`
+  - center plan/debate surface
+  - right `Task Drawer` with `Content`, `AI Improve`, `Runs`
+- Extended renderer state and behavior in `apps/desktop/renderer.js`:
+  - tree selection state (`selectedProjectId`, `selectedPackId`, `selectedChunkId`)
+  - drawer state (`isDrawerOpen`, `activeDrawerTab`)
+  - workflow context routing (`activeWorkflowContext = debate_plan | task_improve`)
+  - task improve responses now persist as versions instead of overwriting project plan
+- Extended prompt-vault schema and methods in `apps/desktop/prompt-vault.js`:
+  - `versions` and `runHistory` migration-safe defaults
+  - update task content/title
+  - add/apply proposed versions
+  - append run notes
+  - create manual task
+  - build task improve prompt from current task + run history
+- Added IPC and preload bridge endpoints in:
+  - `apps/desktop/main.js`
+  - `apps/desktop/preload.js`
+- Updated tests:
+  - `apps/desktop/tests/prompt-vault.test.js`
+  - `apps/desktop/tests/controller-ui.test.js`
+- Added desktop regression coverage proving `extensionState: "loaded"` renders as loaded/waiting rather than connected.
+- Added desktop regression coverage requiring `copypasteDesktop.sendWorkflow()` to use `ipcRenderer.invoke()` and requiring main to register an `ipcMain.handle()` workflow dispatcher.
+- Added explicit Electron extension states: `connected`, `loaded`, `disconnected`, and `error`.
+- Changed service-worker-only detection to report `loaded` with "Extension loaded, waiting for WebSocket handshake." instead of success/connected.
+- Changed workflow dispatch to return immediate `{ ok, extensionState, error }` feedback when `extensionSocket` is not open or send fails.
+- Changed the renderer to derive connection UI from `extensionState` instead of status tone or message text.
+- Verified with `node --check apps/desktop/main.js`, `node --check apps/desktop/preload.js`, `node --check apps/desktop/renderer.js`, `npm.cmd run desktop:test`, and `npm.cmd run verify`.
+- Did not run a live Chrome/Electron browser session in this pass; the current verification is automated unit/static regression coverage.
+
+Workspace + Inspector redesign:
+- Reworked `apps/desktop/index.html` into a `Project Browser` (left), `Workspace` (center), and `Inspector` (right) shell.
+- Removed `Task Drawer` as the primary task editor and moved task edit fields/actions to center workspace.
+- Added workspace tabs (`Tasks`, `Plan`, `AI Debate`) and inspector tabs (`AI Improve`, `Versions`, `Runs`, `Details`).
+- Kept existing prompt-vault schema/API and workflow routing semantics; updated renderer presentation/routing state to workspace-first UI.
+- Updated `apps/desktop/tests/controller-ui.test.js` expectations for the new labels and tab regions.
+
+Master Plan to Codex Prompt Pipeline:
+- Changed the product model from full prompt-pack generation toward controlled prompt authoring:
+  - Project idea and master plan live in `Plan`.
+  - Prompt roadmap stores serial/parallel planning units.
+  - Prompts are started one at a time from roadmap items.
+  - Codex handoff requires approval before copy.
+- Extended `apps/desktop/prompt-vault.js` with:
+  - project `idea`, `masterPlan`, `masterPlanVersions`, and `activePromptPackId`
+  - prompt-pack `roadmap`, `roadmapVersions`, and `activePromptId`
+  - roadmap version apply/start prompt helpers
+  - prompt approval, copy-to-Codex, and done-with-run-note helpers
+  - status migration to `in_progress`, `approved`, `copied`, `done`
+- Extended IPC/preload bridge for the new vault operations.
+- Reworked visible UI copy to remove the `AI Debate` tab, old `Generate Codex Prompts` action, and latest/older pack language.
+- Updated desktop tests for the new storage and UI contract.
+- Verified with `npm.cmd run desktop:test`.
+
+Chrome 148 extension launch repair:
+- Reproduced the live failure against the running managed Chrome process: Chrome was launched with the expected profile and debug port, but `/json/list` and browser-level `Target.getTargets` showed only ChatGPT/Claude pages and no CopyPaste extension service worker.
+- Ran clean-profile Chrome probes and found the actual root cause in Chrome stderr: current branded Google Chrome logs `--load-extension is not allowed in Google Chrome, ignoring.` and `--disable-extensions-except is not allowed in Google Chrome, ignoring.`
+- Confirmed `Extensions.loadUnpacked` is unavailable over `--remote-debugging-port`, but works over `--remote-debugging-pipe` when Chrome is launched with `--enable-unsafe-extension-debugging`.
+- Confirmed the pipe load returns CopyPaste extension id `cppbdcehcmbhelimfbgmlbojhkgnmdob` in the probe and exposes `chrome-extension://.../background.js` as a service-worker target through the existing debug port.
+- Replaced Electron's blocked `--load-extension` / `--disable-extensions-except` launch flow with a DevTools pipe loader that calls `Extensions.loadUnpacked` and keeps the dynamic debug port for readiness checks.
+- Fixed readiness detection to recognize CopyPaste's MV3 service worker URL ending in `background.js`, not only generic `service_worker.js`.
+- Changed Refresh extension to re-probe the last Chrome debug port instead of only repeating a cached error state.
+- Added regression checks requiring the pipe loader flags and `Extensions.loadUnpacked`, and rejecting the blocked Chrome command-line extension flags.
+- Verified with `npm.cmd run desktop:test` and `npm.cmd run verify`.
+
+Chrome executable resolution repair:
+- Fixed the follow-up `spawn chrome.exe ENOENT` failure by removing the bare `chrome.exe` fallback from the Electron launch path.
+- Added absolute Chrome candidate resolution for `PROGRAMFILES`, `ProgramW6432`, `PROGRAMFILES(X86)`, `LOCALAPPDATA`, `USERPROFILE\\AppData\\Local`, and standard hard-coded Chrome install locations.
+- Electron now calls `resolveChromeExecutable()` and only spawns an existing absolute `chrome.exe` path; if none exists, the error lists every checked path.
+- Added regression coverage to reject the bare `chrome.exe` fallback and require absolute Chrome path resolution.
+- Verified candidate resolution found `C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe`.
+- Verified with `node --check apps/desktop/main.js`, `npm.cmd run desktop:test`, and `npm.cmd run verify`.
+
+Managed Chrome profile close repair:
+- Diagnosed the follow-up `Browser.getVersion timed out` failure: if an old Chrome process still owns `artifacts\\chrome-copypaste-profile-v3`, the newly spawned Chrome exits with code 0 after handing off to the existing process, so the DevTools pipe never responds.
+- Replaced the fragile one-shot PowerShell `Stop-Process` pipeline with a two-step approach: enumerate matching Chrome processes as JSON with PowerShell, kill the matched PIDs from Node with `process.kill(pid)`, poll until no matching managed-profile processes remain, and throw with remaining PIDs if Chrome cannot be closed.
+- Added immediate rejection for pending DevTools pipe calls when the spawned Chrome process exits before responding, producing a useful error instead of waiting for `Browser.getVersion` timeout.
+- Fixed the PowerShell list command separator from spaces to semicolons.
+- Verified the managed-profile close path with a real temporary Chrome profile: 11 Chrome processes before close, 0 after close.
+- Verified with `node --check apps/desktop/main.js`, `npm.cmd run desktop:test`, and `npm.cmd run verify`.
+
 GitHub Actions verify CI:
 - Created branch `codex/add-ci-verify`.
 - Added `.github/workflows/verify.yml`.
@@ -184,3 +372,37 @@ WebSocket session handshake:
 - `apps/extension/background.js` now reads the generated token resource with `chrome.runtime.getURL`, sends the session hello first, then sends the existing `EXTENSION_CONNECTED` readiness message and heartbeats.
 - Added desktop and extension regression tests for token rotation, token file writing, valid handshakes, missing/wrong token rejection, token loading, and missing-token client failure.
 - Verified `npm.cmd run verify` passes end-to-end after the handshake change.
+
+Desktop extension recovery UX:
+- Added visible status messages in the active desktop renderer so connection and recovery feedback is no longer hidden.
+- Added `Refresh extension` and `Launch Chrome with extension` controls to the active desktop header.
+- Added `EXTENSION_REFRESH_STATUS` and `EXTENSION_LAUNCH_CHROME` IPC paths through `apps/desktop/main.js` and `apps/desktop/preload.js`.
+- Replaced the brittle `chrome://extensions` launch attempt with a dedicated Chrome launch that uses `--load-extension` and `--disable-extensions-except` against `apps/extension`, plus an ignored persistent workspace-local Chrome profile at `artifacts/chrome-copypaste-profile-v3` so ChatGPT/Claude sessions can survive app restarts after the first login.
+- Before launching, Electron closes only Chrome processes using the dedicated CopyPaste profile so Chrome cannot ignore fresh extension flags by reusing an already-running profile.
+- Electron launches Chrome with a temporary remote debugging port, returns control to the UI immediately, and asynchronously reports whether the authenticated WebSocket or a `chrome-extension://.../service_worker.js` target becomes visible.
+- Updated the launch status copy to clarify that ChatGPT/Claude login is a one-time sign-in for the dedicated CopyPaste Chrome profile, not a required login on every desktop app start.
+- Fixed the root cause that made the new buttons inert: Electron's sandboxed preload could not require `../../packages/protocol`, so the preload bridge was unavailable and the renderer stopped before installing click handlers. The active BrowserWindow now keeps `contextIsolation: true` and `nodeIntegration: false` while explicitly setting `sandbox: false` for the preload.
+- Updated desktop UI regression coverage and verified `npm.cmd run desktop:test` plus `npm.cmd run verify`.
+
+Normal Chrome installed-extension wake flow:
+- Replaced the user-facing Chrome debug/profile launch flow with a one-time normal Chrome setup plus explicit extension wake URL.
+- Added a stable manifest `key`; the fixed unpacked extension ID is `akbkdpfnbkafgnfanoddlkdlgdlkacdk`.
+- Added `apps/extension/wake.html` and `apps/extension/wake.js`; Electron opens `chrome-extension://akbkdpfnbkafgnfanoddlkdlgdlkacdk/wake.html` to wake the MV3 service worker.
+- Added the `COPYPASTE_WAKE` service-worker message handler. It reads the current token with `cache: "no-store"`, opens the WebSocket, sends `EXTENSION_SESSION_HELLO`, avoids duplicate sockets while open/connecting, and closes its wake tab after the handshake message is sent.
+- Removed the normal desktop flow based on `--load-extension`, `--disable-extensions-except`, `--user-data-dir`, remote debugging flags, `Extensions.loadUnpacked`, and managed-profile shutdown.
+- Replaced `Launch Chrome with extension` with `Setup extension once` and `Connect extension`; `Refresh extension` is now diagnostic only.
+- Added `EXTENSION_SETUP_ONCE` and `EXTENSION_CONNECT_INSTALLED` IPC channels through `apps/desktop/main.js` and `apps/desktop/preload.js`.
+- `Connect extension` marks the extension as `loaded` until the authenticated WebSocket handshake sets `connected`; sending while not connected returns an immediate invoke response with an actionable error.
+- Updated regression coverage for the no-debug desktop flow, the setup/connect UI, duplicate socket prevention, fresh token reads, and wake-tab close behavior.
+- Verified focused checks: `node --check` for changed desktop/extension scripts, `npm.cmd run desktop:test`, and `npm.cmd --workspace @copypaste/extension run test`.
+- Verified full workspace check with `npm.cmd run verify`.
+- Confirmed the Windows Chrome resolver finds `C:\Program Files\Google\Chrome\Application\chrome.exe`, avoiding the old bare `chrome.exe` spawn path.
+
+Setup extension once robustness pass:
+- `Setup extension once` now launches Chrome using `--new-window chrome://extensions` as best-effort and returns explicit fallback text when Chrome opens a blank tab.
+- Added desktop IPC endpoints for `copyExtensionPath`, `copyExtensionsUrl`, and `openExtensionFolder`.
+- Added UI controls: `Copy extension path`, `Copy chrome://extensions`, and `Open extension folder`.
+- Updated setup messaging to stop claiming `chrome://extensions` always opens successfully; it now shows deterministic fallback instructions and the actual extension path.
+- Added extension control message `OPEN_EXTENSIONS_PAGE` that opens `chrome://extensions` via extension context (`chrome.tabs.create`) after install.
+- Added regression tests for new preload/main channels, setup fallback behavior, new UI controls, and extension `createTab` success/error handling.
+- Verified end-to-end with `npm.cmd run verify`.

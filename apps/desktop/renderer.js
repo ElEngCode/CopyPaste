@@ -18,6 +18,7 @@ const VAULT_COPY_LAUNCHER_CHANNEL = "VAULT_COPY_LAUNCHER";
 const VAULT_MARK_CHUNK_CHANNEL = "VAULT_MARK_CHUNK";
 const VAULT_OPEN_FOLDER_CHANNEL = "VAULT_OPEN_FOLDER";
 const VAULT_DELETE_PACK_CHANNEL = "VAULT_DELETE_PACK";
+const DEFAULT_PROJECTS_BASE_PATH = "F:\\Projects\\CopyPaste\\Projects";
 
 const elements = {
   chatgptPrefix: null,
@@ -25,8 +26,14 @@ const elements = {
   currentText: null,
   wordCount: null,
   projectSelect: null,
+  newProjectButton: null,
+  seeAllProjectsButton: null,
+  openProjectFolderButton: null,
   projectName: null,
   projectPath: null,
+  defaultProjectsFolder: null,
+  saveVaultSettingsButton: null,
+  projectIdea: null,
   packTitle: null,
   chunkStrategy: null,
   chunkCount: null,
@@ -38,6 +45,14 @@ const elements = {
   commitMessage: null,
   triggerButton: null,
   saveButton: null,
+  refreshExtensionButton: null,
+  setupExtensionButton: null,
+  connectExtensionButton: null,
+  setupToolsButton: null,
+  setupToolsPanel: null,
+  copyExtensionPathButton: null,
+  copyExtensionsUrlButton: null,
+  openExtensionFolderButton: null,
   generatePackButton: null,
   refreshVaultButton: null,
   openLatestPackButton: null,
@@ -46,25 +61,84 @@ const elements = {
   connectionText: null,
   readinessText: null,
   statusDetail: null,
+  extensionSetupHint: null,
   nextTarget: null,
   currentStage: null,
   currentProvider: null,
   nextProvider: null,
   responseView: null,
   roundHistory: null,
-  packList: null
+  packList: null,
+  projectBrowserTree: null,
+  projectContextMenu: null,
+  workspaceTaskName: null,
+  workspaceTaskStatus: null,
+  workspaceTaskContent: null,
+  workspaceTaskForm: null,
+  workspaceTaskEmpty: null,
+  saveWorkspaceTaskButton: null,
+  copyWorkspaceTaskButton: null,
+  sendWorkspaceTaskButton: null,
+  copyWorkspaceLauncherButton: null,
+  workspacePromptRunNote: null,
+  saveProjectBriefButton: null,
+  planPrimaryActionButton: null,
+  approvePromptButton: null,
+  markPromptDoneButton: null,
+  copyCodexHandoffButton: null,
+  codexTaskSelector: null,
+  inspectorImprovePrompt: null,
+  inspectorRunNote: null,
+  inspectorVersionsList: null,
+  inspectorRunHistoryList: null,
+  inspectorImproveForm: null,
+  inspectorRunsForm: null,
+  inspectorEmptyImprove: null,
+  inspectorEmptyRuns: null,
+  inspectorDetails: null,
+  buildImprovePromptButton: null,
+  sendImprovePromptButton: null,
+  copyImprovePromptButton: null,
+  addRunNoteButton: null,
+  workspaceTabs: [],
+  inspectorTabs: []
 };
 
 let latestVaultState = {
   projects: [],
-  promptPacks: []
+  promptPacks: [],
+  projectsBasePath: DEFAULT_PROJECTS_BASE_PATH
 };
 let latestWorkflowStatus = {
   message: "Waiting for Chrome extension WebSocket connection...",
   tone: "neutral",
+  extensionState: "disconnected",
   nextTarget: "ChatGPT"
 };
 let activeDebate = null;
+const drawerState = {
+  selectedProjectId: "",
+  selectedPackId: "",
+  selectedChunkId: "",
+  workspaceMode: "plan",
+  inspectorTab: "ai",
+  activeWorkflowContext: "debate_plan",
+  lastImprovePrompt: "",
+  activeRoadmapPackId: "",
+  masterPlanPingPong: null,
+  showAllProjects: false
+};
+const projectDraftState = {
+  isActive: false,
+  previousAutoPath: "",
+  pathManuallyEdited: false
+};
+const contextMenuState = {
+  type: "",
+  projectId: "",
+  packId: "",
+  chunkId: ""
+};
 
 function byId(id) {
   return document.getElementById(id);
@@ -73,6 +147,7 @@ function byId(id) {
 function setStatus(message, tone) {
   elements.status.textContent = message;
   elements.status.dataset.tone = tone || "neutral";
+  elements.status.style.display = "block";
 }
 
 function normalizeNextTarget(value) {
@@ -85,8 +160,77 @@ function normalizeNextTarget(value) {
   return "ChatGPT";
 }
 
+function normalizeExtensionState(value) {
+  const state = String(value || "").trim().toLowerCase();
+
+  if (state === "connected" || state === "loaded" || state === "error") {
+    return state;
+  }
+
+  return "disconnected";
+}
+
 function providerLabel(provider) {
   return String(provider || "").toLowerCase() === "claude" ? "Claude" : "ChatGPT";
+}
+
+function slugify(value) {
+  const slug = String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return slug || "project";
+}
+
+function getProjectFolderName(value) {
+  const folderName = String(value || "")
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1F]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "")
+    .slice(0, 80)
+    .trim();
+
+  return folderName || "Project";
+}
+
+function getProjectsBasePath(basePath) {
+  return String(basePath || DEFAULT_PROJECTS_BASE_PATH).trim() || DEFAULT_PROJECTS_BASE_PATH;
+}
+
+function getProjectDraftPath(projectName, basePath) {
+  return `${getProjectsBasePath(basePath)}\\${getProjectFolderName(projectName)}`;
+}
+
+function getDraftCommitFallback(projectName) {
+  const trimmed = String(projectName || "").trim();
+  return trimmed ? `Initialize ${trimmed}` : "";
+}
+
+function syncDraftFieldsFromName(projectName) {
+  const trimmedName = String(projectName || "").trim();
+  const basePath = elements.defaultProjectsFolder ? elements.defaultProjectsFolder.value : latestVaultState.projectsBasePath;
+  const nextPath = getProjectDraftPath(trimmedName || "New Project", basePath);
+  const previousAutoPath = projectDraftState.previousAutoPath;
+  const currentPath = elements.projectPath ? String(elements.projectPath.value || "") : "";
+  const shouldUpdatePath = !projectDraftState.pathManuallyEdited || !currentPath || currentPath === previousAutoPath;
+
+  if (elements.projectPath && shouldUpdatePath) {
+    elements.projectPath.value = nextPath;
+    projectDraftState.pathManuallyEdited = false;
+  }
+  projectDraftState.previousAutoPath = nextPath;
+
+  if (elements.packTitle && !elements.packTitle.value.trim()) {
+    elements.packTitle.value = trimmedName || "New Project";
+  }
+  if (elements.branchName && !elements.branchName.value.trim()) {
+    elements.branchName.value = `codex/${slugify(trimmedName || "new-project")}`;
+  }
+  if (elements.commitMessage && !elements.commitMessage.value.trim()) {
+    elements.commitMessage.value = getDraftCommitFallback(trimmedName);
+  }
 }
 
 function getActionableSteps() {
@@ -405,11 +549,10 @@ function getWorkflowStatusView(payload) {
   const message = String(source.message || "");
   const tone = String(source.tone || "neutral");
   const nextTarget = normalizeNextTarget(source.nextTarget);
-  const connected = tone === "success" || /connected/i.test(message);
+  const extensionState = normalizeExtensionState(source.extensionState);
   const busy = tone === "busy" || /sending|dispatching/i.test(message);
-  const disconnected = tone === "error" || /disconnected|not connected|waiting/i.test(message);
 
-  if (busy) {
+  if (busy && extensionState === "connected") {
     return {
       connected: true,
       connectionText: "Connected",
@@ -419,7 +562,7 @@ function getWorkflowStatusView(payload) {
     };
   }
 
-  if (connected && !disconnected) {
+  if (extensionState === "connected") {
     return {
       connected: true,
       connectionText: "Connected",
@@ -429,12 +572,32 @@ function getWorkflowStatusView(payload) {
     };
   }
 
-  if (disconnected) {
+  if (extensionState === "loaded") {
+    return {
+      connected: false,
+      connectionText: "Extension loaded",
+      readinessText: "Waiting",
+      detailText: message || "Extension loaded, waiting for WebSocket handshake.",
+      nextTarget
+    };
+  }
+
+  if (extensionState === "error") {
+    return {
+      connected: false,
+      connectionText: "Extension error",
+      readinessText: "Error",
+      detailText: message || "Click Connect extension. If this is first use, click Setup extension once.",
+      nextTarget
+    };
+  }
+
+  if (extensionState === "disconnected") {
     return {
       connected: false,
       connectionText: "Waiting for extension",
       readinessText: "Waiting",
-      detailText: "Open or reload the extension, then send manually",
+      detailText: "Install the extension once, then click Connect extension",
       nextTarget
     };
   }
@@ -467,6 +630,507 @@ function getNewProjectDraft(defaultPath) {
   };
 }
 
+function buildProjectBrowserTree(state) {
+  const safeState = state || { projects: [], promptPacks: [] };
+  const projects = Array.isArray(safeState.projects) ? [...safeState.projects] : [];
+  const packs = Array.isArray(safeState.promptPacks) ? safeState.promptPacks : [];
+
+  return projects
+    .sort((left, right) => String(left.name || "").localeCompare(String(right.name || "")))
+    .map((project) => {
+      const projectPacks = packs
+        .filter((pack) => pack.projectId === project.id)
+        .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+
+      return {
+        id: project.id,
+        name: project.name,
+        packs: projectPacks.map((pack) => ({
+          id: pack.id,
+          title: pack.title,
+          chunks: (Array.isArray(pack.chunks) ? pack.chunks : [])
+            .slice()
+            .sort((left, right) => Number(left.order || 0) - Number(right.order || 0))
+        }))
+      };
+    });
+}
+
+function getVisibleProjectBrowserNodes(nodes, options = {}) {
+  const safeNodes = Array.isArray(nodes) ? nodes : [];
+  const draftProject = options.draftProject || null;
+  if (draftProject) {
+    return [draftProject];
+  }
+  if (options.showAllProjects) {
+    return safeNodes;
+  }
+  const selectedProjectId = String(options.selectedProjectId || "");
+  if (selectedProjectId) {
+    return safeNodes.filter((project) => project.id === selectedProjectId);
+  }
+  return safeNodes.slice(0, 1);
+}
+
+function getSelectedChunk() {
+  const packs = Array.isArray(latestVaultState.promptPacks) ? latestVaultState.promptPacks : [];
+  const pack = packs.find((item) => item.id === drawerState.selectedPackId);
+  if (!pack) {
+    return null;
+  }
+  const chunk = (Array.isArray(pack.chunks) ? pack.chunks : []).find((item) => item.id === drawerState.selectedChunkId);
+  if (!chunk) {
+    return null;
+  }
+  return { pack, chunk };
+}
+
+function getTaskImprovePayload(chunk, runHistory, promptText) {
+  return {
+    targetProvider: "chatgpt",
+    currentStageId: "task_improve",
+    currentStageLabel: "Task Improve",
+    currentRole: "planner",
+    text: String(promptText || ""),
+    taskName: String(chunk && chunk.title || ""),
+    taskContent: String(chunk && chunk.prompt || ""),
+    runHistory: Array.isArray(runHistory) ? runHistory.map((item) => String(item.note || "")) : []
+  };
+}
+
+function isEmptyMasterPlanText(value) {
+  const text = String(value || "").trim();
+  return !text || /^#\s*master plan\s*$/i.test(text);
+}
+
+function getMasterPlanActionLabel(masterPlanText) {
+  return isEmptyMasterPlanText(masterPlanText) ? "Create Master Plan" : "Improve Master Plan";
+}
+
+function updateMasterPlanActionLabel() {
+  updatePlanPrimaryAction();
+}
+
+function getMasterPlanImprovePayload(input = {}) {
+  const projectName = String(input.projectName || "Untitled Project").trim() || "Untitled Project";
+  const projectIdea = String(input.projectIdea || "").trim();
+  const masterPlan = String(input.masterPlan || "").trim();
+  const hasExistingPlan = !isEmptyMasterPlanText(masterPlan);
+  const text = [
+    "Create a practical master plan for this project.",
+    "",
+    `Project name: ${projectName}`,
+    "",
+    "Project idea:",
+    projectIdea || "(No project idea provided.)",
+    "",
+    "Existing master plan:",
+    hasExistingPlan ? masterPlan : "(No useful master plan yet.)",
+    "",
+    "Return a complete master plan in Markdown with:",
+    "- clear goal and success criteria",
+    "- project architecture and major parts",
+    "- task roadmap in execution order",
+    "- testing and verification plan",
+    "- risks, assumptions, and next actions",
+    "",
+    "Do not return commentary about this request. Return only the master plan."
+  ].join("\n");
+
+  return {
+    targetProvider: "chatgpt",
+    currentStageId: "master_plan",
+    currentStageLabel: "Master Plan",
+    currentRole: "planner",
+    text
+  };
+}
+
+function getMasterPlanPingPongPayload(input = {}) {
+  const stage = String(input.stage || "gpt_draft");
+  const projectName = String(input.projectName || "Untitled Project").trim() || "Untitled Project";
+  const projectPath = String(input.projectPath || "").trim();
+  const projectIdea = String(input.projectIdea || "").trim();
+  const masterPlan = String(input.masterPlan || "").trim();
+  const draft = String(input.draft || "").trim();
+  const critique = String(input.critique || "").trim();
+  const hasExistingPlan = !isEmptyMasterPlanText(masterPlan);
+
+  if (stage === "claude_critique") {
+    return {
+      targetProvider: "claude",
+      currentStageId: "master_plan_claude_critique",
+      currentStageLabel: "Master Plan Critique",
+      currentRole: "critic",
+      text: [
+        "Review this master plan like a skeptical senior engineer and product planner.",
+        "Find the flaws, missing assumptions, weak sequencing, missing tests, and hidden risks.",
+        "",
+        `Project name: ${projectName}`,
+        projectPath ? `Project path: ${projectPath}` : "",
+        "",
+        "Project idea:",
+        projectIdea || "(No project idea provided.)",
+        "",
+        "Master plan draft from ChatGPT:",
+        draft || "(No draft provided.)",
+        "",
+        "Return a concise critique in Markdown with:",
+        "- blocking flaws",
+        "- risky assumptions",
+        "- missing tasks or architecture pieces",
+        "- concrete changes ChatGPT must make",
+        "",
+        "Do not rewrite the full plan. Return only the critique."
+      ].filter((line) => line !== "").join("\n")
+    };
+  }
+
+  if (stage === "gpt_revision") {
+    return {
+      targetProvider: "chatgpt",
+      currentStageId: "master_plan_gpt_revision",
+      currentStageLabel: "Master Plan Revision",
+      currentRole: "planner",
+      text: [
+        "Revise the master plan using Claude's critique.",
+        "",
+        `Project name: ${projectName}`,
+        projectPath ? `Project path: ${projectPath}` : "",
+        "",
+        "Project idea:",
+        projectIdea || "(No project idea provided.)",
+        "",
+        "Original ChatGPT draft:",
+        draft || "(No draft provided.)",
+        "",
+        "Claude critique:",
+        critique || "(No critique provided.)",
+        "",
+        "Return the final master plan in Markdown with:",
+        "- clear goal and success criteria",
+        "- project architecture and major parts",
+        "- task roadmap in execution order",
+        "- testing and verification plan",
+        "- risks, assumptions, and next actions",
+        "",
+        "Do not include meta commentary. Return only the final master plan."
+      ].filter((line) => line !== "").join("\n")
+    };
+  }
+
+  return {
+    targetProvider: "chatgpt",
+    currentStageId: "master_plan_gpt_draft",
+    currentStageLabel: "Master Plan Draft",
+    currentRole: "planner",
+    text: [
+      hasExistingPlan ? "Improve this existing master plan into a practical execution plan." : "Create a practical master plan for this project.",
+      "",
+      `Project name: ${projectName}`,
+      projectPath ? `Project path: ${projectPath}` : "",
+      "",
+      "Project idea:",
+      projectIdea || "(No project idea provided.)",
+      "",
+      "Existing master plan:",
+      hasExistingPlan ? masterPlan : "(No useful master plan yet.)",
+      "",
+      "Return a complete master plan in Markdown with:",
+      "- clear goal and success criteria",
+      "- project architecture and major parts",
+      "- task roadmap in execution order",
+      "- testing and verification plan",
+      "- risks, assumptions, and next actions",
+      "",
+      "Do not return commentary about this request. Return only the master plan draft."
+    ].filter((line) => line !== "").join("\n")
+  };
+}
+
+function getTaskRoadmapPayload(input = {}) {
+  const projectName = String(input.projectName || "Untitled Project").trim() || "Untitled Project";
+  const projectPath = String(input.projectPath || "").trim();
+  const projectIdea = String(input.projectIdea || "").trim();
+  const masterPlan = String(input.masterPlan || "").trim();
+  return {
+    targetProvider: "chatgpt",
+    currentStageId: "task_roadmap",
+    currentStageLabel: "Task Roadmap",
+    currentRole: "planner",
+    text: [
+      "Turn this master plan into an executable Codex task roadmap.",
+      "",
+      `Project name: ${projectName}`,
+      projectPath ? `Project path: ${projectPath}` : "",
+      "",
+      "Project idea:",
+      projectIdea || "(No project idea provided.)",
+      "",
+      "Master plan:",
+      masterPlan || "(No master plan provided.)",
+      "",
+      "Return JSON only. No Markdown fences, no commentary.",
+      "Use this exact shape:",
+      "{\"items\":[{\"id\":\"roadmap_1\",\"order\":1,\"title\":\"Short task title\",\"goal\":\"Concrete implementation goal\",\"whyThisExists\":\"Why this task matters\",\"targetFiles\":[\"relative/or/absolute/path\"],\"researchNeeded\":[\"what to inspect first\"],\"acceptanceCriteria\":[\"observable done condition\"],\"verificationCommands\":[\"npm.cmd run desktop:test\"],\"dependsOn\":[],\"parallelGroup\":\"\"}]}",
+      "",
+      "Rules:",
+      "- Keep each item small enough for one focused Codex run.",
+      "- Use dependsOn ids for serial dependencies.",
+      "- Use the same non-empty parallelGroup for items that can run in parallel.",
+      "- Include verification commands for each task."
+    ].filter((line) => line !== "").join("\n")
+  };
+}
+
+function getNextEligibleRoadmapItem(pack = {}) {
+  const items = pack.roadmap && Array.isArray(pack.roadmap.items) ? pack.roadmap.items : [];
+  const chunks = Array.isArray(pack.chunks) ? pack.chunks : [];
+  const doneRoadmapIds = chunks
+    .filter((chunk) => chunk.status === "done" && chunk.roadmapItemId)
+    .map((chunk) => chunk.roadmapItemId);
+  const startedRoadmapIds = chunks
+    .filter((chunk) => chunk.roadmapItemId)
+    .map((chunk) => chunk.roadmapItemId);
+
+  return items
+    .slice()
+    .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0))
+    .find((item) => {
+      if (!item || startedRoadmapIds.includes(item.id)) return false;
+      const blockedBy = (Array.isArray(item.dependsOn) ? item.dependsOn : [])
+        .filter((dependencyId) => !doneRoadmapIds.includes(dependencyId));
+      return blockedBy.length === 0;
+    }) || null;
+}
+
+function getPlanPrimaryAction(input = {}) {
+  const project = input.project || {};
+  const pack = input.pack || null;
+  const projectIdea = String(input.projectIdea || project.idea || "").trim();
+  const masterPlan = String(input.masterPlanText || project.masterPlan || "").trim();
+
+  if (isEmptyMasterPlanText(masterPlan)) {
+    return {
+      id: "master_plan",
+      label: "Create Master Plan",
+      enabled: Boolean(projectIdea),
+      handler: "improveMasterPlan",
+      roadmapItemId: ""
+    };
+  }
+
+  const roadmapItems = pack && pack.roadmap && Array.isArray(pack.roadmap.items) ? pack.roadmap.items : [];
+  if (!roadmapItems.length) {
+    return {
+      id: "roadmap",
+      label: "Create Task Roadmap",
+      enabled: true,
+      handler: "createTaskRoadmap",
+      roadmapItemId: ""
+    };
+  }
+
+  const nextItem = getNextEligibleRoadmapItem(pack);
+  if (nextItem) {
+    const order = String(Number(nextItem.order) || roadmapItems.indexOf(nextItem) + 1).padStart(3, "0");
+    const title = String(nextItem.title || "Untitled task").trim() || "Untitled task";
+    return {
+      id: "start_task",
+      label: `Create Task ${order}: ${title}`,
+      enabled: true,
+      handler: "startNextTask",
+      roadmapItemId: nextItem.id
+    };
+  }
+
+  return {
+    id: "blocked",
+    label: "No Roadmap Tasks Ready",
+    enabled: false,
+    handler: "",
+    roadmapItemId: ""
+  };
+}
+
+function getSelectedPlanProjectAndPack() {
+  const project = (latestVaultState.projects || []).find((item) => item.id === drawerState.selectedProjectId)
+    || null;
+  const pack = project
+    ? (latestVaultState.promptPacks || []).find((item) => item.id === project.activePromptPackId)
+      || (latestVaultState.promptPacks || []).find((item) => item.projectId === project.id)
+      || null
+    : null;
+  return { project, pack };
+}
+
+function updatePlanPrimaryAction() {
+  if (!elements.planPrimaryActionButton) {
+    return;
+  }
+  const selected = getSelectedPlanProjectAndPack();
+  const action = getPlanPrimaryAction({
+    project: selected.project,
+    pack: selected.pack,
+    projectIdea: elements.projectIdea ? elements.projectIdea.value : "",
+    masterPlanText: elements.currentText ? elements.currentText.value : ""
+  });
+  elements.planPrimaryActionButton.textContent = action.label;
+  elements.planPrimaryActionButton.dataset.planAction = action.id;
+  elements.planPrimaryActionButton.dataset.handler = action.handler;
+  elements.planPrimaryActionButton.dataset.roadmapItemId = action.roadmapItemId;
+  elements.planPrimaryActionButton.dataset.planDisabled = action.enabled ? "false" : "true";
+  elements.planPrimaryActionButton.disabled = !action.enabled;
+}
+
+function renderProjectBrowserTree() {
+  if (!elements.projectBrowserTree) {
+    return;
+  }
+
+  const allNodes = buildProjectBrowserTree(latestVaultState);
+  const draftName = elements.projectName ? String(elements.projectName.value || "New Project").trim() || "New Project" : "New Project";
+  const nodes = getVisibleProjectBrowserNodes(allNodes, {
+    selectedProjectId: drawerState.selectedProjectId,
+    showAllProjects: drawerState.showAllProjects,
+    draftProject: projectDraftState.isActive ? { id: "__draft__", name: draftName, packs: [], stage: "Idea", nextAction: "Save project" } : null
+  });
+  if (!nodes.length) {
+    elements.projectBrowserTree.innerHTML = '<div class="drawer-empty">No tasks generated yet.</div>';
+    return;
+  }
+
+  elements.projectBrowserTree.innerHTML = nodes.map((project) => {
+    const projectActive = drawerState.selectedProjectId === project.id ? " active" : "";
+    const packsHtml = project.packs.map((pack) => {
+      const packActive = drawerState.selectedPackId === pack.id ? " active" : "";
+      const roadmap = pack.roadmap && Array.isArray(pack.roadmap.items) ? pack.roadmap.items : [];
+      const serialItems = roadmap.filter((item) => !item.parallelGroup);
+      const parallelItems = roadmap.filter((item) => item.parallelGroup);
+      const serialHtml = serialItems.length
+        ? `<button type="button" class="tree-pack" data-action="select-tree-pack" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(pack.id)}">Serial</button>${serialItems.map((item) => `<button type="button" class="tree-item" data-action="select-roadmap-item" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(pack.id)}" data-roadmap-item-id="${escapeHtml(item.id)}"><span>${String(item.order).padStart(3, "0")} ${escapeHtml(item.title)}</span></button>`).join("")}`
+        : "";
+      const parallelHtml = parallelItems.length
+        ? `<button type="button" class="tree-pack" data-action="select-tree-pack" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(pack.id)}">Parallel</button>${parallelItems.map((item) => `<button type="button" class="tree-item" data-action="select-roadmap-item" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(pack.id)}" data-roadmap-item-id="${escapeHtml(item.id)}"><span>${String(item.order).padStart(3, "0")} ${escapeHtml(item.title)}</span></button>`).join("")}`
+        : "";
+      const chunksHtml = pack.chunks.map((chunk) => {
+        const status = String(chunk.status || "ready");
+        const statusLabel = getTaskStatusLabel(status);
+        const isActive = drawerState.selectedChunkId === chunk.id ? " active" : "";
+        return `<button type="button" class="tree-item${isActive}" data-action="select-tree-chunk" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(pack.id)}" data-chunk-id="${escapeHtml(chunk.id)}">
+          <span>[${String(chunk.order).padStart(3, "0")}] ${escapeHtml(chunk.title)}</span>
+          <span class="status-pill ${escapeHtml(status)}">${escapeHtml(statusLabel)}</span>
+        </button>`;
+      }).join("");
+
+      return `<button type="button" class="tree-pack${packActive}" data-action="select-tree-pack" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(pack.id)}">Task Roadmap</button>${serialHtml}${parallelHtml}<button type="button" class="tree-pack${packActive}" data-action="select-tree-pack" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(pack.id)}">Tasks</button>${chunksHtml}`;
+    }).join("");
+
+    const stage = escapeHtml(project.stage || "Idea");
+    const nextAction = escapeHtml(project.nextAction || "Capture project idea");
+    const draftAttr = project.id === "__draft__" ? " data-draft-project=\"true\"" : "";
+    return `<button type="button" class="tree-project${projectActive}" data-action="select-tree-project" data-project-id="${escapeHtml(project.id)}"${draftAttr}>${escapeHtml(project.name)}<br><span class="muted">Stage: ${stage}</span><br><span class="muted">Next: ${nextAction}</span></button><button type="button" class="tree-pack" data-action="select-master-plan" data-project-id="${escapeHtml(project.id)}"${draftAttr}>Master Plan</button>${packsHtml}`;
+  }).join("");
+}
+
+function getStatusOption(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "done" || normalized === "copied" || normalized === "in_progress" || normalized === "approved") {
+    return normalized;
+  }
+  return "in_progress";
+}
+
+function renderWorkspace() {
+  const selected = getSelectedChunk();
+  const hasSelection = Boolean(selected);
+  const project = (latestVaultState.projects || []).find((item) => item.id === drawerState.selectedProjectId)
+    || (projectDraftState.isActive ? null : (latestVaultState.projects || [])[0]);
+
+  if (elements.workspaceTaskForm) elements.workspaceTaskForm.style.display = hasSelection ? "block" : "none";
+  if (elements.workspaceTaskEmpty) elements.workspaceTaskEmpty.style.display = hasSelection ? "none" : "block";
+  if (project) {
+    projectDraftState.isActive = false;
+    if (elements.projectName) elements.projectName.value = project.name || "";
+    if (elements.projectPath) elements.projectPath.value = project.path || "";
+    if (elements.projectIdea) elements.projectIdea.value = project.idea || "";
+    if (elements.currentText && !elements.currentText.value) elements.currentText.value = project.masterPlan || "";
+  } else if (projectDraftState.isActive) {
+    if (elements.projectName && !elements.projectName.value) elements.projectName.value = "New Project";
+    if (elements.projectPath && !elements.projectPath.value) elements.projectPath.value = getProjectDraftPath("New Project", latestVaultState.projectsBasePath);
+  } else if (elements.projectPath && !elements.projectPath.value) {
+    elements.projectPath.value = getProjectsBasePath(latestVaultState.projectsBasePath);
+  }
+
+  document.querySelectorAll("[data-workspace-panel]").forEach((node) => {
+    node.classList.toggle("active", node.getAttribute("data-workspace-panel") === drawerState.workspaceMode);
+  });
+  document.querySelectorAll("[data-workspace-tab]").forEach((node) => {
+    node.classList.toggle("active", node.getAttribute("data-workspace-tab") === drawerState.workspaceMode);
+  });
+
+  if (!selected) {
+    return;
+  }
+
+  const chunk = selected.chunk;
+  if (elements.workspaceTaskName) elements.workspaceTaskName.value = String(chunk.title || "");
+  if (elements.workspaceTaskContent) elements.workspaceTaskContent.value = String(chunk.prompt || "");
+  if (elements.workspaceTaskStatus) elements.workspaceTaskStatus.value = getStatusOption(chunk.status);
+}
+
+function renderInspector() {
+  const selected = getSelectedChunk();
+  const hasSelection = Boolean(selected);
+  const sectionName = drawerState.inspectorTab;
+
+  if (elements.inspectorImproveForm) elements.inspectorImproveForm.style.display = hasSelection ? "block" : "none";
+  if (elements.inspectorRunsForm) elements.inspectorRunsForm.style.display = hasSelection ? "block" : "none";
+  if (elements.inspectorEmptyImprove) elements.inspectorEmptyImprove.style.display = hasSelection ? "none" : "block";
+  if (elements.inspectorEmptyRuns) elements.inspectorEmptyRuns.style.display = hasSelection ? "none" : "block";
+
+  document.querySelectorAll("[data-inspector-section]").forEach((node) => {
+    node.classList.toggle("active", node.getAttribute("data-inspector-section") === sectionName);
+  });
+  document.querySelectorAll("[data-inspector-tab]").forEach((node) => {
+    node.classList.toggle("active", node.getAttribute("data-inspector-tab") === sectionName);
+  });
+
+  if (!selected) {
+    if (elements.inspectorVersionsList) elements.inspectorVersionsList.innerHTML = '<div class="muted">No versions yet.</div>';
+    if (elements.inspectorRunHistoryList) elements.inspectorRunHistoryList.innerHTML = '<div class="muted">No run history yet.</div>';
+    if (elements.inspectorDetails) elements.inspectorDetails.innerHTML = "Select a project item to view details.";
+    return;
+  }
+
+  const chunk = selected.chunk;
+  if (elements.inspectorImprovePrompt) elements.inspectorImprovePrompt.value = drawerState.lastImprovePrompt || "";
+
+  const versions = Array.isArray(chunk.versions) ? chunk.versions : [];
+  if (elements.inspectorVersionsList) {
+    elements.inspectorVersionsList.innerHTML = versions.length
+      ? versions.map((version) => `<div class="list-item">
+          <div><strong>${escapeHtml(version.source || "ai_improve")}</strong> | ${escapeHtml(version.createdAt || "")}</div>
+          <div class="field-help">${escapeHtml(String(version.responseText || "").slice(0, 160))}</div>
+          <div class="actions" style="margin-top:6px;">
+            <button type="button" class="secondary-btn compact-btn" data-action="apply-version" data-pack-id="${escapeHtml(selected.pack.id)}" data-chunk-id="${escapeHtml(chunk.id)}" data-version-id="${escapeHtml(version.id)}">Apply</button>
+          </div>
+        </div>`).join("")
+      : '<div class="muted">No versions yet.</div>';
+  }
+
+  const runHistory = Array.isArray(chunk.runHistory) ? chunk.runHistory : [];
+  if (elements.inspectorRunHistoryList) {
+    elements.inspectorRunHistoryList.innerHTML = runHistory.length
+      ? runHistory.map((item) => `<div class="list-item"><strong>${escapeHtml(item.createdAt || "")}</strong><div>${escapeHtml(item.note || "")}</div></div>`).join("")
+      : '<div class="muted">No run history yet.</div>';
+  }
+
+  if (elements.inspectorDetails) {
+    elements.inspectorDetails.innerHTML = `<strong>${escapeHtml(chunk.title || "")}</strong><br>${escapeHtml(getTaskStatusLabel(chunk.status || "ready"))}<br>${escapeHtml(selected.pack.title || "")}`;
+  }
+}
+
 function renderWorkflowStatus() {
   const view = getWorkflowStatusView(latestWorkflowStatus);
 
@@ -489,6 +1153,19 @@ function renderWorkflowStatus() {
   if (elements.nextTarget) {
     elements.nextTarget.textContent = view.nextTarget;
   }
+
+  if (elements.extensionSetupHint) {
+    elements.extensionSetupHint.style.display = view.connected ? "none" : "block";
+  }
+}
+
+function toggleSetupToolsPanel() {
+  if (!elements.setupToolsPanel) {
+    return;
+  }
+
+  const isOpen = elements.setupToolsPanel.dataset.open === "true";
+  elements.setupToolsPanel.dataset.open = isOpen ? "false" : "true";
 }
 
 function renderDebateState() {
@@ -522,12 +1199,42 @@ function renderDebateState() {
 function setBusy(isBusy) {
   elements.triggerButton.disabled = isBusy;
   elements.saveButton.disabled = isBusy;
+  if (elements.refreshExtensionButton) {
+    elements.refreshExtensionButton.disabled = isBusy;
+  }
+  if (elements.setupExtensionButton) {
+    elements.setupExtensionButton.disabled = isBusy;
+  }
+  if (elements.connectExtensionButton) {
+    elements.connectExtensionButton.disabled = isBusy;
+  }
+  if (elements.copyExtensionPathButton) {
+    elements.copyExtensionPathButton.disabled = isBusy;
+  }
+  if (elements.copyExtensionsUrlButton) {
+    elements.copyExtensionsUrlButton.disabled = isBusy;
+  }
+  if (elements.openExtensionFolderButton) {
+    elements.openExtensionFolderButton.disabled = isBusy;
+  }
+  if (elements.setupToolsButton) {
+    elements.setupToolsButton.disabled = isBusy;
+  }
+  if (elements.planPrimaryActionButton) {
+    elements.planPrimaryActionButton.disabled = isBusy || elements.planPrimaryActionButton.dataset.planDisabled === "true";
+  }
 }
 
 function setVaultBusy(isBusy) {
   elements.generatePackButton.disabled = isBusy;
   elements.refreshVaultButton.disabled = isBusy;
   elements.openLatestPackButton.disabled = isBusy;
+  if (elements.saveProjectBriefButton) {
+    elements.saveProjectBriefButton.disabled = isBusy;
+  }
+  if (elements.planPrimaryActionButton) {
+    elements.planPrimaryActionButton.disabled = isBusy || elements.planPrimaryActionButton.dataset.planDisabled === "true";
+  }
 }
 
 function resetActionButtons() {
@@ -572,6 +1279,9 @@ function renderStatus(payload) {
   const tone = payload && typeof payload === "object"
     ? String(payload.tone || "neutral")
     : "neutral";
+  const extensionState = payload && typeof payload === "object" && Object.prototype.hasOwnProperty.call(payload, "extensionState")
+    ? normalizeExtensionState(payload.extensionState)
+    : normalizeExtensionState(latestWorkflowStatus.extensionState);
   const debateProvider = activeDebate ? getDebateStageView(activeDebate).currentProvider : "";
   const nextTarget = payload && typeof payload === "object"
     ? normalizeNextTarget(debateProvider || payload.nextTarget || latestWorkflowStatus.nextTarget)
@@ -584,6 +1294,7 @@ function renderStatus(payload) {
   latestWorkflowStatus = {
     message,
     tone,
+    extensionState,
     nextTarget
   };
   renderWorkflowStatus();
@@ -595,7 +1306,7 @@ function renderStatus(payload) {
   }
 }
 
-function triggerWorkflowStep() {
+async function triggerWorkflowStep() {
   if (!elements.currentText.value.trim() && (!activeDebate || !activeDebate.raw_idea)) {
     setStatus("Project idea / working plan is empty. Add text before sending.", "error");
     return;
@@ -613,12 +1324,43 @@ function triggerWorkflowStep() {
   latestWorkflowStatus = {
     message: `Sending ${view.currentStage} to ${view.currentProvider}...`,
     tone: "busy",
+    extensionState: normalizeExtensionState(latestWorkflowStatus.extensionState),
     nextTarget: view.currentProvider
   };
   renderWorkflowStatus();
   renderDebateState();
   setStatus("Sending prompt to extension. Continue manually after the response returns.", "busy");
-  desktopApi.sendWorkflow(payload);
+  try {
+    const response = await desktopApi.sendWorkflow(payload);
+    if (!response || response.ok === false) {
+      const extensionState = normalizeExtensionState(response && response.extensionState);
+      const message = response && response.error
+        ? response.error
+        : extensionState === "loaded"
+          ? "Extension is loaded but not connected. Click Connect extension, wait for Connected, then retry."
+          : "Chrome extension WebSocket client is not connected.";
+
+      latestWorkflowStatus = {
+        message,
+        tone: "error",
+        extensionState,
+        nextTarget: view.currentProvider
+      };
+      renderWorkflowStatus();
+      setStatus(message, "error");
+      setBusy(false);
+    }
+  } catch (error) {
+    latestWorkflowStatus = {
+      message: error.message,
+      tone: "error",
+      extensionState: "error",
+      nextTarget: view.currentProvider
+    };
+    renderWorkflowStatus();
+    setStatus(error.message, "error");
+    setBusy(false);
+  }
 }
 
 function updateWordCount() {
@@ -628,6 +1370,7 @@ function updateWordCount() {
 
   const words = elements.currentText.value.trim().split(/\s+/).filter(Boolean).length;
   elements.wordCount.textContent = `${words} ${words === 1 ? "word" : "words"}`;
+  updateMasterPlanActionLabel();
 }
 
 function saveFinalText() {
@@ -645,7 +1388,184 @@ function saveFinalText() {
   setStatus("Final text saved from renderer.", "success");
 }
 
-function renderResponse(text) {
+async function renderResponse(text) {
+  if (drawerState.activeWorkflowContext === "master_plan_pingpong") {
+    const normalizedText = String(text || "").trim();
+    const flow = drawerState.masterPlanPingPong || {};
+    if (!normalizedText) {
+      drawerState.activeWorkflowContext = "debate_plan";
+      drawerState.masterPlanPingPong = null;
+      setBusy(false);
+      setStatus("AI returned an empty master plan response.", "error");
+      return;
+    }
+
+    if (flow.stage === "gpt_draft") {
+      drawerState.masterPlanPingPong = {
+        ...flow,
+        stage: "claude_critique",
+        draft: normalizedText
+      };
+      const payload = getMasterPlanPingPongPayload({
+        ...drawerState.masterPlanPingPong,
+        stage: "claude_critique"
+      });
+      drawerState.lastImprovePrompt = payload.text;
+      setStatus("ChatGPT draft received. Sending it to Claude to find flaws.", "busy");
+      const response = await desktopApi.sendWorkflow(payload);
+      if (!response || response.ok === false) {
+        drawerState.activeWorkflowContext = "debate_plan";
+        drawerState.masterPlanPingPong = null;
+        setBusy(false);
+        throw new Error(response && response.error ? response.error : "Could not send master plan draft to Claude.");
+      }
+      return;
+    }
+
+    if (flow.stage === "claude_critique") {
+      drawerState.masterPlanPingPong = {
+        ...flow,
+        stage: "gpt_revision",
+        critique: normalizedText
+      };
+      const payload = getMasterPlanPingPongPayload({
+        ...drawerState.masterPlanPingPong,
+        stage: "gpt_revision"
+      });
+      drawerState.lastImprovePrompt = payload.text;
+      setStatus("Claude critique received. Sending revision request back to ChatGPT.", "busy");
+      const response = await desktopApi.sendWorkflow(payload);
+      if (!response || response.ok === false) {
+        drawerState.activeWorkflowContext = "debate_plan";
+        drawerState.masterPlanPingPong = null;
+        setBusy(false);
+        throw new Error(response && response.error ? response.error : "Could not send master plan revision to ChatGPT.");
+      }
+      return;
+    }
+
+    if (elements.currentText) elements.currentText.value = normalizedText;
+    updateWordCount();
+    if (drawerState.selectedProjectId) {
+      const response = await desktopApi.addMasterPlanVersion({
+        projectId: drawerState.selectedProjectId,
+        source: "ai_master_plan_pingpong",
+        promptSnapshot: drawerState.lastImprovePrompt,
+        responseText: normalizedText
+      });
+      if (response && response.ok !== false) {
+        const applyResponse = await desktopApi.applyMasterPlanVersion({
+          projectId: drawerState.selectedProjectId,
+          versionId: response.version.id
+        });
+        if (applyResponse && applyResponse.ok !== false) {
+          renderVaultState(applyResponse.state);
+        } else {
+          renderVaultState(response.state);
+        }
+      }
+    }
+    drawerState.activeWorkflowContext = "debate_plan";
+    drawerState.masterPlanPingPong = null;
+    drawerState.lastImprovePrompt = "";
+    setBusy(false);
+    setStatus("Master plan finalized after ChatGPT -> Claude critique -> ChatGPT revision.", "success");
+    return;
+  }
+
+  if (drawerState.activeWorkflowContext === "master_plan") {
+    const normalizedText = String(text || "").trim();
+    if (normalizedText) {
+      if (elements.currentText) elements.currentText.value = normalizedText;
+      updateWordCount();
+      if (drawerState.selectedProjectId) {
+        desktopApi.addMasterPlanVersion({
+          projectId: drawerState.selectedProjectId,
+          source: "ai_master_plan",
+          promptSnapshot: drawerState.lastImprovePrompt,
+          responseText: normalizedText
+        }).then((response) => {
+          if (response && response.ok !== false) {
+            return desktopApi.applyMasterPlanVersion({
+              projectId: drawerState.selectedProjectId,
+              versionId: response.version.id
+            });
+          }
+          return response;
+        }).then((response) => {
+          if (response && response.ok !== false) {
+            renderVaultState(response.state);
+          }
+          return response;
+        }).catch((error) => {
+          setStatus(error.message || "Could not save master plan version.", "error");
+        });
+      }
+      setStatus("Master plan received. Review it, then save the project or create the task roadmap.", "success");
+    }
+    drawerState.activeWorkflowContext = "debate_plan";
+    drawerState.lastImprovePrompt = "";
+    return;
+  }
+
+  if (drawerState.activeWorkflowContext === "roadmap") {
+    const responseText = String(text || "").trim();
+    const packId = drawerState.activeRoadmapPackId;
+    if (!responseText || !packId) {
+      drawerState.activeWorkflowContext = "debate_plan";
+      drawerState.activeRoadmapPackId = "";
+      setBusy(false);
+      setStatus("Roadmap response was empty or no active project pack exists.", "error");
+      return;
+    }
+    const versionResponse = await desktopApi.addRoadmapVersion({
+      packId,
+      source: "ai_task_roadmap",
+      promptSnapshot: drawerState.lastImprovePrompt,
+      responseText
+    });
+    if (!versionResponse || versionResponse.ok === false) {
+      throw new Error(versionResponse && versionResponse.error ? versionResponse.error : "Could not save task roadmap version.");
+    }
+    const applyResponse = await desktopApi.applyRoadmapVersion({
+      packId,
+      versionId: versionResponse.version.id
+    });
+    if (!applyResponse || applyResponse.ok === false) {
+      throw new Error(applyResponse && applyResponse.error ? applyResponse.error : "Could not apply task roadmap.");
+    }
+    drawerState.activeWorkflowContext = "debate_plan";
+    drawerState.activeRoadmapPackId = "";
+    drawerState.lastImprovePrompt = "";
+    renderVaultState(applyResponse.state);
+    setBusy(false);
+    setStatus("Task roadmap created. Use the primary Plan action to create the first Codex task.", "success");
+    return;
+  }
+
+  if (drawerState.activeWorkflowContext === "task_improve") {
+    const selected = getSelectedChunk();
+    if (selected) {
+      desktopApi.addChunkVersion({
+        packId: selected.pack.id,
+        chunkId: selected.chunk.id,
+        source: "ai_improve",
+        promptSnapshot: drawerState.lastImprovePrompt,
+        responseText: String(text || "")
+      }).then((response) => {
+        if (response && response.ok !== false) {
+          renderVaultState(response.state);
+          setStatus("AI improve response saved as proposed version.", "success");
+        }
+      }).catch((error) => {
+        setStatus(error.message || "Could not save AI improve response.", "error");
+      });
+    }
+    drawerState.activeWorkflowContext = "debate_plan";
+    setBusy(false);
+    return;
+  }
+
   const normalizedText = String(text || "");
   const result = applyDebateResponse(activeDebate || createRootDebateState(elements.currentText.value), normalizedText);
   activeDebate = result.debate;
@@ -657,11 +1577,12 @@ function renderResponse(text) {
   latestWorkflowStatus = {
     message: "AI response received. Ready for next step.",
     tone: "success",
+    extensionState: "connected",
     nextTarget: result.stageView.currentProvider
   };
   renderDebateState();
   renderWorkflowStatus();
-  setStatus("AI response received. Review it, then send the next gated step or generate Codex prompts.", "success");
+  setStatus("AI response received. Review it, then send the next gated step or generate Codex tasks.", "success");
 }
 
 function escapeHtml(value) {
@@ -678,9 +1599,10 @@ function getTaskStatusLabel(status) {
     copied: "Copied",
     launcher_copied: "Copied",
     in_progress: "In Progress",
+    approved: "Approved",
     done: "Done",
-    ready: "Ready",
-    draft: "Draft"
+    ready: "In Progress",
+    draft: "In Progress"
   };
 
   return labels[normalized] || normalized;
@@ -698,24 +1620,51 @@ function getGitModeLabel(gitMode) {
 
 function renderProjectSelect(projects) {
   const currentValue = elements.projectSelect.value;
-  elements.projectSelect.innerHTML = '<option value="">New project / manual entry</option>' + projects.map((project) => (
+  elements.projectSelect.innerHTML = '<option value="">New project / manual entry</option><option value="__all__">See all projects</option>' + projects.map((project) => (
     `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)} - ${escapeHtml(project.path)}</option>`
   )).join("");
 
   if (projects.some((project) => project.id === currentValue)) {
     elements.projectSelect.value = currentValue;
+  } else if (currentValue === "__all__" || drawerState.showAllProjects) {
+    elements.projectSelect.value = "__all__";
+  } else if (drawerState.selectedProjectId && projects.some((project) => project.id === drawerState.selectedProjectId)) {
+    elements.projectSelect.value = drawerState.selectedProjectId;
   }
 }
 
 function applyProject(projectId) {
-  const project = (latestVaultState.projects || []).find((item) => item.id === projectId);
-
-  if (!project) {
+  if (String(projectId || "") === "__all__") {
+    projectDraftState.isActive = false;
+    drawerState.showAllProjects = true;
+    drawerState.selectedProjectId = "";
+    drawerState.selectedPackId = "";
+    drawerState.selectedChunkId = "";
+    renderProjectBrowserTree();
+    renderWorkspace();
+    renderInspector();
+    setStatus("Showing all saved projects.", "neutral");
     return;
   }
 
+  const project = (latestVaultState.projects || []).find((item) => item.id === projectId);
+
+  if (!project) {
+    startNewProjectDraft();
+    return;
+  }
+
+  drawerState.showAllProjects = false;
+  drawerState.selectedProjectId = project.id;
+  drawerState.selectedPackId = "";
+  drawerState.selectedChunkId = "";
+  projectDraftState.isActive = false;
+  projectDraftState.pathManuallyEdited = false;
+  projectDraftState.previousAutoPath = "";
   elements.projectName.value = project.name || "";
   elements.projectPath.value = project.path || "";
+  if (elements.projectIdea) elements.projectIdea.value = project.idea || "";
+  if (elements.currentText) elements.currentText.value = project.masterPlan || "";
   elements.gitRemote.value = project.git && project.git.remote ? project.git.remote : "origin";
   elements.defaultBranch.value = project.git && project.git.defaultBranch ? project.git.defaultBranch : "main";
   elements.branchPrefix.value = project.git && project.git.branchPrefix ? project.git.branchPrefix : "codex/";
@@ -723,6 +1672,11 @@ function applyProject(projectId) {
   elements.chunkStrategy.value = project.defaults && project.defaults.chunkStrategy ? project.defaults.chunkStrategy : "simple_3";
   elements.chunkCount.value = project.defaults && project.defaults.chunkCount ? String(project.defaults.chunkCount) : "3";
   elements.commitMessage.value = project.defaults && project.defaults.commitMessage ? project.defaults.commitMessage : "";
+  renderProjectBrowserTree();
+  renderWorkspace();
+  renderInspector();
+  updateWordCount();
+  updatePlanPrimaryAction();
 }
 
 function renderVaultState(state) {
@@ -733,12 +1687,23 @@ function renderVaultState(state) {
 
   const packs = Array.isArray(latestVaultState.promptPacks) ? latestVaultState.promptPacks : [];
   const projects = Array.isArray(latestVaultState.projects) ? latestVaultState.projects : [];
+  if (elements.defaultProjectsFolder) {
+    elements.defaultProjectsFolder.value = getProjectsBasePath(latestVaultState.projectsBasePath);
+  }
+  const hasChunks = packs.some((pack) => Array.isArray(pack.chunks) && pack.chunks.length > 0);
+  if (!drawerState.selectedChunkId && !drawerState.selectedPackId) {
+    drawerState.workspaceMode = hasChunks ? "tasks" : "plan";
+  }
 
   renderProjectSelect(projects);
+  renderProjectBrowserTree();
+  renderWorkspace();
+  renderInspector();
+  updateMasterPlanActionLabel();
   setVaultBusy(false);
 
   if (packs.length === 0) {
-    elements.packList.innerHTML = "<div class=\"pack-card\">No Codex prompts generated yet.</div>";
+    elements.packList.innerHTML = "<div class=\"pack-card\">No tasks generated yet.</div>";
     return;
   }
 
@@ -802,7 +1767,7 @@ function renderVaultState(state) {
 
   elements.packList.innerHTML = `
     <article class="pack-card latest-pack">
-      <h3>Latest Codex Prompts</h3>
+      <h3>Latest Codex Tasks</h3>
       <div class="pack-meta">
         <span class="pack-meta-item"><span aria-hidden="true">[ ]</span> Project: ${escapeHtml(latestProject ? latestProject.name : "Unknown")}</span>
         <span class="pack-meta-item"><span aria-hidden="true">/</span> Branch: ${escapeHtml(latestPack.branchName)}</span>
@@ -810,7 +1775,7 @@ function renderVaultState(state) {
       </div>
       <div class="actions" style="margin: 0 0 10px;">
         <button class="secondary-btn" type="button" data-action="open-folder" data-folder-path="${escapeHtml(latestPack.exportPath)}">Open Prompt Folder</button>
-        <button class="danger-btn" type="button" data-action="delete-pack" data-pack-id="${escapeHtml(latestPack.id)}" data-pack-title="${escapeHtml(latestPack.title)}">Delete Latest Prompts</button>
+        <button class="danger-btn" type="button" data-action="delete-pack" data-pack-id="${escapeHtml(latestPack.id)}" data-pack-title="${escapeHtml(latestPack.title)}">Delete Latest Tasks</button>
       </div>
       <div class="task-list">${taskHtml}</div>
     </article>
@@ -838,7 +1803,7 @@ async function generatePromptPack() {
   const payload = getVaultPayload();
 
   if (!payload.sourceText.trim()) {
-    setStatus("Project idea / working plan is empty. Generate or paste a plan before creating Codex prompts.", "error");
+    setStatus("Project idea / working plan is empty. Generate or paste a plan before creating Codex tasks.", "error");
     return;
   }
 
@@ -848,18 +1813,18 @@ async function generatePromptPack() {
   }
 
   setVaultBusy(true);
-  setStatus("Generating Codex prompts...", "busy");
+  setStatus("Generating Codex tasks...", "busy");
 
   try {
     const response = await desktopApi.generatePromptPack(payload);
 
     if (!response || response.ok === false) {
-      throw new Error(response && response.error ? response.error : "Could not generate Codex prompts.");
+      throw new Error(response && response.error ? response.error : "Could not generate Codex tasks.");
     }
 
     renderVaultState(response.state);
     elements.projectSelect.value = response.project.id;
-    setStatus(`Codex prompts generated: ${response.pack.exportPath}`, "success");
+    setStatus(`Codex tasks generated: ${response.pack.exportPath}`, "success");
   } catch (error) {
     setStatus(error.message, "error");
   } finally {
@@ -919,7 +1884,7 @@ async function openFolder(folderPath) {
 }
 
 async function deletePack(packId, packTitle) {
-  const title = packTitle || "these Codex prompts";
+  const title = packTitle || "these Codex tasks";
   const confirmed = window.confirm(`Delete "${title}" from Prompt Vault?\n\nExported files on disk will not be deleted.`);
 
   if (!confirmed) {
@@ -931,11 +1896,11 @@ async function deletePack(packId, packTitle) {
   });
 
   if (!response || response.ok === false) {
-    throw new Error(response && response.error ? response.error : "Could not delete Codex prompts.");
+    throw new Error(response && response.error ? response.error : "Could not delete Codex tasks.");
   }
 
   renderVaultState(response.state);
-  setStatus(`Deleted Codex prompts: ${title}.`, "success");
+  setStatus(`Deleted Codex tasks: ${title}.`, "success");
 }
 
 async function openLatestPackFolder() {
@@ -950,6 +1915,122 @@ async function openLatestPackFolder() {
     await openFolder(packs[0].exportPath);
   } catch (error) {
     setStatus(error.message, "error");
+  }
+}
+
+async function refreshExtensionStatus() {
+  setBusy(true);
+  setStatus("Checking extension connection...", "busy");
+
+  try {
+    const response = await desktopApi.refreshExtensionStatus();
+    if (!response || response.ok === false) {
+      throw new Error(response && response.error ? response.error : "Could not refresh extension status.");
+    }
+    renderStatus({
+      message: response.message || "Extension status updated.",
+      tone: response.extensionState === "connected" ? "success" : response.extensionState === "loaded" ? "neutral" : "error",
+      extensionState: response.extensionState,
+      nextTarget: latestWorkflowStatus.nextTarget
+    });
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function setupExtensionOnce() {
+  setBusy(true);
+  setStatus("Opening Chrome extension setup...", "busy");
+  try {
+    const response = await desktopApi.setupExtensionOnce();
+    if (!response || response.ok === false) {
+      throw new Error(response && response.error ? response.error : "Could not open Chrome extension setup.");
+    }
+    const extensionPath = response.extensionPath || "F:\\Projects\\CopyPaste\\apps\\extension";
+    const fallback = response.manualFallback || "If Chrome opened a blank tab, type chrome://extensions in the address bar.";
+    const message = `Setup started. ${fallback} Extension path: ${extensionPath}`;
+    renderStatus({
+      message,
+      tone: "neutral",
+      extensionState: latestWorkflowStatus.extensionState,
+      nextTarget: latestWorkflowStatus.nextTarget
+    });
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function connectInstalledExtension() {
+  setBusy(true);
+  setStatus("Waking installed CopyPaste extension...", "busy");
+  try {
+    const response = await desktopApi.connectInstalledExtension();
+    if (!response || response.ok === false) {
+      throw new Error(response && response.error ? response.error : "Could not wake the installed CopyPaste extension.");
+    }
+    const extensionState = response.extensionState || "loaded";
+    renderStatus({
+      message: extensionState === "connected"
+        ? "Extension connected. Ready for next AI step."
+        : "Extension loaded, waiting for WebSocket handshake.",
+      tone: extensionState === "connected" ? "success" : "neutral",
+      extensionState,
+      nextTarget: latestWorkflowStatus.nextTarget
+    });
+  } catch (error) {
+    const details = "If this extension was installed before the fixed ID change, remove the old CopyPaste Orchestrator from Chrome and load unpacked again from the shown folder.";
+    setStatus(`${error.message} ${details}`, "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function copyExtensionPath() {
+  setBusy(true);
+  try {
+    const response = await desktopApi.copyExtensionPath();
+    if (!response || response.ok === false) {
+      throw new Error(response && response.error ? response.error : "Could not copy extension path.");
+    }
+    setStatus(`Extension path copied: ${response.extensionPath}`, "success");
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function copyExtensionsUrl() {
+  setBusy(true);
+  try {
+    const response = await desktopApi.copyExtensionsUrl();
+    if (!response || response.ok === false) {
+      throw new Error(response && response.error ? response.error : "Could not copy extensions URL.");
+    }
+    setStatus(`Copied URL: ${response.extensionsUrl}`, "success");
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function openExtensionFolder() {
+  setBusy(true);
+  try {
+    const response = await desktopApi.openExtensionFolder();
+    if (!response || response.ok === false) {
+      throw new Error(response && response.error ? response.error : "Could not open extension folder.");
+    }
+    setStatus(`Opened extension folder: ${response.extensionPath}`, "neutral");
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -971,7 +2052,7 @@ async function handlePackListClick(event) {
 
     if (action === "copy-chunk") {
       await copyChunk(button.dataset.packId, button.dataset.chunkId);
-      setStatus("Full Codex prompt copied to clipboard.", "success");
+      setStatus("Full Codex task copied to clipboard.", "success");
       return;
     }
 
@@ -998,14 +2079,595 @@ async function handlePackListClick(event) {
   }
 }
 
+function selectTreeNode(projectId, packId, chunkId) {
+  if (String(projectId || "") === "__draft__") {
+    startNewProjectDraft();
+    return;
+  }
+  drawerState.showAllProjects = false;
+  drawerState.selectedProjectId = String(projectId || "");
+  drawerState.selectedPackId = String(packId || "");
+  drawerState.selectedChunkId = String(chunkId || "");
+  if (elements.projectSelect && drawerState.selectedProjectId) {
+    elements.projectSelect.value = drawerState.selectedProjectId;
+  }
+  const hasChunks = Array.isArray(latestVaultState.promptPacks) && latestVaultState.promptPacks.some((pack) => Array.isArray(pack.chunks) && pack.chunks.length > 0);
+  drawerState.workspaceMode = drawerState.selectedChunkId ? "tasks" : hasChunks ? "tasks" : "plan";
+  renderProjectBrowserTree();
+  renderWorkspace();
+  renderInspector();
+}
+
+function setInspectorTab(tabName) {
+  drawerState.inspectorTab = String(tabName || "improve");
+  renderInspector();
+}
+
+function setWorkspaceMode(modeName) {
+  drawerState.workspaceMode = String(modeName || "tasks");
+  renderWorkspace();
+}
+
+async function handleProjectBrowserClick(event) {
+  const actionEl = event.target.closest("[data-action]");
+  if (!actionEl) return;
+
+  const action = actionEl.dataset.action;
+  if (action === "select-master-plan") {
+    selectTreeNode(actionEl.dataset.projectId, "", "");
+    setWorkspaceMode("plan");
+    return;
+  }
+  if (action === "select-tree-project") {
+    selectTreeNode(actionEl.dataset.projectId, "", "");
+    return;
+  }
+  if (action === "select-tree-pack") {
+    selectTreeNode(actionEl.dataset.projectId, actionEl.dataset.packId, "");
+    return;
+  }
+  if (action === "select-tree-chunk") {
+    selectTreeNode(actionEl.dataset.projectId, actionEl.dataset.packId, actionEl.dataset.chunkId);
+    return;
+  }
+  if (action === "select-roadmap-item") {
+    selectTreeNode(actionEl.dataset.projectId, actionEl.dataset.packId, "");
+    setWorkspaceMode("plan");
+    return;
+  }
+  if (action === "apply-version") {
+    try {
+      const response = await desktopApi.applyChunkVersion({
+        packId: actionEl.dataset.packId,
+        chunkId: actionEl.dataset.chunkId,
+        versionId: actionEl.dataset.versionId
+      });
+      if (!response || response.ok === false) {
+        throw new Error(response && response.error ? response.error : "Could not apply version.");
+      }
+      renderVaultState(response.state);
+      setStatus("Version applied to task content.", "success");
+    } catch (error) {
+      setStatus(error.message, "error");
+    }
+  }
+}
+
+function hideProjectContextMenu() {
+  if (elements.projectContextMenu && elements.projectContextMenu.dataset.open !== "true") {
+    return;
+  }
+  contextMenuState.type = "";
+  contextMenuState.projectId = "";
+  contextMenuState.packId = "";
+  contextMenuState.chunkId = "";
+  if (elements.projectContextMenu) {
+    elements.projectContextMenu.dataset.open = "false";
+  }
+}
+
+function setContextMenuItems(type) {
+  if (!elements.projectContextMenu) return;
+  elements.projectContextMenu.querySelectorAll("[data-context-action]").forEach((item) => {
+    const action = item.getAttribute("data-context-action");
+    const isProjectAction = action === "copy-project-path" || action === "delete-project";
+    item.style.display = type === "project"
+      ? isProjectAction ? "flex" : "none"
+      : isProjectAction ? "none" : "flex";
+  });
+}
+
+function openProjectContextMenu(event) {
+  const taskNode = event.target.closest("[data-action='select-tree-chunk']");
+  const projectNode = event.target.closest("[data-action='select-tree-project']");
+  const node = taskNode || projectNode;
+  if (!node || node.dataset.draftProject === "true") return;
+  event.preventDefault();
+  contextMenuState.type = taskNode ? "task" : "project";
+  contextMenuState.projectId = node.dataset.projectId || "";
+  contextMenuState.packId = node.dataset.packId || "";
+  contextMenuState.chunkId = node.dataset.chunkId || "";
+  setContextMenuItems(contextMenuState.type);
+  if (elements.projectContextMenu) {
+    elements.projectContextMenu.style.left = `${Math.max(8, event.clientX)}px`;
+    elements.projectContextMenu.style.top = `${Math.max(8, event.clientY)}px`;
+    elements.projectContextMenu.dataset.open = "true";
+  }
+}
+
+async function deleteSelectedProjectFromContext() {
+  const project = (latestVaultState.projects || []).find((item) => item.id === contextMenuState.projectId);
+  if (!project) throw new Error("Project not found.");
+  const confirmed = window.confirm(`Delete "${project.name}" from Project Browser?\n\nProject files on disk will not be deleted.`);
+  if (!confirmed) return;
+  const response = await desktopApi.deleteProject({ projectId: project.id });
+  if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not delete project.");
+  drawerState.selectedProjectId = "";
+  drawerState.selectedPackId = "";
+  drawerState.selectedChunkId = "";
+  drawerState.showAllProjects = true;
+  renderVaultState(response.state);
+  setStatus(`Project removed from browser: ${project.name}`, "success");
+}
+
+async function deleteSelectedTaskFromContext() {
+  const selected = {
+    packId: contextMenuState.packId,
+    chunkId: contextMenuState.chunkId
+  };
+  const pack = (latestVaultState.promptPacks || []).find((item) => item.id === selected.packId);
+  const chunk = pack && (pack.chunks || []).find((item) => item.id === selected.chunkId);
+  if (!pack || !chunk) throw new Error("Task not found.");
+  const confirmed = window.confirm(`Delete task "${chunk.title}" from this project?`);
+  if (!confirmed) return;
+  const response = await desktopApi.deleteTask(selected);
+  if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not delete task.");
+  drawerState.selectedChunkId = "";
+  renderVaultState(response.state);
+  setStatus(`Task deleted: ${chunk.title}`, "success");
+}
+
+async function handleProjectContextMenuClick(event) {
+  const actionEl = event.target.closest("[data-context-action]");
+  if (!actionEl) return;
+  const action = actionEl.getAttribute("data-context-action");
+  try {
+    if (action === "copy-project-path") {
+      const project = (latestVaultState.projects || []).find((item) => item.id === contextMenuState.projectId);
+      if (!project) throw new Error("Project not found.");
+      await window.nextstepClipboard.copyText(project.path || "");
+      setStatus(`Project path copied: ${project.path}`, "success");
+    } else if (action === "delete-project") {
+      await deleteSelectedProjectFromContext();
+    } else if (action === "copy-task") {
+      await desktopApi.copyChunk({ packId: contextMenuState.packId, chunkId: contextMenuState.chunkId });
+      setStatus("Task copied.", "success");
+    } else if (action === "delete-task") {
+      await deleteSelectedTaskFromContext();
+    }
+  } catch (error) {
+    setStatus(error.message, "error");
+  } finally {
+    hideProjectContextMenu();
+  }
+}
+
+function handleProjectBrowserDoubleClick(event) {
+  const actionEl = event.target.closest("[data-action='select-tree-chunk']");
+  if (!actionEl) {
+    return;
+  }
+  selectTreeNode(actionEl.dataset.projectId, actionEl.dataset.packId, actionEl.dataset.chunkId);
+  drawerState.workspaceMode = "tasks";
+  renderWorkspace();
+  if (elements.workspaceTaskName) {
+    elements.workspaceTaskName.focus();
+  }
+}
+
+async function saveWorkspaceTask() {
+  const selected = getSelectedChunk();
+  if (!selected) {
+    setStatus("Select a task first.", "error");
+    return;
+  }
+  const requestedStatus = elements.workspaceTaskStatus ? elements.workspaceTaskStatus.value : String(selected.chunk.status || "ready");
+  const response = await desktopApi.updateChunkContent({
+    packId: selected.pack.id,
+    chunkId: selected.chunk.id,
+    title: elements.workspaceTaskName.value,
+    prompt: elements.workspaceTaskContent.value
+  });
+  if (!response || response.ok === false) {
+    throw new Error(response && response.error ? response.error : "Could not save task.");
+  }
+  let finalState = response.state;
+  const currentStatus = String(selected.chunk.status || "ready");
+  if (requestedStatus !== currentStatus) {
+    const statusResponse = await desktopApi.markChunk({
+      packId: selected.pack.id,
+      chunkId: selected.chunk.id,
+      status: requestedStatus
+    });
+    if (!statusResponse || statusResponse.ok === false) {
+      throw new Error(statusResponse && statusResponse.error ? statusResponse.error : "Could not update task status.");
+    }
+    finalState = statusResponse.state;
+  }
+  renderVaultState(finalState);
+  setStatus("Task content saved.", "success");
+}
+
+async function improveMasterPlan() {
+  const idea = elements.projectIdea ? elements.projectIdea.value : "";
+  const currentPlan = elements.currentText ? elements.currentText.value : "";
+  if (!String(idea || "").trim() && isEmptyMasterPlanText(currentPlan)) {
+    setStatus("Add a project idea first, then click Improve Master Plan.", "error");
+    return;
+  }
+
+  const saved = await desktopApi.saveProjectBrief({
+    projectId: drawerState.selectedProjectId,
+    projectName: elements.projectName.value,
+    projectPath: elements.projectPath.value,
+    idea,
+    masterPlan: currentPlan
+  });
+  if (!saved || saved.ok === false) {
+    throw new Error(saved && saved.error ? saved.error : "Could not save project before improving master plan.");
+  }
+  drawerState.selectedProjectId = saved.project.id;
+  renderVaultState(saved.state);
+  if (elements.projectSelect) elements.projectSelect.value = saved.project.id;
+
+  const flow = {
+    stage: "gpt_draft",
+    projectId: saved.project.id,
+    projectName: elements.projectName.value,
+    projectPath: elements.projectPath.value,
+    projectIdea: idea,
+    masterPlan: currentPlan,
+    draft: "",
+    critique: ""
+  };
+  const payload = getMasterPlanPingPongPayload(flow);
+  drawerState.activeWorkflowContext = "master_plan_pingpong";
+  drawerState.masterPlanPingPong = flow;
+  drawerState.lastImprovePrompt = payload.text;
+  setBusy(true);
+  setStatus("Sending project idea to ChatGPT for a master plan draft. Claude critique follows automatically.", "busy");
+  const response = await desktopApi.sendWorkflow(payload);
+  if (!response || response.ok === false) {
+    drawerState.activeWorkflowContext = "debate_plan";
+    drawerState.masterPlanPingPong = null;
+    setBusy(false);
+    throw new Error(response && response.error ? response.error : "Could not send master plan request to AI.");
+  }
+}
+
+async function createTaskRoadmap() {
+  const idea = elements.projectIdea ? elements.projectIdea.value : "";
+  const currentPlan = elements.currentText ? elements.currentText.value : "";
+  if (isEmptyMasterPlanText(currentPlan)) {
+    setStatus("Create the master plan first, then create the task roadmap.", "error");
+    return;
+  }
+
+  const saved = await desktopApi.saveProjectBrief({
+    projectId: drawerState.selectedProjectId,
+    projectName: elements.projectName.value,
+    projectPath: elements.projectPath.value,
+    idea,
+    masterPlan: currentPlan
+  });
+  if (!saved || saved.ok === false) {
+    throw new Error(saved && saved.error ? saved.error : "Could not save project before creating task roadmap.");
+  }
+  drawerState.selectedProjectId = saved.project.id;
+  const activePackId = saved.project.activePromptPackId;
+  if (!activePackId) {
+    throw new Error("Project has no active task pack. Save the project and try again.");
+  }
+  renderVaultState(saved.state);
+  if (elements.projectSelect) elements.projectSelect.value = saved.project.id;
+
+  const payload = getTaskRoadmapPayload({
+    projectName: elements.projectName.value,
+    projectPath: elements.projectPath.value,
+    projectIdea: idea,
+    masterPlan: currentPlan
+  });
+  drawerState.activeWorkflowContext = "roadmap";
+  drawerState.activeRoadmapPackId = activePackId;
+  drawerState.lastImprovePrompt = payload.text;
+  setBusy(true);
+  setStatus("Sending master plan to AI for a JSON task roadmap.", "busy");
+  const response = await desktopApi.sendWorkflow(payload);
+  if (!response || response.ok === false) {
+    drawerState.activeWorkflowContext = "debate_plan";
+    drawerState.activeRoadmapPackId = "";
+    setBusy(false);
+    throw new Error(response && response.error ? response.error : "Could not send task roadmap request to AI.");
+  }
+}
+
+async function startNextTask() {
+  const project = (latestVaultState.projects || []).find((item) => item.id === drawerState.selectedProjectId)
+    || (latestVaultState.projects || [])[0];
+  if (!project) {
+    setStatus("Save a project first.", "error");
+    return;
+  }
+  const pack = (latestVaultState.promptPacks || []).find((item) => item.id === project.activePromptPackId)
+    || (latestVaultState.promptPacks || []).find((item) => item.projectId === project.id);
+  if (!pack) {
+    setStatus("Create the task roadmap first.", "error");
+    return;
+  }
+  const nextItem = getNextEligibleRoadmapItem(pack);
+  if (!nextItem) {
+    setStatus("No eligible roadmap task found. Create a roadmap or mark dependency tasks done.", "error");
+    return;
+  }
+  const response = await desktopApi.startRoadmapPrompt({
+    packId: pack.id,
+    roadmapItemId: nextItem.id
+  });
+  if (!response || response.ok === false) {
+    throw new Error(response && response.error ? response.error : "Could not start next task.");
+  }
+  drawerState.selectedProjectId = project.id;
+  drawerState.selectedPackId = response.pack.id;
+  drawerState.selectedChunkId = response.chunk.id;
+  drawerState.workspaceMode = "tasks";
+  renderVaultState(response.state);
+  setStatus("Next task created from roadmap.", "success");
+}
+
+async function runPlanPrimaryAction() {
+  const selected = getSelectedPlanProjectAndPack();
+  const action = getPlanPrimaryAction({
+    project: selected.project,
+    pack: selected.pack,
+    projectIdea: elements.projectIdea ? elements.projectIdea.value : "",
+    masterPlanText: elements.currentText ? elements.currentText.value : ""
+  });
+
+  if (!action.enabled) {
+    setStatus(action.id === "master_plan" ? "Add a project idea first." : "No roadmap task is ready yet.", "error");
+    return;
+  }
+
+  if (action.handler === "improveMasterPlan") {
+    await improveMasterPlan();
+  } else if (action.handler === "createTaskRoadmap") {
+    await createTaskRoadmap();
+  } else if (action.handler === "startNextTask") {
+    await startNextTask();
+  }
+}
+
+async function buildImprovePromptForDrawer() {
+  const selected = getSelectedChunk();
+  if (!selected) {
+    setStatus("Select a task first.", "error");
+    return;
+  }
+  const response = await desktopApi.buildChunkImprovePrompt({
+    packId: selected.pack.id,
+    chunkId: selected.chunk.id
+  });
+  if (!response || response.ok === false) {
+    throw new Error(response && response.error ? response.error : "Could not build improve prompt.");
+  }
+  drawerState.lastImprovePrompt = String(response.prompt || "");
+  if (elements.inspectorImprovePrompt) {
+    elements.inspectorImprovePrompt.value = drawerState.lastImprovePrompt;
+  }
+  setStatus("Improve task ready.", "success");
+  setInspectorTab("improve");
+}
+
+async function sendImprovePrompt() {
+  const selected = getSelectedChunk();
+  if (!selected) {
+    setStatus("Select a task first.", "error");
+    return;
+  }
+  if (!drawerState.lastImprovePrompt.trim()) {
+    await buildImprovePromptForDrawer();
+  }
+  drawerState.activeWorkflowContext = "task_improve";
+  setBusy(true);
+  const improvePayload = getTaskImprovePayload(selected.chunk, selected.chunk.runHistory || [], drawerState.lastImprovePrompt);
+  const response = await desktopApi.sendWorkflow({
+    chatgptPrefix: "",
+    claudePrefix: "",
+    text: improvePayload.text,
+    targetProvider: improvePayload.targetProvider,
+    currentStageId: improvePayload.currentStageId,
+    currentStageLabel: improvePayload.currentStageLabel,
+    currentRole: improvePayload.currentRole
+  });
+  if (!response || response.ok === false) {
+    drawerState.activeWorkflowContext = "debate_plan";
+    throw new Error(response && response.error ? response.error : "Could not send improve prompt.");
+  }
+  setStatus("Improve task sent. Waiting for AI response.", "busy");
+}
+
+async function addInspectorRunNote() {
+  const selected = getSelectedChunk();
+  if (!selected) {
+    setStatus("Select a task first.", "error");
+    return;
+  }
+  const response = await desktopApi.addChunkRunHistory({
+    packId: selected.pack.id,
+    chunkId: selected.chunk.id,
+    note: elements.inspectorRunNote.value,
+    source: "manual"
+  });
+  if (!response || response.ok === false) {
+    throw new Error(response && response.error ? response.error : "Could not add run note.");
+  }
+  elements.inspectorRunNote.value = "";
+  renderVaultState(response.state);
+  setStatus("Run note saved.", "success");
+}
+
+async function saveProjectBriefFromWorkspace() {
+  const response = await desktopApi.saveProjectBrief({
+    projectId: drawerState.selectedProjectId,
+    projectName: elements.projectName.value,
+    projectPath: elements.projectPath.value,
+    idea: elements.projectIdea ? elements.projectIdea.value : "",
+    masterPlan: elements.currentText.value
+  });
+  if (!response || response.ok === false) {
+    throw new Error(response && response.error ? response.error : "Could not save project.");
+  }
+  drawerState.selectedProjectId = response.project.id;
+  renderVaultState(response.state);
+  if (elements.projectSelect) elements.projectSelect.value = response.project.id;
+  setStatus("Draft saved.", "success");
+}
+
+function startNewProjectDraft() {
+  drawerState.showAllProjects = false;
+  drawerState.selectedProjectId = "";
+  drawerState.selectedPackId = "";
+  drawerState.selectedChunkId = "";
+  drawerState.workspaceMode = "plan";
+  projectDraftState.isActive = true;
+  projectDraftState.pathManuallyEdited = false;
+  projectDraftState.previousAutoPath = getProjectDraftPath("New Project", latestVaultState.projectsBasePath);
+
+  if (elements.projectSelect) elements.projectSelect.value = "";
+  if (elements.projectName) elements.projectName.value = "New Project";
+  if (elements.projectPath) elements.projectPath.value = projectDraftState.previousAutoPath;
+  if (elements.projectIdea) elements.projectIdea.value = "";
+  if (elements.currentText) elements.currentText.value = "";
+
+  syncDraftFieldsFromName("New Project");
+  renderWorkspace();
+  renderInspector();
+  updateWordCount();
+}
+
+async function createProjectFromSidebar() {
+  startNewProjectDraft();
+
+  if (elements.projectName) {
+    elements.projectName.focus();
+    elements.projectName.select();
+  }
+
+  setStatus("New project draft ready. Fill details, then click Save Project.", "neutral");
+}
+
+function showAllProjects() {
+  drawerState.showAllProjects = true;
+  projectDraftState.isActive = false;
+  drawerState.selectedProjectId = "";
+  drawerState.selectedPackId = "";
+  drawerState.selectedChunkId = "";
+  if (elements.projectSelect) elements.projectSelect.value = "__all__";
+  renderProjectBrowserTree();
+  renderWorkspace();
+  renderInspector();
+  setStatus("Showing all saved projects.", "neutral");
+}
+
+async function saveVaultSettings() {
+  const projectsBasePath = elements.defaultProjectsFolder ? elements.defaultProjectsFolder.value : "";
+  const response = await desktopApi.updateVaultSettings({ projectsBasePath });
+  if (!response || response.ok === false) {
+    throw new Error(response && response.error ? response.error : "Could not save settings.");
+  }
+  renderVaultState(response.state);
+  if (projectDraftState.isActive && elements.projectName) {
+    syncDraftFieldsFromName(elements.projectName.value);
+  }
+  setStatus("Settings saved.", "success");
+}
+
+async function openSelectedProjectFolder() {
+  const project = (latestVaultState.projects || []).find((item) => item.id === drawerState.selectedProjectId);
+  if (!project || !project.path) {
+    throw new Error("Select a project first.");
+  }
+  await openFolder(project.path);
+}
+
+async function approveSelectedPrompt() {
+  const selected = getSelectedChunk();
+  if (!selected) {
+    setStatus("Select a task first.", "error");
+    return;
+  }
+  const response = await desktopApi.approvePrompt({ packId: selected.pack.id, chunkId: selected.chunk.id });
+  if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not approve prompt.");
+  renderVaultState(response.state);
+  setStatus("Task approved.", "success");
+}
+
+async function copySelectedPromptToCodex() {
+  const selected = getSelectedChunk();
+  if (!selected) {
+    setStatus("Select a task first.", "error");
+    return;
+  }
+  const response = await desktopApi.copyPromptToCodex({ packId: selected.pack.id, chunkId: selected.chunk.id });
+  if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not copy prompt to Codex.");
+  renderVaultState(response.state);
+  setStatus("Approved task copied for Codex.", "success");
+}
+
+async function markSelectedPromptDone() {
+  const selected = getSelectedChunk();
+  if (!selected) {
+    setStatus("Select a task first.", "error");
+    return;
+  }
+  const note = elements.workspacePromptRunNote ? elements.workspacePromptRunNote.value : "";
+  const response = await desktopApi.markPromptDone({
+    packId: selected.pack.id,
+    chunkId: selected.chunk.id,
+    note,
+    source: "codex_run"
+  });
+  if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not mark prompt done.");
+  if (elements.workspacePromptRunNote) elements.workspacePromptRunNote.value = "";
+  renderVaultState(response.state);
+  setStatus("Task marked done.", "success");
+}
+
+async function copySelectedRoadmapHandoff() {
+  const selected = getSelectedChunk();
+  if (!selected) throw new Error("Select a task first.");
+  const selector = elements.codexTaskSelector ? String(elements.codexTaskSelector.value || "").trim() : "";
+  if (!selector) throw new Error("Task selector is required (example: 1-3).");
+  const response = await desktopApi.copyRoadmapHandoff({ packId: selected.pack.id, selector });
+  if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not copy Codex handoff.");
+  renderVaultState(response.state);
+  setStatus(`Copied Codex handoff for tasks: ${response.selector}`, "success");
+}
+
 function installDomReferences() {
   elements.chatgptPrefix = byId("chatgptPrefix");
   elements.claudePrefix = byId("claudePrefix");
   elements.currentText = byId("currentText");
   elements.wordCount = byId("wordCount");
   elements.projectSelect = byId("projectSelect");
+  elements.newProjectButton = byId("newProjectBtn");
+  elements.seeAllProjectsButton = byId("seeAllProjectsBtn");
+  elements.openProjectFolderButton = byId("openProjectFolderBtn");
   elements.projectName = byId("projectName");
   elements.projectPath = byId("projectPath");
+  elements.defaultProjectsFolder = byId("defaultProjectsFolder");
+  elements.saveVaultSettingsButton = byId("saveVaultSettingsBtn");
+  elements.projectIdea = byId("projectIdea");
   elements.packTitle = byId("packTitle");
   elements.chunkStrategy = byId("chunkStrategy");
   elements.chunkCount = byId("chunkCount");
@@ -1017,6 +2679,14 @@ function installDomReferences() {
   elements.commitMessage = byId("commitMessage");
   elements.triggerButton = byId("triggerWorkflowBtn");
   elements.saveButton = byId("saveFinalBtn");
+  elements.refreshExtensionButton = byId("refreshExtensionBtn");
+  elements.setupExtensionButton = byId("setupExtensionBtn");
+  elements.connectExtensionButton = byId("connectExtensionBtn");
+  elements.setupToolsButton = byId("setupToolsBtn");
+  elements.setupToolsPanel = byId("setupToolsPanel");
+  elements.copyExtensionPathButton = byId("copyExtensionPathBtn");
+  elements.copyExtensionsUrlButton = byId("copyExtensionsUrlBtn");
+  elements.openExtensionFolderButton = byId("openExtensionFolderBtn");
   elements.generatePackButton = byId("generatePackBtn");
   elements.refreshVaultButton = byId("refreshVaultBtn");
   elements.openLatestPackButton = byId("openLatestPackBtn");
@@ -1025,6 +2695,7 @@ function installDomReferences() {
   elements.connectionText = byId("connectionText");
   elements.readinessText = byId("readinessText");
   elements.statusDetail = byId("statusDetail");
+  elements.extensionSetupHint = byId("extensionSetupHint");
   elements.nextTarget = byId("nextTarget");
   elements.currentStage = byId("currentStage");
   elements.currentProvider = byId("currentProvider");
@@ -1032,12 +2703,79 @@ function installDomReferences() {
   elements.responseView = byId("responseView");
   elements.roundHistory = byId("roundHistory");
   elements.packList = byId("packList");
+  elements.projectBrowserTree = byId("projectBrowserTree");
+  elements.projectContextMenu = byId("projectContextMenu");
+  elements.workspaceTaskName = byId("workspaceTaskName");
+  elements.workspaceTaskStatus = byId("workspaceTaskStatus");
+  elements.workspaceTaskContent = byId("workspaceTaskContent");
+  elements.workspaceTaskForm = byId("workspaceTaskForm");
+  elements.workspaceTaskEmpty = byId("workspaceTaskEmpty");
+  elements.saveWorkspaceTaskButton = byId("saveWorkspaceTaskBtn");
+  elements.copyWorkspaceTaskButton = byId("copyWorkspaceTaskBtn");
+  elements.sendWorkspaceTaskButton = byId("sendWorkspaceTaskBtn");
+  elements.copyWorkspaceLauncherButton = byId("copyWorkspaceLauncherBtn");
+  elements.workspacePromptRunNote = byId("workspacePromptRunNote");
+  elements.saveProjectBriefButton = byId("saveProjectBriefBtn");
+  elements.planPrimaryActionButton = byId("planPrimaryActionBtn");
+  elements.approvePromptButton = byId("approvePromptBtn");
+  elements.markPromptDoneButton = byId("markPromptDoneBtn");
+  elements.copyCodexHandoffButton = byId("copyCodexHandoffBtn");
+  elements.codexTaskSelector = byId("codexTaskSelector");
+  elements.inspectorImprovePrompt = byId("inspectorImprovePrompt");
+  elements.inspectorRunNote = byId("inspectorRunNote");
+  elements.inspectorVersionsList = byId("inspectorVersionsList");
+  elements.inspectorRunHistoryList = byId("inspectorRunHistoryList");
+  elements.inspectorImproveForm = byId("inspectorImproveForm");
+  elements.inspectorRunsForm = byId("inspectorRunsForm");
+  elements.inspectorEmptyImprove = byId("inspectorEmptyImprove");
+  elements.inspectorEmptyRuns = byId("inspectorEmptyRuns");
+  elements.inspectorDetails = byId("inspectorDetails");
+  elements.buildImprovePromptButton = byId("buildImprovePromptBtn");
+  elements.sendImprovePromptButton = byId("sendImprovePromptBtn");
+  elements.copyImprovePromptButton = byId("copyImprovePromptBtn");
+  elements.addRunNoteButton = byId("addRunNoteBtn");
+  elements.workspaceTabs = Array.from(document.querySelectorAll("[data-workspace-tab]"));
+  elements.inspectorTabs = Array.from(document.querySelectorAll("[data-inspector-tab]"));
 }
 
 function installEventListeners() {
   elements.triggerButton.addEventListener("click", triggerWorkflowStep);
   elements.saveButton.addEventListener("click", saveFinalText);
+  elements.refreshExtensionButton.addEventListener("click", () => {
+    refreshExtensionStatus().catch((error) => setStatus(error.message, "error"));
+  });
+  elements.setupExtensionButton.addEventListener("click", () => {
+    setupExtensionOnce().catch((error) => setStatus(error.message, "error"));
+  });
+  elements.connectExtensionButton.addEventListener("click", () => {
+    connectInstalledExtension().catch((error) => setStatus(error.message, "error"));
+  });
+  elements.setupToolsButton.addEventListener("click", toggleSetupToolsPanel);
+  elements.copyExtensionPathButton.addEventListener("click", () => {
+    copyExtensionPath().catch((error) => setStatus(error.message, "error"));
+  });
+  elements.copyExtensionsUrlButton.addEventListener("click", () => {
+    copyExtensionsUrl().catch((error) => setStatus(error.message, "error"));
+  });
+  elements.openExtensionFolderButton.addEventListener("click", () => {
+    openExtensionFolder().catch((error) => setStatus(error.message, "error"));
+  });
   elements.currentText.addEventListener("input", updateWordCount);
+  if (elements.saveProjectBriefButton) {
+    elements.saveProjectBriefButton.addEventListener("click", () => {
+      saveProjectBriefFromWorkspace().catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  if (elements.saveVaultSettingsButton) {
+    elements.saveVaultSettingsButton.addEventListener("click", () => {
+      saveVaultSettings().catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  if (elements.planPrimaryActionButton) {
+    elements.planPrimaryActionButton.addEventListener("click", () => {
+      runPlanPrimaryAction().catch((error) => setStatus(error.message, "error"));
+    });
+  }
   elements.generatePackButton.addEventListener("click", generatePromptPack);
   elements.refreshVaultButton.addEventListener("click", () => {
     refreshVaultState().catch((error) => setStatus(error.message, "error"));
@@ -1045,9 +2783,148 @@ function installEventListeners() {
   elements.openLatestPackButton.addEventListener("click", openLatestPackFolder);
   elements.packList.addEventListener("click", handlePackListClick);
   elements.projectSelect.addEventListener("change", () => applyProject(elements.projectSelect.value));
+  if (elements.projectName) {
+    elements.projectName.addEventListener("input", () => {
+      updatePlanPrimaryAction();
+      if (!projectDraftState.isActive) {
+        return;
+      }
+      syncDraftFieldsFromName(elements.projectName.value);
+    });
+  }
+  if (elements.projectIdea) {
+    elements.projectIdea.addEventListener("input", updatePlanPrimaryAction);
+  }
+  if (elements.projectPath) {
+    elements.projectPath.addEventListener("input", () => {
+      if (!projectDraftState.isActive) {
+        return;
+      }
+      const currentPath = String(elements.projectPath.value || "").trim();
+      if (!currentPath) {
+        projectDraftState.pathManuallyEdited = false;
+        return;
+      }
+      if (currentPath !== projectDraftState.previousAutoPath) {
+        projectDraftState.pathManuallyEdited = true;
+      }
+    });
+  }
+  if (elements.defaultProjectsFolder) {
+    elements.defaultProjectsFolder.addEventListener("input", () => {
+      if (projectDraftState.isActive && elements.projectName) {
+        syncDraftFieldsFromName(elements.projectName.value);
+      }
+    });
+  }
+  if (elements.newProjectButton) {
+    elements.newProjectButton.addEventListener("click", () => {
+      createProjectFromSidebar().catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  if (elements.seeAllProjectsButton) {
+    elements.seeAllProjectsButton.addEventListener("click", showAllProjects);
+  }
+  if (elements.openProjectFolderButton) {
+    elements.openProjectFolderButton.addEventListener("click", () => {
+      openSelectedProjectFolder().catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  if (elements.projectBrowserTree) {
+    elements.projectBrowserTree.addEventListener("click", (event) => {
+      hideProjectContextMenu();
+      handleProjectBrowserClick(event).catch((error) => setStatus(error.message, "error"));
+    });
+    elements.projectBrowserTree.addEventListener("contextmenu", openProjectContextMenu);
+    elements.projectBrowserTree.addEventListener("dblclick", handleProjectBrowserDoubleClick);
+  }
+  if (elements.projectContextMenu) {
+    elements.projectContextMenu.addEventListener("click", (event) => {
+      handleProjectContextMenuClick(event).catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  document.addEventListener("click", (event) => {
+    if (elements.projectContextMenu && !event.target.closest("#projectContextMenu")) {
+      hideProjectContextMenu();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") hideProjectContextMenu();
+  });
+  elements.workspaceTabs.forEach((node) => {
+    node.addEventListener("click", () => setWorkspaceMode(node.getAttribute("data-workspace-tab")));
+  });
+  elements.inspectorTabs.forEach((node) => {
+    node.addEventListener("click", () => setInspectorTab(node.getAttribute("data-inspector-tab")));
+  });
+  if (elements.saveWorkspaceTaskButton) {
+    elements.saveWorkspaceTaskButton.addEventListener("click", () => {
+      saveWorkspaceTask().catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  if (elements.copyWorkspaceTaskButton) {
+    elements.copyWorkspaceTaskButton.addEventListener("click", async () => {
+      const selected = getSelectedChunk();
+      if (!selected) return;
+      await desktopApi.copyChunk({ packId: selected.pack.id, chunkId: selected.chunk.id });
+      setStatus("Task copied.", "success");
+    });
+  }
+  if (elements.sendWorkspaceTaskButton) {
+    elements.sendWorkspaceTaskButton.addEventListener("click", () => {
+      sendImprovePrompt().catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  if (elements.copyWorkspaceLauncherButton) {
+    elements.copyWorkspaceLauncherButton.addEventListener("click", async () => {
+      copySelectedPromptToCodex().catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  if (elements.approvePromptButton) {
+    elements.approvePromptButton.addEventListener("click", () => {
+      approveSelectedPrompt().catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  if (elements.markPromptDoneButton) {
+    elements.markPromptDoneButton.addEventListener("click", () => {
+      markSelectedPromptDone().catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  if (elements.copyCodexHandoffButton) {
+    elements.copyCodexHandoffButton.addEventListener("click", () => {
+      copySelectedRoadmapHandoff().catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  if (elements.buildImprovePromptButton) {
+    elements.buildImprovePromptButton.addEventListener("click", () => {
+      buildImprovePromptForDrawer().catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  if (elements.sendImprovePromptButton) {
+    elements.sendImprovePromptButton.addEventListener("click", () => {
+      sendImprovePrompt().catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  if (elements.copyImprovePromptButton) {
+    elements.copyImprovePromptButton.addEventListener("click", async () => {
+      await window.nextstepClipboard.copyText(drawerState.lastImprovePrompt || "");
+      setStatus("Improve task copied.", "success");
+    });
+  }
+  if (elements.addRunNoteButton) {
+    elements.addRunNoteButton.addEventListener("click", () => {
+      addInspectorRunNote().catch((error) => setStatus(error.message, "error"));
+    });
+  }
 
   desktopApi.onResponse((text) => {
-    renderResponse(text);
+    renderResponse(text).catch((error) => {
+      drawerState.activeWorkflowContext = "debate_plan";
+      drawerState.masterPlanPingPong = null;
+      drawerState.activeRoadmapPackId = "";
+      setBusy(false);
+      setStatus(error.message || "Could not process AI response.", "error");
+    });
   });
 
   desktopApi.onStatus((payload) => {
@@ -1069,6 +2946,8 @@ if (typeof window !== "undefined") {
     renderDebateState();
     renderWorkflowStatus();
     updateWordCount();
+    renderWorkspace();
+    renderInspector();
     refreshVaultState().catch((error) => setStatus(error.message, "error"));
   });
 }
@@ -1077,13 +2956,26 @@ if (typeof module !== "undefined") {
   module.exports = {
     getTaskStatusLabel,
     getWorkflowStatusView,
+    normalizeExtensionState,
     getProviderDisplayList,
     getNewProjectDraft,
     createRootDebateState,
     createStageWorkflowPayload,
     applyDebateResponse,
     getDebateStageView,
+    buildProjectBrowserTree,
+    getTaskImprovePayload,
+    getMasterPlanImprovePayload,
+    getMasterPlanPingPongPayload,
+    getTaskRoadmapPayload,
+    getNextEligibleRoadmapItem,
+    getPlanPrimaryAction,
+    getMasterPlanActionLabel,
     renderProjectPlanHtml,
-    getRoundPreview
+    getRoundPreview,
+    getProjectFolderName,
+    getVisibleProjectBrowserNodes,
+    getProjectDraftPath,
+    getDraftCommitFallback
   };
 }
