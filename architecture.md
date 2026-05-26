@@ -1,5 +1,13 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-27 Verification Baseline
+
+- Current baseline verification is the root workspace `npm.cmd run verify` command.
+- The verify pipeline runs extension verification first, then desktop tests: `npm run extension:verify && npm run desktop:test`.
+- Extension verification runs syntax checks for `background.js`, `content.js`, `popup.js`, and `wake.js`, followed by Node tests for `background.test.js` and `content.test.js`.
+- Desktop verification runs `npm --workspace next-step test`, which executes the desktop test suite through `apps/desktop/tests/run-tests.js`.
+- Task 002 did not require source or test changes because the baseline was already green locally after dependency install.
+
 ## 2026-05-27 Repository Hygiene
 
 - `Projects/` is runtime/generated project output, not source code. The desktop app may create project folders there, including per-project `codex.md`, `architecture.md`, `masterplan.md`, `plan-roadmap.md`, and task files, but those folders are ignored by git.

@@ -1,5 +1,11 @@
 # Codex Progress
 
+## 2026-05-27 Task 002 Baseline Verification
+
+- Ran `npm.cmd install`; workspace dependencies were already up to date and npm reported 0 vulnerabilities.
+- Ran `npm.cmd run verify`; extension syntax checks, extension Node tests, and desktop tests passed.
+- No baseline failure reproduced locally after Task 001, so no application code, tests, workflow logic, UX, or DB schema changes were made.
+
 ## 2026-05-27 Task 001 Repository Hygiene
 
 - Started cleanup of generated/runtime artifacts from version control scope.
