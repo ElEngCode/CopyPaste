@@ -1,5 +1,33 @@
 # Codex Progress
 
+## 2026-05-27 Task 006 Official Planning Debate Prompts
+
+- Added official planning-stage helper APIs in protocol:
+  - `listPlanningDebateStages()`
+  - `getPlanningDebateStage(stageId)`
+  - `getNextPlanningDebateStage(stageId)`
+  - `buildPlanningDebatePrompt(workflow, project, priorRounds)`
+- Locked planning debate progression to official stages only:
+  - `gpt_clarifier`
+  - `gpt_planner`
+  - `claude_critic`
+  - `gpt_rebuttal`
+  - `gpt_revised_plan`
+  - `claude_final_review`
+  - `gpt_final_synthesis`
+- Updated prompt generation to deterministic stage prompts that include:
+  - project idea
+  - prior relevant response
+  - role/provider/stage objective
+  - expected output
+  - strict output formatting rules
+- Added stage-specific constraints:
+  - Claude critique requires flaws/risks/missing tests/weak assumptions
+  - GPT rebuttal requires `accept|reject|needs_user_decision`
+  - GPT final synthesis returns final master plan draft
+- Updated protocol tests to cover stage-list helpers and stage-specific prompt assertions.
+- Updated renderer to prefer `listPlanningDebateStages()` so inactive post-plan stages are not used accidentally in planning debate runtime.
+
 ## 2026-05-27 Task 005 Move Debate State Out Of Renderer
 
 - Removed renderer-global mutable `activeDebate` as debate source of truth.

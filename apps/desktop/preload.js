@@ -103,7 +103,11 @@ contextBridge.exposeInMainWorld("copypasteDesktop", {
 
 contextBridge.exposeInMainWorld("copypasteProtocol", {
   listWorkflowSteps: () => projectBuilderProtocol.listWorkflowSteps(),
+  listPlanningDebateStages: () => projectBuilderProtocol.listPlanningDebateStages(),
+  getPlanningDebateStage: (stageId) => projectBuilderProtocol.getPlanningDebateStage(stageId),
+  getNextPlanningDebateStage: (stageId) => projectBuilderProtocol.getNextPlanningDebateStage(stageId),
   createProjectBuilderDebate: (input) => projectBuilderProtocol.createProjectBuilderDebate(input),
+  buildPlanningDebatePrompt: (workflow, project, priorRounds) => projectBuilderProtocol.buildPlanningDebatePrompt(workflow, project, priorRounds),
   createNextDebatePrompt: (debate) => projectBuilderProtocol.createNextDebatePrompt(debate),
   saveDebateRound: (debate, input) => projectBuilderProtocol.saveDebateRound(debate, input),
   advanceDebateStage: (debate) => projectBuilderProtocol.advanceDebateStage(debate)

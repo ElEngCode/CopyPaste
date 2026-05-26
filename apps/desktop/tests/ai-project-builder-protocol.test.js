@@ -22,6 +22,19 @@ assert.equal(protocol.isProviderRunnable("claude"), true);
 assert.equal(protocol.isProviderRunnable("gemini"), false);
 assert.equal(protocol.isProviderRunnable("grok"), false);
 
+const planningStages = protocol.listPlanningDebateStages();
+assert.deepEqual(planningStages.map((stage) => stage.id), [
+  "gpt_clarifier",
+  "gpt_planner",
+  "claude_critic",
+  "gpt_rebuttal",
+  "gpt_revised_plan",
+  "claude_final_review",
+  "gpt_final_synthesis"
+]);
+assert.equal(protocol.getPlanningDebateStage("claude_critic").provider, "claude");
+assert.equal(protocol.getNextPlanningDebateStage("claude_critic").id, "gpt_rebuttal");
+
 const workflow = protocol.createAiProjectBuilderWorkflow({
   idea: "Build a local project planner",
   title: "Planner"
@@ -114,3 +127,26 @@ const plannerPrompt = protocol.createNextDebatePrompt(debate);
 assert.equal(plannerPrompt.stage_id, "gpt_planner");
 assert.match(plannerPrompt.prompt, /Clarified brief/);
 assert.equal(debate.rounds.length, 1);
+
+const criticPrompt = protocol.buildPlanningDebatePrompt(
+  { current_stage_id: "claude_critic", rounds: debate.rounds },
+  { idea: "Build a local project planner" },
+  debate.rounds
+);
+assert.equal(criticPrompt.provider, "claude");
+assert.match(criticPrompt.prompt, /Critique requirements/);
+assert.match(criticPrompt.prompt, /missing tests/);
+
+const rebuttalPrompt = protocol.buildPlanningDebatePrompt(
+  { current_stage_id: "gpt_rebuttal", rounds: debate.rounds },
+  { idea: "Build a local project planner" },
+  debate.rounds
+);
+assert.match(rebuttalPrompt.prompt, /decision: accept \| reject \| needs_user_decision/);
+
+const synthesisPrompt = protocol.buildPlanningDebatePrompt(
+  { current_stage_id: "gpt_final_synthesis", rounds: debate.rounds },
+  { idea: "Build a local project planner" },
+  debate.rounds
+);
+assert.match(synthesisPrompt.prompt, /final master plan/i);

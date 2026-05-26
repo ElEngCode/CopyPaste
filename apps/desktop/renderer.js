@@ -235,6 +235,9 @@ function syncDraftFieldsFromName(projectName) {
 }
 
 function getActionableSteps() {
+  if (typeof projectBuilderProtocol.listPlanningDebateStages === "function") {
+    return projectBuilderProtocol.listPlanningDebateStages();
+  }
   return projectBuilderProtocol.listWorkflowSteps().filter((step) => step.actor === "ai");
 }
 

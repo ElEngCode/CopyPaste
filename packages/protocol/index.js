@@ -46,6 +46,15 @@
 
   const PROVIDER_BY_ID = new Map(PROVIDERS.map((provider) => [provider.id, provider]));
   const CRITIQUE_DECISION_STATUSES = Object.freeze(["accept", "reject", "needs_user_decision"]);
+  const PLANNING_DEBATE_STAGE_IDS = Object.freeze([
+    "gpt_clarifier",
+    "gpt_planner",
+    "claude_critic",
+    "gpt_rebuttal",
+    "gpt_revised_plan",
+    "claude_final_review",
+    "gpt_final_synthesis"
+  ]);
 
   const WORKFLOW_STEPS = Object.freeze([
     Object.freeze({
@@ -224,11 +233,32 @@
   }
 
   function getActionableWorkflowSteps() {
-    return WORKFLOW_STEPS.filter((step) => step.actor === "ai");
+    return PLANNING_DEBATE_STAGE_IDS
+      .map((id) => getStep(id))
+      .filter(Boolean);
   }
 
   function getStep(stageId) {
     return WORKFLOW_STEPS.find((step) => step.id === stageId) || null;
+  }
+
+  function listPlanningDebateStages() {
+    return getActionableWorkflowSteps().map((step) => clone(step));
+  }
+
+  function getPlanningDebateStage(stageId) {
+    const safeId = asText(stageId);
+    if (!safeId) return null;
+    const step = getActionableWorkflowSteps().find((item) => item.id === safeId);
+    return step ? clone(step) : null;
+  }
+
+  function getNextPlanningDebateStage(stageId) {
+    const safeId = asText(stageId);
+    const steps = getActionableWorkflowSteps();
+    const index = steps.findIndex((item) => item.id === safeId);
+    if (index < 0) return steps[0] ? clone(steps[0]) : null;
+    return steps[index + 1] ? clone(steps[index + 1]) : null;
   }
 
   function getNextStageId(stageId) {
@@ -298,6 +328,19 @@
     return instructions[step.id] || "Continue the AI Project Builder workflow.";
   }
 
+  function buildStageExpectedOutput(step) {
+    const outputs = {
+      gpt_clarifier: "A clarified project brief with assumptions and open questions.",
+      gpt_planner: "A staged implementation plan with acceptance criteria and verification commands.",
+      claude_critic: "A critique focused on flaws, risks, weak assumptions, and missing tests.",
+      gpt_rebuttal: "Decision responses for critique items: accept, reject, or needs_user_decision.",
+      gpt_revised_plan: "A revised implementation plan that applies accepted critique decisions.",
+      claude_final_review: "A final review of blockers, ambiguity, and verification gaps.",
+      gpt_final_synthesis: "A final master plan draft ready to persist."
+    };
+    return outputs[step.id] || "A focused stage response.";
+  }
+
   function buildCleanOutputInstructions() {
     return [
       "Output format rules:",
@@ -308,11 +351,57 @@
     ].join("\n");
   }
 
-  function createNextDebatePrompt(debate = {}) {
-    const stageId = normalizeStageId(debate.current_stage_id);
+  function buildPlanningDebatePrompt(workflow = {}, project = {}, priorRounds = []) {
+    const stageId = normalizeStageId(workflow.current_stage_id || workflow.currentStageId);
     const step = getStep(stageId);
-    const priorRounds = Array.isArray(debate.rounds) ? debate.rounds : [];
-    const priorContext = priorRounds.map(summarizeRoundForPrompt).filter(Boolean).join("\n\n") || "No prior AI rounds yet.";
+    const rounds = Array.isArray(priorRounds) && priorRounds.length
+      ? priorRounds
+      : Array.isArray(workflow.rounds)
+        ? workflow.rounds
+        : [];
+    const lastRound = rounds.length ? rounds[rounds.length - 1] : null;
+    const priorContext = lastRound ? summarizeRoundForPrompt(lastRound) : "No prior AI rounds yet.";
+    const projectIdea = asText(project.idea || workflow.raw_idea || workflow.idea || project.raw_idea) || "No raw project idea provided.";
+
+    const promptLines = [
+      `Stage: ${step.label} (${step.id})`,
+      `Provider: ${step.provider || "manual"}`,
+      `Role: ${step.role}`,
+      "",
+      `Project idea:\n${projectIdea}`,
+      "",
+      `Prior relevant response:\n${priorContext}`,
+      "",
+      `Stage objective:\n${buildStageInstructions(step)}`,
+      "",
+      `Expected output:\n${buildStageExpectedOutput(step)}`,
+      ""
+    ];
+
+    if (step.id === "claude_critic") {
+      promptLines.push("Critique requirements:");
+      promptLines.push("- identify flaws");
+      promptLines.push("- identify risks");
+      promptLines.push("- identify missing tests");
+      promptLines.push("- identify weak assumptions");
+      promptLines.push("");
+    }
+
+    if (step.id === "gpt_rebuttal") {
+      promptLines.push("For each critique item include:");
+      promptLines.push("- decision: accept | reject | needs_user_decision");
+      promptLines.push("- rationale: concise reason");
+      promptLines.push("");
+    }
+
+    if (step.id === "gpt_final_synthesis") {
+      promptLines.push("Return the final master plan in a form ready to save as project baseline.");
+      promptLines.push("");
+    }
+
+    promptLines.push(buildCleanOutputInstructions());
+    promptLines.push("");
+    promptLines.push("Human gate: wait for user-triggered send before advancing.");
 
     return {
       stage_id: step.id,
@@ -320,22 +409,12 @@
       provider: step.provider,
       role: step.role,
       status: "ready_to_send",
-      prompt: [
-        `Stage: ${step.label}`,
-        `Provider: ${step.provider || "manual"}`,
-        `Role: ${step.role}`,
-        "",
-        `Raw project idea:\n${asText(debate.raw_idea || debate.idea) || "No raw project idea provided."}`,
-        "",
-        `Previous round context:\n${priorContext}`,
-        "",
-        buildStageInstructions(step),
-        "",
-        buildCleanOutputInstructions(),
-        "",
-        "Human gate: wait for the user to send this prompt and paste or capture the response before advancing."
-      ].join("\n")
+      prompt: promptLines.join("\n")
     };
+  }
+
+  function createNextDebatePrompt(debate = {}) {
+    return buildPlanningDebatePrompt(debate, { idea: debate.raw_idea || debate.idea }, debate.rounds || []);
   }
 
   function saveDebateRound(debate, input = {}) {
@@ -421,8 +500,12 @@
     getProvider,
     isProviderRunnable,
     listWorkflowSteps,
+    listPlanningDebateStages,
+    getPlanningDebateStage,
+    getNextPlanningDebateStage,
     createAiProjectBuilderWorkflow,
     createProjectBuilderDebate,
+    buildPlanningDebatePrompt,
     createNextDebatePrompt,
     saveDebateRound,
     advanceDebateStage,

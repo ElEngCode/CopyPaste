@@ -1,5 +1,17 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-27 Official Planning Debate Contract
+
+- Planning debate uses a strict protocol surface distinct from later post-plan prompt-forge stages.
+- New protocol APIs for planning flow:
+  - `listPlanningDebateStages`
+  - `getPlanningDebateStage`
+  - `getNextPlanningDebateStage`
+  - `buildPlanningDebatePrompt`
+- Active planning stage sequence is fixed to seven stages from clarifier through final synthesis.
+- Prompt generation is deterministic and stage-aware, with required provider-role objective and expected output sections.
+- Runtime now prefers planning-stage API in renderer stage selection to avoid accidental use of inactive/post-plan stages.
+
 ## 2026-05-27 Renderer Debate Source Of Truth
 
 - Renderer no longer keeps mutable debate workflow state as the product source of truth.
