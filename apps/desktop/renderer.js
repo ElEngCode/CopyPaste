@@ -863,13 +863,33 @@ function getLatestMasterPlanDraftVersion(project) {
     .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))[0] || null;
 }
 
-function getPlanPrimaryAction(input = {}) {
+function getPrimaryActionState(input = {}) {
   const project = input.project || {};
   const pack = input.pack || null;
   const projectIdea = String(input.projectIdea || project.idea || "").trim();
   const masterPlan = String(input.masterPlanText || project.masterPlan || "").trim();
   const draftMasterPlan = getLatestMasterPlanDraftVersion(project);
   const hasAppliedMasterPlan = Boolean(project && project.activeMasterPlanVersionId);
+
+  if (!project || !project.id) {
+    return {
+      id: "create_project",
+      label: "Create Project",
+      enabled: true,
+      handler: "saveProjectBrief",
+      roadmapItemId: ""
+    };
+  }
+
+  if (!projectIdea) {
+    return {
+      id: "project_idea",
+      label: "Save Project Idea",
+      enabled: true,
+      handler: "saveProjectBrief",
+      roadmapItemId: ""
+    };
+  }
 
   if (draftMasterPlan) {
     return {
@@ -933,6 +953,10 @@ function getPlanPrimaryAction(input = {}) {
   };
 }
 
+function getPlanPrimaryAction(input = {}) {
+  return getPrimaryActionState(input);
+}
+
 function getSelectedPlanProjectAndPack() {
   const project = (latestVaultState.projects || []).find((item) => item.id === drawerState.selectedProjectId)
     || null;
@@ -949,7 +973,7 @@ function updatePlanPrimaryAction() {
     return;
   }
   const selected = getSelectedPlanProjectAndPack();
-  const action = getPlanPrimaryAction({
+  const action = getPrimaryActionState({
     project: selected.project,
     pack: selected.pack,
     projectIdea: elements.projectIdea ? elements.projectIdea.value : "",
@@ -2411,6 +2435,8 @@ async function runPlanPrimaryAction() {
 
   if (action.handler === "improveMasterPlan") {
     await improveMasterPlan();
+  } else if (action.handler === "saveProjectBrief") {
+    await saveProjectBriefFromWorkspace();
   } else if (action.handler === "applyMasterPlanDraft") {
     await applyMasterPlanDraft();
   } else if (action.handler === "createTaskRoadmap") {
@@ -2940,6 +2966,7 @@ if (typeof module !== "undefined") {
     getMasterPlanImprovePayload,
     getTaskRoadmapPayload,
     getNextEligibleRoadmapItem,
+    getPrimaryActionState,
     getPlanPrimaryAction,
     getMasterPlanActionLabel,
     renderProjectPlanHtml,

@@ -17,6 +17,7 @@ const {
   getTaskRoadmapPayload,
   getNextEligibleRoadmapItem,
   getPlanPrimaryAction,
+  getPrimaryActionState,
   getMasterPlanActionLabel,
   renderProjectPlanHtml,
   getRoundPreview,
@@ -263,6 +264,20 @@ assert.deepEqual(getPlanPrimaryAction({
   handler: "improveMasterPlan",
   roadmapItemId: ""
 });
+assert.deepEqual(getPrimaryActionState({
+  project: { id: "project_1", idea: "", masterPlan: "" },
+  pack: null
+}), {
+  id: "project_idea",
+  label: "Save Project Idea",
+  enabled: true,
+  handler: "saveProjectBrief",
+  roadmapItemId: ""
+});
+assert.notEqual(getPrimaryActionState({
+  project: { id: "project_1", idea: "Idea", masterPlan: "# Master Plan\n\n", activeMasterPlanVersionId: "mp_1" },
+  pack: { roadmap: { items: [] }, chunks: [] }
+}).handler, "generatePromptPack");
 assert.deepEqual(getPlanPrimaryAction({
   project: { id: "project_1", idea: "Build a planner.", masterPlan: "# Master Plan\n\nReal plan" },
   pack: { roadmap: { items: [] }, chunks: [] }
