@@ -54,6 +54,14 @@ const VAULT_MARK_ROADMAP_IN_PROGRESS_CHANNEL = "VAULT_MARK_ROADMAP_IN_PROGRESS";
 const VAULT_MARK_ROADMAP_DONE_CHANNEL = "VAULT_MARK_ROADMAP_DONE";
 const VAULT_CREATE_TASK_PROMPT_CHANNEL = "VAULT_CREATE_TASK_PROMPT";
 const VAULT_UPDATE_TASK_PROMPT_CHANNEL = "VAULT_UPDATE_TASK_PROMPT";
+const VAULT_ADD_TASK_PROMPT_VERSION_CHANNEL = "VAULT_ADD_TASK_PROMPT_VERSION";
+const VAULT_APPLY_TASK_PROMPT_VERSION_CHANNEL = "VAULT_APPLY_TASK_PROMPT_VERSION";
+const VAULT_LIST_TASK_PROMPT_VERSIONS_CHANNEL = "VAULT_LIST_TASK_PROMPT_VERSIONS";
+const VAULT_PREPARE_TASK_IMPROVE_CHANNEL = "VAULT_PREPARE_TASK_IMPROVE";
+const VAULT_SAVE_TASK_IMPROVE_CHANNEL = "VAULT_SAVE_TASK_IMPROVE";
+const VAULT_APPROVE_TASK_PROMPT_CHANNEL = "VAULT_APPROVE_TASK_PROMPT";
+const VAULT_COPY_CODEX_HANDOFF_CHANNEL = "VAULT_COPY_CODEX_HANDOFF";
+const VAULT_MARK_TASK_PROMPT_DONE_CHANNEL = "VAULT_MARK_TASK_PROMPT_DONE";
 const VAULT_START_ROADMAP_PROMPT_CHANNEL = "VAULT_START_ROADMAP_PROMPT";
 const VAULT_APPROVE_PROMPT_CHANNEL = "VAULT_APPROVE_PROMPT";
 const VAULT_COPY_PROMPT_TO_CODEX_CHANNEL = "VAULT_COPY_PROMPT_TO_CODEX";
@@ -841,6 +849,53 @@ ipcMain.handle(VAULT_UPDATE_TASK_PROMPT_CHANNEL, (_event, payload) => invokeSafe
   const result = getVaultStore().updateTaskPromptContent(String(payload && payload.taskPromptId || ""), payload || {});
   sendVaultStateToRenderer(result.state);
   return { ok: true, taskPrompt: result.taskPrompt, state: result.state };
+}));
+
+ipcMain.handle(VAULT_ADD_TASK_PROMPT_VERSION_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().addTaskPromptVersion(String(payload && payload.taskPromptId || ""), payload || {});
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, taskPrompt: result.taskPrompt, version: result.version, state: result.state };
+}));
+
+ipcMain.handle(VAULT_APPLY_TASK_PROMPT_VERSION_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().applyTaskPromptVersion(String(payload && payload.taskPromptId || ""), String(payload && payload.versionId || ""));
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, taskPrompt: result.taskPrompt, version: result.version, state: result.state };
+}));
+
+ipcMain.handle(VAULT_LIST_TASK_PROMPT_VERSIONS_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().listTaskPromptVersions(String(payload && payload.taskPromptId || ""));
+  return { ok: true, taskPrompt: result.taskPrompt, versions: result.versions, state: result.state };
+}));
+
+ipcMain.handle(VAULT_PREPARE_TASK_IMPROVE_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().prepareTaskImprovePrompt(String(payload && payload.taskPromptId || ""));
+  return { ok: true, taskPrompt: result.taskPrompt, project: result.project, runHistory: result.runHistory, prompt: result.prompt, state: result.state };
+}));
+
+ipcMain.handle(VAULT_SAVE_TASK_IMPROVE_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().saveTaskImproveResponse(String(payload && payload.taskPromptId || ""), String(payload && payload.responseText || ""));
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, taskPrompt: result.taskPrompt, version: result.version, state: result.state };
+}));
+
+ipcMain.handle(VAULT_APPROVE_TASK_PROMPT_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().approveTaskPrompt(String(payload && payload.taskPromptId || ""));
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, taskPrompt: result.taskPrompt, state: result.state };
+}));
+
+ipcMain.handle(VAULT_COPY_CODEX_HANDOFF_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().copyCodexHandoff(String(payload && payload.taskPromptId || ""));
+  clipboard.writeText(result.handoffText);
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, taskPrompt: result.taskPrompt, handoffText: result.handoffText, state: result.state };
+}));
+
+ipcMain.handle(VAULT_MARK_TASK_PROMPT_DONE_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().markTaskPromptDone(String(payload && payload.taskPromptId || ""), payload || {});
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, taskPrompt: result.taskPrompt, run: result.run, nextItem: result.nextItem, state: result.state };
 }));
 
 ipcMain.handle(VAULT_START_ROADMAP_PROMPT_CHANNEL, (_event, payload) => invokeSafely(async () => {

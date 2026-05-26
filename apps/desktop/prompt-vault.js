@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const projectBuilderProtocol = globalThis.NextStepAiProjectBuilderProtocol || require("../../packages/protocol");
 
 const DB_VERSION = 1;
 const DB_SCHEMA_VERSION = 2;
@@ -2202,6 +2203,158 @@ function createVaultStore({ dbPath }) {
     return { taskPrompt, state: writeDatabase(database) };
   }
 
+  function addTaskPromptVersion(taskPromptId, input) {
+    const database = readDatabase();
+    const taskPrompt = (database.taskPrompts || []).find((item) => item.id === taskPromptId);
+    if (!taskPrompt) throw new Error("Task prompt not found.");
+    const version = sanitizeTaskPromptVersion({
+      id: createId("task_prompt_version"),
+      taskPromptId: taskPrompt.id,
+      source: normalizeString(input && input.source) || "manual",
+      content: String(input && input.content || ""),
+      status: normalizeString(input && input.status) || "proposed",
+      createdAt: createTimestamp(),
+      updatedAt: createTimestamp()
+    });
+    database.taskPromptVersions.unshift(version);
+    return { taskPrompt, version, state: writeDatabase(database) };
+  }
+
+  function applyTaskPromptVersion(taskPromptId, versionId) {
+    const database = readDatabase();
+    const taskPrompt = (database.taskPrompts || []).find((item) => item.id === taskPromptId);
+    if (!taskPrompt) throw new Error("Task prompt not found.");
+    const version = (database.taskPromptVersions || []).find((item) => item.id === versionId && item.taskPromptId === taskPrompt.id);
+    if (!version) throw new Error("Task prompt version not found.");
+    version.status = "applied";
+    version.appliedAt = createTimestamp();
+    version.updatedAt = createTimestamp();
+    taskPrompt.content = version.content;
+    taskPrompt.activeVersionId = version.id;
+    taskPrompt.updatedAt = createTimestamp();
+    const project = getProjectById(database, taskPrompt.projectId);
+    const taskFile = writeTaskPromptFile(project.path, taskPrompt);
+    taskPrompt.taskFileName = taskFile.taskFileName;
+    taskPrompt.taskFilePath = taskFile.taskFilePath;
+    return { taskPrompt, version, state: writeDatabase(database) };
+  }
+
+  function listTaskPromptVersions(taskPromptId) {
+    const database = readDatabase();
+    const taskPrompt = (database.taskPrompts || []).find((item) => item.id === taskPromptId);
+    if (!taskPrompt) throw new Error("Task prompt not found.");
+    const versions = (database.taskPromptVersions || [])
+      .filter((item) => item.taskPromptId === taskPrompt.id)
+      .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+    return { taskPrompt, versions, state: writeDatabase(database) };
+  }
+
+  function prepareTaskImprovePrompt(taskPromptId) {
+    const database = readDatabase();
+    const taskPrompt = (database.taskPrompts || []).find((item) => item.id === taskPromptId);
+    if (!taskPrompt) throw new Error("Task prompt not found.");
+    const project = getProjectById(database, taskPrompt.projectId);
+    const runHistory = (database.taskRuns || []).filter((run) => run.taskPromptId === taskPrompt.id);
+    const prompt = projectBuilderProtocol.buildTaskImprovePrompt(
+      project,
+      taskPrompt,
+      project.masterPlan || "",
+      runHistory
+    );
+    return { taskPrompt, project, runHistory, prompt, state: writeDatabase(database) };
+  }
+
+  function saveTaskImproveResponse(taskPromptId, responseText) {
+    const text = String(responseText || "").trim();
+    if (!text) throw new Error("Improve response text is required.");
+    return addTaskPromptVersion(taskPromptId, {
+      source: "ai_improve",
+      content: text,
+      status: "proposed"
+    });
+  }
+
+  function approveTaskPrompt(taskPromptId) {
+    const database = readDatabase();
+    const taskPrompt = (database.taskPrompts || []).find((item) => item.id === taskPromptId);
+    if (!taskPrompt) throw new Error("Task prompt not found.");
+    taskPrompt.status = "approved";
+    taskPrompt.approvedAt = createTimestamp();
+    taskPrompt.updatedAt = createTimestamp();
+    return { taskPrompt, state: writeDatabase(database) };
+  }
+
+  function copyCodexHandoff(taskPromptId) {
+    const database = readDatabase();
+    const taskPrompt = (database.taskPrompts || []).find((item) => item.id === taskPromptId);
+    if (!taskPrompt) throw new Error("Task prompt not found.");
+    if (taskPrompt.status !== "approved") {
+      throw new Error("Task prompt must be approved before copy.");
+    }
+    const project = getProjectById(database, taskPrompt.projectId);
+    const projectFiles = getProjectPaths(project.path);
+    const handoffText = [
+      `Project path: ${project.path}`,
+      `Required files to read: ${projectFiles.architecture}, ${projectFiles.codex}, ${projectFiles.masterplan}, ${taskPrompt.taskFilePath || path.join(projectFiles.tasksDir, getTaskFileName(taskPrompt))}`,
+      `Master plan path: ${projectFiles.masterplan}`,
+      `Task prompt path: ${taskPrompt.taskFilePath || path.join(projectFiles.tasksDir, getTaskFileName(taskPrompt))}`,
+      "",
+      "Full task prompt:",
+      taskPrompt.content
+    ].join("\n");
+    taskPrompt.status = "copied";
+    taskPrompt.copiedAt = createTimestamp();
+    taskPrompt.updatedAt = createTimestamp();
+    return { taskPrompt, handoffText, state: writeDatabase(database) };
+  }
+
+  function markTaskPromptDone(taskPromptId, input) {
+    const database = readDatabase();
+    const taskPrompt = (database.taskPrompts || []).find((item) => item.id === taskPromptId);
+    if (!taskPrompt) throw new Error("Task prompt not found.");
+    const run = sanitizeTaskRun({
+      id: createId("task_run"),
+      taskPromptId: taskPrompt.id,
+      note: String(input && input.note || ""),
+      result: String(input && input.result || ""),
+      commitHash: normalizeString(input && input.commitHash),
+      verificationSummary: String(input && input.verificationSummary || ""),
+      createdAt: createTimestamp()
+    });
+    database.taskRuns.unshift(run);
+    taskPrompt.status = "done";
+    taskPrompt.doneAt = createTimestamp();
+    taskPrompt.updatedAt = createTimestamp();
+    const project = getProjectById(database, taskPrompt.projectId);
+    const pack = getActivePackForProject(database, project);
+    if (pack) {
+      const chunk = (pack.chunks || []).find((item) => item.id === taskPrompt.sourceChunkId || item.roadmapItemId === taskPrompt.roadmapItemId);
+      if (chunk) {
+        chunk.status = "done";
+        chunk.updatedAt = createTimestamp();
+      }
+    }
+    let nextItem = null;
+    if (pack && pack.roadmap && Array.isArray(pack.roadmap.items)) {
+      const doneRoadmapIds = (pack.chunks || [])
+        .filter((entry) => entry.status === "done" && entry.roadmapItemId)
+        .map((entry) => entry.roadmapItemId);
+      const startedRoadmapIds = (pack.chunks || [])
+        .filter((entry) => entry.roadmapItemId)
+        .map((entry) => entry.roadmapItemId);
+      nextItem = pack.roadmap.items
+        .slice()
+        .sort((left, right) => Number(left.order || 0) - Number(right.order || 0))
+        .find((item) => {
+          if (!item || startedRoadmapIds.includes(item.id)) return false;
+          const blockedBy = (Array.isArray(item.dependsOn) ? item.dependsOn : [])
+            .filter((dependencyId) => !doneRoadmapIds.includes(dependencyId));
+          return blockedBy.length === 0;
+        }) || null;
+    }
+    return { taskPrompt, run, nextItem, state: writeDatabase(database) };
+  }
+
   function getRoadmapEligibility(packId) {
     const database = readDatabase();
     const pack = getPackById(database, packId);
@@ -2504,6 +2657,14 @@ function createPromptFromRoadmapItem({ project, pack, item, order }) {
     startRoadmapPrompt,
     createTaskPromptFromRoadmapItem,
     updateTaskPromptContent,
+    addTaskPromptVersion,
+    applyTaskPromptVersion,
+    listTaskPromptVersions,
+    prepareTaskImprovePrompt,
+    saveTaskImproveResponse,
+    approveTaskPrompt,
+    copyCodexHandoff,
+    markTaskPromptDone,
     approvePrompt,
     copyPromptToCodex,
     copyRoadmapHandoffToCodex,

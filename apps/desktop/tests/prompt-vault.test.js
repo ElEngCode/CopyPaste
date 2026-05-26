@@ -506,10 +506,31 @@ try {
   store.updateTaskPromptContent(taskPromptCreated.taskPrompt.id, {
     content: "Updated prompt body"
   });
+  const improvePromptPayload = store.prepareTaskImprovePrompt(taskPromptCreated.taskPrompt.id);
+  assert.match(improvePromptPayload.prompt, /Return only improved prompt/);
+  const proposedImproveVersion = store.saveTaskImproveResponse(taskPromptCreated.taskPrompt.id, "Improved by AI");
+  assert.equal(proposedImproveVersion.version.source, "ai_improve");
+  const versionList = store.listTaskPromptVersions(taskPromptCreated.taskPrompt.id);
+  assert.equal(versionList.versions[0].id, proposedImproveVersion.version.id);
+  const appliedVersion = store.applyTaskPromptVersion(taskPromptCreated.taskPrompt.id, proposedImproveVersion.version.id);
+  assert.equal(appliedVersion.taskPrompt.content, "Improved by AI");
+  const approvedTaskPrompt = store.approveTaskPrompt(taskPromptCreated.taskPrompt.id);
+  assert.equal(approvedTaskPrompt.taskPrompt.status, "approved");
+  const copiedTaskPrompt = store.copyCodexHandoff(taskPromptCreated.taskPrompt.id);
+  assert.equal(copiedTaskPrompt.taskPrompt.status, "copied");
+  assert.match(copiedTaskPrompt.handoffText, /Full task prompt/);
+  const completedTaskPrompt = store.markTaskPromptDone(taskPromptCreated.taskPrompt.id, {
+    note: "Done roadmap item 2",
+    result: "ok",
+    commitHash: "abc123",
+    verificationSummary: "verify ok"
+  });
+  assert.equal(completedTaskPrompt.taskPrompt.status, "done");
+
   const reloadedState = store.getState();
   const syncedTaskPrompt = reloadedState.taskPrompts.find((entry) => entry.id === taskPromptCreated.taskPrompt.id);
   assert.equal(syncedTaskPrompt.taskFileName, stableTaskFileName);
-  assert.equal(fs.readFileSync(syncedTaskPrompt.taskFilePath, "utf8"), "Updated prompt body");
+  assert.equal(fs.readFileSync(syncedTaskPrompt.taskFilePath, "utf8"), "Improved by AI");
 
   const settingsResult = store.updateSettings({ projectsBasePath: path.join(tmpRoot, "Tasks") });
   assert.equal(settingsResult.state.projectsBasePath, path.join(tmpRoot, "Tasks"));
