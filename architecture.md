@@ -1,5 +1,23 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-27 Schema v2 Baseline
+
+- Prompt Vault DB now carries `schemaVersion: 2` as the canonical workflow schema marker.
+- The DB root includes new workflow arrays:
+  - `debateWorkflows`
+  - `masterPlanVersions`
+  - `roadmapVersions`
+  - `taskPrompts`
+  - `taskPromptVersions`
+  - `taskRuns`
+- Legacy `promptPacks` remains present for backward compatibility and staged migration.
+- `sanitizeDatabase` performs non-destructive upgrades:
+  - fills missing v2 arrays with empty arrays
+  - preserves existing `projects`
+  - preserves existing `promptPacks`
+  - normalizes malformed non-array values back to arrays
+- Entity-level sanitize helpers now define a stable persisted shape for debate rounds/workflows, master-plan versions, roadmap versions/items, task prompts/versions, and task runs.
+
 ## 2026-05-27 Verification Baseline
 
 - Current baseline verification is the root workspace `npm.cmd run verify` command.

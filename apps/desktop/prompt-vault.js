@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const DB_VERSION = 1;
+const DB_SCHEMA_VERSION = 2;
 const DEFAULT_PROJECTS_BASE_PATH = "F:\\Projects\\CopyPaste\\Projects";
 const DEFAULT_CHUNK_COUNT = 3;
 const DEFAULT_CHUNK_STRATEGY = "simple_3";
@@ -59,8 +60,15 @@ function createEmptyDatabase() {
 
   return {
     version: DB_VERSION,
+    schemaVersion: DB_SCHEMA_VERSION,
     projectsBasePath: DEFAULT_PROJECTS_BASE_PATH,
     projects: [],
+    debateWorkflows: [],
+    masterPlanVersions: [],
+    roadmapVersions: [],
+    taskPrompts: [],
+    taskPromptVersions: [],
+    taskRuns: [],
     promptPacks: [],
     deletedProjectPaths: [],
     createdAt: timestamp,
@@ -180,7 +188,7 @@ function serializeRoadmapToMarkdown(roadmap) {
       lines.push(`## ${String(order).padStart(3, "0")}. ${title}`);
       lines.push("");
       lines.push(`Goal: ${normalizeString(item.goal) || title}`);
-      lines.push(`Why: ${normalizeString(item.whyThisExists) || "This task implements one focused part of the master plan."}`);
+      lines.push(`Why: ${normalizeString(item.why) || "This task implements one focused part of the master plan."}`);
       lines.push(`Dependencies: ${dependsOn}`);
       lines.push(`Parallel group: ${parallelGroup}`);
       lines.push("");
@@ -246,7 +254,7 @@ function sanitizeRoadmapItem(item, index) {
     order,
     title,
     goal: normalizeString(item && item.goal),
-    whyThisExists: normalizeString(item && item.whyThisExists),
+    why: normalizeString(item && item.why) || normalizeString(item && item.whyThisExists),
     targetFiles: Array.isArray(item && item.targetFiles) ? item.targetFiles.map(normalizeString).filter(Boolean) : [],
     researchNeeded: Array.isArray(item && item.researchNeeded) ? item.researchNeeded.map(normalizeString).filter(Boolean) : [],
     acceptanceCriteria: Array.isArray(item && item.acceptanceCriteria) ? item.acceptanceCriteria.map(normalizeString).filter(Boolean) : [],
@@ -264,6 +272,118 @@ function sanitizeRoadmap(roadmap) {
   };
 }
 
+function sanitizeDebateRound(round) {
+  const source = round && typeof round === "object" ? round : {};
+  return {
+    id: normalizeString(source.id) || createId("debate_round"),
+    workflowId: normalizeString(source.workflowId),
+    stageId: normalizeString(source.stageId),
+    provider: normalizeString(source.provider),
+    role: normalizeString(source.role),
+    promptText: String(source.promptText || ""),
+    responseText: String(source.responseText || ""),
+    createdAt: normalizeString(source.createdAt) || createTimestamp(),
+    updatedAt: normalizeString(source.updatedAt) || createTimestamp()
+  };
+}
+
+function sanitizeDebateWorkflow(workflow) {
+  const source = workflow && typeof workflow === "object" ? workflow : {};
+  return {
+    id: normalizeString(source.id) || createId("debate_workflow"),
+    projectId: normalizeString(source.projectId),
+    status: normalizeString(source.status) || "ready_for_user",
+    currentStageId: normalizeString(source.currentStageId),
+    rounds: Array.isArray(source.rounds) ? source.rounds.map(sanitizeDebateRound) : [],
+    createdAt: normalizeString(source.createdAt) || createTimestamp(),
+    updatedAt: normalizeString(source.updatedAt) || createTimestamp(),
+    completedAt: normalizeString(source.completedAt)
+  };
+}
+
+function sanitizeMasterPlanVersion(version) {
+  const source = version && typeof version === "object" ? version : {};
+  return {
+    id: normalizeString(source.id) || createId("master_plan_version"),
+    projectId: normalizeString(source.projectId),
+    sourceWorkflowId: normalizeString(source.sourceWorkflowId),
+    sourceRoundId: normalizeString(source.sourceRoundId),
+    source: normalizeString(source.source) || "manual",
+    content: String(source.content || source.responseText || ""),
+    status: normalizeString(source.status) || "draft",
+    createdAt: normalizeString(source.createdAt) || createTimestamp(),
+    updatedAt: normalizeString(source.updatedAt) || createTimestamp(),
+    appliedAt: normalizeString(source.appliedAt),
+    archivedAt: normalizeString(source.archivedAt)
+  };
+}
+
+function sanitizeRoadmapVersion(version) {
+  const source = version && typeof version === "object" ? version : {};
+  const items = Array.isArray(source.items)
+    ? source.items
+    : source.roadmap && Array.isArray(source.roadmap.items)
+      ? source.roadmap.items
+      : [];
+  return {
+    id: normalizeString(source.id) || createId("roadmap_version"),
+    projectId: normalizeString(source.projectId),
+    source: normalizeString(source.source) || "manual",
+    status: normalizeString(source.status) || "draft",
+    items: items.map(sanitizeRoadmapItem),
+    responseText: String(source.responseText || ""),
+    createdAt: normalizeString(source.createdAt) || createTimestamp(),
+    updatedAt: normalizeString(source.updatedAt) || createTimestamp(),
+    appliedAt: normalizeString(source.appliedAt),
+    archivedAt: normalizeString(source.archivedAt)
+  };
+}
+
+function sanitizeTaskPrompt(prompt) {
+  const source = prompt && typeof prompt === "object" ? prompt : {};
+  return {
+    id: normalizeString(source.id) || createId("task_prompt"),
+    projectId: normalizeString(source.projectId),
+    roadmapItemId: normalizeString(source.roadmapItemId),
+    title: normalizeString(source.title) || "Task Prompt",
+    content: String(source.content || source.prompt || ""),
+    status: normalizeString(source.status) || "draft",
+    activeVersionId: normalizeString(source.activeVersionId),
+    createdAt: normalizeString(source.createdAt) || createTimestamp(),
+    updatedAt: normalizeString(source.updatedAt) || createTimestamp(),
+    approvedAt: normalizeString(source.approvedAt),
+    copiedAt: normalizeString(source.copiedAt),
+    doneAt: normalizeString(source.doneAt)
+  };
+}
+
+function sanitizeTaskPromptVersion(version) {
+  const source = version && typeof version === "object" ? version : {};
+  return {
+    id: normalizeString(source.id) || createId("task_prompt_version"),
+    taskPromptId: normalizeString(source.taskPromptId),
+    source: normalizeString(source.source) || "manual",
+    content: String(source.content || source.responseText || ""),
+    status: normalizeString(source.status) || "draft",
+    createdAt: normalizeString(source.createdAt) || createTimestamp(),
+    updatedAt: normalizeString(source.updatedAt) || createTimestamp(),
+    appliedAt: normalizeString(source.appliedAt)
+  };
+}
+
+function sanitizeTaskRun(run) {
+  const source = run && typeof run === "object" ? run : {};
+  return {
+    id: normalizeString(source.id) || createId("task_run"),
+    taskPromptId: normalizeString(source.taskPromptId),
+    note: String(source.note || ""),
+    result: String(source.result || ""),
+    commitHash: normalizeString(source.commitHash),
+    verificationSummary: String(source.verificationSummary || ""),
+    createdAt: normalizeString(source.createdAt) || createTimestamp()
+  };
+}
+
 function sanitizeDatabase(rawDatabase) {
   const fallback = createEmptyDatabase();
   const source = rawDatabase && typeof rawDatabase === "object" ? rawDatabase : fallback;
@@ -272,6 +392,7 @@ function sanitizeDatabase(rawDatabase) {
 
   return {
     version: DB_VERSION,
+    schemaVersion: DB_SCHEMA_VERSION,
     projectsBasePath: normalizeWindowsPath(source.projectsBasePath) || DEFAULT_PROJECTS_BASE_PATH,
     deletedProjectPaths: Array.isArray(source.deletedProjectPaths)
       ? source.deletedProjectPaths.map((item) => normalizeWindowsPath(item).toLowerCase()).filter(Boolean)
@@ -321,6 +442,12 @@ function sanitizeDatabase(rawDatabase) {
       createdAt: normalizeString(pack.createdAt) || createTimestamp(),
       updatedAt: normalizeString(pack.updatedAt) || createTimestamp()
     })),
+    debateWorkflows: Array.isArray(source.debateWorkflows) ? source.debateWorkflows.map(sanitizeDebateWorkflow) : [],
+    masterPlanVersions: Array.isArray(source.masterPlanVersions) ? source.masterPlanVersions.map(sanitizeMasterPlanVersion) : [],
+    roadmapVersions: Array.isArray(source.roadmapVersions) ? source.roadmapVersions.map(sanitizeRoadmapVersion) : [],
+    taskPrompts: Array.isArray(source.taskPrompts) ? source.taskPrompts.map(sanitizeTaskPrompt) : [],
+    taskPromptVersions: Array.isArray(source.taskPromptVersions) ? source.taskPromptVersions.map(sanitizeTaskPromptVersion) : [],
+    taskRuns: Array.isArray(source.taskRuns) ? source.taskRuns.map(sanitizeTaskRun) : [],
     createdAt: normalizeString(source.createdAt) || fallback.createdAt,
     updatedAt: normalizeString(source.updatedAt) || fallback.updatedAt
   };
@@ -1688,7 +1815,7 @@ function createVaultStore({ dbPath }) {
       item.goal || item.title,
       "",
       "## Why This Exists",
-      item.whyThisExists || "This prompt implements one focused part of the master plan.",
+      item.why || "This prompt implements one focused part of the master plan.",
       "",
       "## Files To Read Or Inspect",
       ...(item.targetFiles && item.targetFiles.length ? item.targetFiles.map((file) => `- ${file}`) : ["- Inspect the relevant project files before editing."]),

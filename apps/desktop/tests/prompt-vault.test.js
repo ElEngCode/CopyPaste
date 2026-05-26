@@ -4,6 +4,8 @@ const os = require("node:os");
 const path = require("node:path");
 const {
   createVaultStore,
+  createEmptyDatabase,
+  sanitizeDatabase,
   extractFinalPlanTasks,
   extractImplementationTasks,
   slugify,
@@ -18,6 +20,61 @@ try {
   const projectPath = path.join(tmpRoot, "CopyPaste");
   const dbPath = path.join(tmpRoot, "prompt-vault-db.json");
   const store = createVaultStore({ dbPath });
+
+  const emptyDatabase = createEmptyDatabase();
+  assert.equal(emptyDatabase.schemaVersion, 2);
+  assert.deepEqual(emptyDatabase.debateWorkflows, []);
+  assert.deepEqual(emptyDatabase.masterPlanVersions, []);
+  assert.deepEqual(emptyDatabase.roadmapVersions, []);
+  assert.deepEqual(emptyDatabase.taskPrompts, []);
+  assert.deepEqual(emptyDatabase.taskPromptVersions, []);
+  assert.deepEqual(emptyDatabase.taskRuns, []);
+
+  const sanitizedOldDb = sanitizeDatabase({
+    version: 1,
+    projects: [{ id: "p1", name: "Legacy Project", path: projectPath }],
+    promptPacks: [{ id: "pack_legacy", projectId: "p1", title: "Legacy Pack", chunks: [] }]
+  });
+  assert.equal(sanitizedOldDb.schemaVersion, 2);
+  assert.equal(sanitizedOldDb.projects.length, 1);
+  assert.equal(sanitizedOldDb.promptPacks.length, 1);
+  assert.deepEqual(sanitizedOldDb.debateWorkflows, []);
+  assert.deepEqual(sanitizedOldDb.taskRuns, []);
+
+  const sanitizedMalformedDb = sanitizeDatabase({
+    projects: {},
+    promptPacks: {},
+    debateWorkflows: {},
+    masterPlanVersions: "bad",
+    roadmapVersions: null,
+    taskPrompts: 42,
+    taskPromptVersions: false,
+    taskRuns: "oops"
+  });
+  assert.deepEqual(sanitizedMalformedDb.projects, []);
+  assert.deepEqual(sanitizedMalformedDb.promptPacks, []);
+  assert.deepEqual(sanitizedMalformedDb.debateWorkflows, []);
+  assert.deepEqual(sanitizedMalformedDb.masterPlanVersions, []);
+  assert.deepEqual(sanitizedMalformedDb.roadmapVersions, []);
+  assert.deepEqual(sanitizedMalformedDb.taskPrompts, []);
+  assert.deepEqual(sanitizedMalformedDb.taskPromptVersions, []);
+  assert.deepEqual(sanitizedMalformedDb.taskRuns, []);
+
+  const sanitizedMissingFields = sanitizeDatabase({
+    debateWorkflows: [{ id: "wf1", projectId: "p1", rounds: [{}] }],
+    masterPlanVersions: [{ id: "mp1", projectId: "p1" }],
+    roadmapVersions: [{ id: "rm1", projectId: "p1", items: [{}] }],
+    taskPrompts: [{ id: "tp1", projectId: "p1" }],
+    taskPromptVersions: [{ id: "tpv1", taskPromptId: "tp1" }],
+    taskRuns: [{ id: "tr1", taskPromptId: "tp1" }]
+  });
+  assert.equal(sanitizedMissingFields.debateWorkflows[0].status, "ready_for_user");
+  assert.equal(typeof sanitizedMissingFields.debateWorkflows[0].rounds[0].responseText, "string");
+  assert.equal(sanitizedMissingFields.masterPlanVersions[0].status, "draft");
+  assert.equal(sanitizedMissingFields.roadmapVersions[0].items[0].title, "Prompt 1");
+  assert.equal(sanitizedMissingFields.taskPrompts[0].status, "draft");
+  assert.equal(sanitizedMissingFields.taskPromptVersions[0].status, "draft");
+  assert.equal(typeof sanitizedMissingFields.taskRuns[0].verificationSummary, "string");
 
   fs.mkdirSync(projectPath, { recursive: true });
 

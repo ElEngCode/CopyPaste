@@ -1,5 +1,28 @@
 # Codex Progress
 
+## 2026-05-27 Task 003 Persistent Workflow Schema
+
+- Added schema v2 persistence fields to Prompt Vault database shape:
+  - `schemaVersion: 2`
+  - `debateWorkflows`
+  - `masterPlanVersions`
+  - `roadmapVersions`
+  - `taskPrompts`
+  - `taskPromptVersions`
+  - `taskRuns`
+- Kept `promptPacks` as legacy storage for compatibility while introducing the new v2 arrays.
+- Added non-destructive sanitize coverage so old DB payloads are upgraded in memory without losing `projects` or `promptPacks`.
+- Added sanitize helpers for new workflow entities:
+  - `sanitizeDebateWorkflow`
+  - `sanitizeDebateRound`
+  - `sanitizeMasterPlanVersion`
+  - `sanitizeRoadmapVersion`
+  - `sanitizeRoadmapItem`
+  - `sanitizeTaskPrompt`
+  - `sanitizeTaskPromptVersion`
+  - `sanitizeTaskRun`
+- Added tests for empty DB shape, old DB shape, malformed arrays, missing fields, and legacy prompt-pack preservation.
+
 ## 2026-05-27 Task 002 Baseline Verification
 
 - Ran `npm.cmd install`; workspace dependencies were already up to date and npm reported 0 vulnerabilities.
