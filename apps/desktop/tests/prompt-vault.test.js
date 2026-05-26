@@ -376,10 +376,14 @@ try {
 
   const appliedMaster = store.applyMasterPlanVersion(savedBrief.project.id, masterVersion.version.id);
   assert.equal(appliedMaster.project.masterPlan, "Master plan v2");
+  assert.equal(appliedMaster.project.activeMasterPlanVersionId, masterVersion.version.id);
   assert.ok(appliedMaster.project.masterPlanVersions[0].appliedAt);
   assert.equal(fs.readFileSync(path.join(planningProjectPath, "masterplan.md"), "utf8"), "Master plan v2");
   assert.equal(appliedMaster.project.stage, "Roadmap");
   assert.equal(appliedMaster.project.nextAction, "Generate Roadmap");
+
+  const prepRoadmap = store.prepareRoadmapGeneration(savedBrief.project.id);
+  assert.equal(prepRoadmap.activeMasterPlan, "Master plan v2");
 
   const roadmapItems = [{
     id: "roadmap_1",
@@ -428,6 +432,7 @@ try {
   const appliedRoadmap = store.applyRoadmapVersion(savedBrief.project.activePromptPackId, roadmapVersion.version.id);
   assert.equal(appliedRoadmap.pack.roadmap.items.length, 3);
   assert.equal(appliedRoadmap.pack.roadmap.items[2].parallelGroup, "A");
+  assert.equal(appliedRoadmap.project.activeRoadmapVersionId, roadmapVersion.version.id);
   assert.equal(appliedRoadmap.project.stage, "Tasks");
   assert.equal(appliedRoadmap.project.nextAction, "Create Task Details");
   const roadmapFile = fs.readFileSync(path.join(planningProjectPath, "plan-roadmap.md"), "utf8");
@@ -485,6 +490,26 @@ try {
   const eligibleAfter = store.getRoadmapEligibility(savedBrief.project.activePromptPackId);
   const availableAfter = eligibleAfter.items.filter((item) => item.eligible).map((item) => item.id);
   assert.deepEqual(availableAfter, ["roadmap_2", "roadmap_3"]);
+
+  const taskPromptCreated = store.createTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_2");
+  assert.equal(taskPromptCreated.taskPrompt.roadmapItemId, "roadmap_2");
+  assert.equal(taskPromptCreated.taskPrompt.status, "draft");
+  assert.match(taskPromptCreated.taskPrompt.content, /Project name:/);
+  assert.match(taskPromptCreated.taskPrompt.content, /Project path:/);
+  assert.match(taskPromptCreated.taskPrompt.content, /Master plan file path:/);
+  assert.match(taskPromptCreated.taskPrompt.content, /## Dependencies/);
+  assert.match(taskPromptCreated.taskPrompt.content, /## Git Rules/);
+  assert.match(taskPromptCreated.taskPrompt.content, /Strict scope: only this task/);
+  assert.ok(fs.existsSync(taskPromptCreated.taskPrompt.taskFilePath));
+
+  const stableTaskFileName = taskPromptCreated.taskPrompt.taskFileName;
+  store.updateTaskPromptContent(taskPromptCreated.taskPrompt.id, {
+    content: "Updated prompt body"
+  });
+  const reloadedState = store.getState();
+  const syncedTaskPrompt = reloadedState.taskPrompts.find((entry) => entry.id === taskPromptCreated.taskPrompt.id);
+  assert.equal(syncedTaskPrompt.taskFileName, stableTaskFileName);
+  assert.equal(fs.readFileSync(syncedTaskPrompt.taskFilePath, "utf8"), "Updated prompt body");
 
   const settingsResult = store.updateSettings({ projectsBasePath: path.join(tmpRoot, "Tasks") });
   assert.equal(settingsResult.state.projectsBasePath, path.join(tmpRoot, "Tasks"));

@@ -1,5 +1,26 @@
 # Codex Progress
 
+## 2026-05-27 Task 010-015 Workflow Progress
+
+- Enforced roadmap generation gating in primary action logic: roadmap can be created only when a master plan version is explicitly applied (`activeMasterPlanVersionId`).
+- Added protocol coverage for roadmap generation/parsing:
+  - `buildRoadmapPrompt(project, activeMasterPlan)`
+  - `parseRoadmapResponse` tests for direct JSON and fenced JSON
+  - invalid dependency payloads now fail roadmap parsing validation paths in tests.
+- Strengthened roadmap/task flow assertions in Prompt Vault tests:
+  - `prepareRoadmapGeneration` returns applied master-plan text
+  - applying roadmap sets `activeRoadmapVersionId`
+  - applied master-plan sets `activeMasterPlanVersionId`.
+- Hardened generated task-prompt content from roadmap items to include required execution context:
+  - project name/path
+  - master plan file path
+  - dependencies
+  - git rules
+  - strict single-task scope reminder.
+- Added task-file synchronization checks:
+  - task prompt creation writes task file
+  - manual prompt content updates keep stable task filename and rewrite active file content.
+
 ## 2026-05-27 Task 008 Master Plan Version From Completed Debate
 
 - Added Prompt Vault store method `createMasterPlanVersionFromDebate(workflowId, roundId)`.

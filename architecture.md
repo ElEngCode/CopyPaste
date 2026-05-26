@@ -1,5 +1,22 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-27 Roadmap + Task Prompt Hardening (Task 010-015 scope)
+
+- Plan primary action now gates roadmap generation behind an applied master-plan version (`project.activeMasterPlanVersionId`), preventing roadmap prompts from being built from draft/editor-only text.
+- Protocol roadmap contract is now exercised by tests for:
+  - deterministic roadmap prompt generation from applied master plan
+  - strict JSON/fenced-JSON response parsing
+  - dependency validation failures (missing dependencies rejected).
+- Prompt Vault task prompt generation from roadmap items now embeds execution-critical context directly in the generated prompt:
+  - project name/path
+  - master plan file path
+  - roadmap dependencies
+  - git guardrails
+  - explicit strict single-task scope constraint.
+- Task prompt filesystem sync remains stable-file-name based:
+  - first creation assigns `tasks/task-###-slug.md`
+  - subsequent content updates rewrite the same file path instead of renaming.
+
 ## 2026-05-27 Debate To Master Plan Versioning
 
 - Final synthesis debate output is now persisted as a draft master-plan version, not auto-applied project state.

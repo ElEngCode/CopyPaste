@@ -2229,20 +2229,28 @@ function createVaultStore({ dbPath }) {
     };
   }
 
-  function createPromptFromRoadmapItem({ project, pack, item, order }) {
-    const prompt = [
-      `# ${item.title}`,
-      "",
-      `You are Codex working inside this local project:`,
-      "",
-      "```text",
-      project.path,
-      "```",
-      "",
-      "## Goal",
-      item.goal || item.title,
-      "",
-      "## Why This Exists",
+function createPromptFromRoadmapItem({ project, pack, item, order }) {
+  const projectFiles = getProjectPaths(project.path);
+  const dependencyList = Array.isArray(item.dependsOn) && item.dependsOn.length ? item.dependsOn : ["none"];
+  const prompt = [
+    `# ${item.title}`,
+    "",
+    "Project name:",
+    project.name,
+    "",
+    "Project path:",
+    project.path,
+    "",
+    "Master plan file path:",
+    projectFiles.masterplan,
+    "",
+    "Roadmap item title:",
+    item.title,
+    "",
+    "## Goal",
+    item.goal || item.title,
+    "",
+    "## Why This Exists",
       item.why || "This prompt implements one focused part of the master plan.",
       "",
       "## Files To Read Or Inspect",
@@ -2254,14 +2262,22 @@ function createVaultStore({ dbPath }) {
       "## Acceptance Criteria",
       ...(item.acceptanceCriteria && item.acceptanceCriteria.length ? item.acceptanceCriteria.map((criterion) => `- ${criterion}`) : ["- The requested behavior is implemented and verified."]),
       "",
-      "## Verification Commands",
-      ...(item.verificationCommands && item.verificationCommands.length ? item.verificationCommands.map((command) => `- ${command}`) : ["- npm.cmd run desktop:test"]),
-      "",
-      "## Constraints",
-      "- Do not use destructive git commands.",
-      "- Do not modify unrelated files.",
-      "- Report exactly what changed and which verification commands passed."
-    ].join("\n");
+    "## Verification Commands",
+    ...(item.verificationCommands && item.verificationCommands.length ? item.verificationCommands.map((command) => `- ${command}`) : ["- npm.cmd run desktop:test"]),
+    "",
+    "## Dependencies",
+    ...dependencyList.map((dependencyId) => `- ${dependencyId}`),
+    "",
+    "## Git Rules",
+    "- Do not use git reset --hard.",
+    "- Do not delete unrelated user work.",
+    "- Keep the change scoped to this task only.",
+    "",
+    "## Constraints",
+    "- Strict scope: only this task.",
+    "- Do not modify unrelated files.",
+    "- Report exactly what changed and which verification commands passed."
+  ].join("\n");
 
     return sanitizeChunk({
       id: createId("chunk"),
