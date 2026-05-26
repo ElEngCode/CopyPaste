@@ -1,5 +1,12 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-27 Repository Hygiene
+
+- `Projects/` is runtime/generated project output, not source code. The desktop app may create project folders there, including per-project `codex.md`, `architecture.md`, `masterplan.md`, `plan-roadmap.md`, and task files, but those folders are ignored by git.
+- `artifacts/` is runtime/debug output, including browser profiles and diagnostic captures, and is ignored by git.
+- Local token and DB files are ignored: `apps/extension/ws-session-token.json`, `prompt-vault-db.json`, `nextstep-db.json`, `nextstep-db.backup.json`, `nextstep-db.tmp`, and `*.corrupt-*.bak`.
+- The tracked source tree is limited to app code, package/workspace files, tests, and documentation; generated project data is recreated or discovered by the app at runtime.
+
 ## 2026-05-26 Project History Documentation
 
 - Added `PROJECT_HISTORY.md` as the human-readable project evolution record: original purpose, expected workflow, major evolution stages, current runtime, current data model, repository link, and active PR link.

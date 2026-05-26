@@ -1,5 +1,12 @@
 # Codex Progress
 
+## 2026-05-27 Task 001 Repository Hygiene
+
+- Started cleanup of generated/runtime artifacts from version control scope.
+- Identified tracked generated project scaffolds under `Projects/` and local runtime browser artifacts under `artifacts/`.
+- Updated root hygiene rules so generated project folders, runtime artifacts, logs, session tokens, local Prompt Vault DB files, legacy Next Step DB files, temp DB files, and corrupt backups stay out of git.
+- Kept application logic unchanged for this task.
+
 ## 2026-05-26 Project History Documentation
 
 - Added `PROJECT_HISTORY.md` at the repository root.
