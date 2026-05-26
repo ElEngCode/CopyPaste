@@ -1782,8 +1782,60 @@ function createVaultStore({ dbPath }) {
       appliedAt: ""
     };
     project.masterPlanVersions.unshift(version);
+    database.masterPlanVersions.unshift(sanitizeMasterPlanVersion({
+      id: version.id,
+      projectId: project.id,
+      source: version.source,
+      content: version.responseText,
+      status: "draft",
+      createdAt: version.createdAt,
+      updatedAt: version.createdAt
+    }));
     project.updatedAt = createTimestamp();
     return { version, project, state: writeDatabase(database) };
+  }
+
+  function createMasterPlanVersionFromDebate(workflowId, roundId) {
+    const database = readDatabase();
+    const workflow = database.debateWorkflows.find((item) => item.id === workflowId);
+    if (!workflow) throw new Error("Debate workflow not found.");
+    const project = getProjectById(database, workflow.projectId);
+    const round = (Array.isArray(workflow.rounds) ? workflow.rounds : []).find((item) => item.id === roundId);
+    if (!round) throw new Error("Debate round not found.");
+    const isFinalStageRound = round.stageId === "gpt_final_synthesis";
+    const workflowComplete = workflow.status === "complete";
+    if (!isFinalStageRound && !workflowComplete) {
+      throw new Error("Master plan can be created only from final synthesis or completed workflow.");
+    }
+    const content = String(round.responseText || "").trim();
+    if (!content) throw new Error("Debate round response is empty.");
+    if (!Array.isArray(project.masterPlanVersions)) project.masterPlanVersions = [];
+    const createdAt = createTimestamp();
+    const version = {
+      id: createId("version"),
+      source: "debate_final_synthesis",
+      sourceWorkflowId: workflow.id,
+      sourceRoundId: round.id,
+      promptSnapshot: String(round.promptText || ""),
+      responseText: content,
+      status: "draft",
+      createdAt,
+      appliedAt: ""
+    };
+    project.masterPlanVersions.unshift(version);
+    database.masterPlanVersions.unshift(sanitizeMasterPlanVersion({
+      id: version.id,
+      projectId: project.id,
+      sourceWorkflowId: workflow.id,
+      sourceRoundId: round.id,
+      source: version.source,
+      content,
+      status: "draft",
+      createdAt,
+      updatedAt: createdAt
+    }));
+    project.updatedAt = createTimestamp();
+    return { version, project, workflow, round, state: writeDatabase(database) };
   }
 
   function applyMasterPlanVersion(projectId, versionId) {
@@ -1791,8 +1843,34 @@ function createVaultStore({ dbPath }) {
     const project = getProjectById(database, projectId);
     const version = (project.masterPlanVersions || []).find((item) => item.id === versionId);
     if (!version) throw new Error("Master plan version not found.");
-    project.masterPlan = String(version.responseText || "");
+    project.masterPlan = String(version.responseText || version.content || "");
     version.appliedAt = createTimestamp();
+    version.status = "applied";
+    (project.masterPlanVersions || []).forEach((item) => {
+      if (item.id !== version.id && String(item.status || "") === "applied") {
+        item.status = "archived";
+      }
+    });
+    database.masterPlanVersions = (database.masterPlanVersions || []).map((item) => {
+      if (item.id === version.id) {
+        return sanitizeMasterPlanVersion({
+          ...item,
+          content: project.masterPlan,
+          status: "applied",
+          appliedAt: version.appliedAt,
+          updatedAt: createTimestamp()
+        });
+      }
+      if (item.projectId === project.id && item.id !== version.id && item.status === "applied") {
+        return sanitizeMasterPlanVersion({
+          ...item,
+          status: "archived",
+          archivedAt: createTimestamp(),
+          updatedAt: createTimestamp()
+        });
+      }
+      return item;
+    });
     writeMasterPlanFile(project, project.masterPlan);
     return { version, project, state: writeDatabase(database) };
   }
@@ -2126,6 +2204,7 @@ function createVaultStore({ dbPath }) {
     advanceDebateWorkflow,
     completeDebateWorkflow,
     addMasterPlanVersion,
+    createMasterPlanVersionFromDebate,
     applyMasterPlanVersion,
     addRoadmapVersion,
     applyRoadmapVersion,

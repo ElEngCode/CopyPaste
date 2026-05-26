@@ -1,5 +1,24 @@
 # Codex Progress
 
+## 2026-05-27 Task 008 Master Plan Version From Completed Debate
+
+- Added Prompt Vault store method `createMasterPlanVersionFromDebate(workflowId, roundId)`.
+- Validation implemented:
+  - workflow exists
+  - round exists and belongs to workflow
+  - workflow is complete or round stage is `gpt_final_synthesis`
+  - response text is non-empty
+- Created version fields from debate:
+  - `projectId`
+  - `sourceWorkflowId`
+  - `sourceRoundId`
+  - `responseText` / content
+  - `status: draft`
+- Renderer debate response flow now creates a draft master-plan version when `gpt_final_synthesis` response arrives.
+- Added explicit `Apply Master Plan` primary action when a draft master-plan version exists.
+- Added Prompt Vault tests for final-synthesis round -> draft master-plan version.
+- No automatic plan apply from debate output; apply remains explicit user action.
+
 ## 2026-05-27 Task 007 Replace PingPong With Staged Debate
 
 - Removed hardcoded `master_plan_pingpong` runtime flow from renderer.

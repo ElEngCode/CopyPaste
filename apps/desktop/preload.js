@@ -28,6 +28,7 @@ const VAULT_GET_DEBATE_WORKFLOW_CHANNEL = "VAULT_GET_DEBATE_WORKFLOW";
 const VAULT_SAVE_DEBATE_ROUND_CHANNEL = "VAULT_SAVE_DEBATE_ROUND";
 const VAULT_ADVANCE_DEBATE_WORKFLOW_CHANNEL = "VAULT_ADVANCE_DEBATE_WORKFLOW";
 const VAULT_COMPLETE_DEBATE_WORKFLOW_CHANNEL = "VAULT_COMPLETE_DEBATE_WORKFLOW";
+const VAULT_CREATE_MASTER_PLAN_FROM_DEBATE_CHANNEL = "VAULT_CREATE_MASTER_PLAN_FROM_DEBATE";
 const VAULT_ADD_MASTER_PLAN_VERSION_CHANNEL = "VAULT_ADD_MASTER_PLAN_VERSION";
 const VAULT_APPLY_MASTER_PLAN_VERSION_CHANNEL = "VAULT_APPLY_MASTER_PLAN_VERSION";
 const VAULT_ADD_ROADMAP_VERSION_CHANNEL = "VAULT_ADD_ROADMAP_VERSION";
@@ -80,6 +81,7 @@ contextBridge.exposeInMainWorld("copypasteDesktop", {
   saveDebateRound: (payload) => ipcRenderer.invoke(VAULT_SAVE_DEBATE_ROUND_CHANNEL, payload),
   advanceDebateWorkflow: (payload) => ipcRenderer.invoke(VAULT_ADVANCE_DEBATE_WORKFLOW_CHANNEL, payload),
   completeDebateWorkflow: (payload) => ipcRenderer.invoke(VAULT_COMPLETE_DEBATE_WORKFLOW_CHANNEL, payload),
+  createMasterPlanVersionFromDebate: (payload) => ipcRenderer.invoke(VAULT_CREATE_MASTER_PLAN_FROM_DEBATE_CHANNEL, payload),
   addMasterPlanVersion: (payload) => ipcRenderer.invoke(VAULT_ADD_MASTER_PLAN_VERSION_CHANNEL, payload),
   applyMasterPlanVersion: (payload) => ipcRenderer.invoke(VAULT_APPLY_MASTER_PLAN_VERSION_CHANNEL, payload),
   addRoadmapVersion: (payload) => ipcRenderer.invoke(VAULT_ADD_ROADMAP_VERSION_CHANNEL, payload),

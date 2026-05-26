@@ -856,11 +856,29 @@ function getNextEligibleRoadmapItem(pack = {}) {
     }) || null;
 }
 
+function getLatestMasterPlanDraftVersion(project) {
+  const versions = Array.isArray(project && project.masterPlanVersions) ? project.masterPlanVersions : [];
+  return versions
+    .filter((item) => !item.appliedAt)
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))[0] || null;
+}
+
 function getPlanPrimaryAction(input = {}) {
   const project = input.project || {};
   const pack = input.pack || null;
   const projectIdea = String(input.projectIdea || project.idea || "").trim();
   const masterPlan = String(input.masterPlanText || project.masterPlan || "").trim();
+  const draftMasterPlan = getLatestMasterPlanDraftVersion(project);
+
+  if (draftMasterPlan) {
+    return {
+      id: "apply_master_plan",
+      label: "Apply Master Plan",
+      enabled: true,
+      handler: "applyMasterPlanDraft",
+      roadmapItemId: ""
+    };
+  }
 
   if (isEmptyMasterPlanText(masterPlan)) {
     return {
@@ -1455,6 +1473,7 @@ async function renderResponse(text) {
     throw new Error("No active debate workflow exists for this project.");
   }
   const pending = drawerState.pendingDebatePrompt || {};
+  const wasFinalSynthesis = pending.stageId === "gpt_final_synthesis";
   const savedResponse = await desktopApi.saveDebateRound({
     workflowId,
     stageId: pending.stageId || "",
@@ -1467,6 +1486,18 @@ async function renderResponse(text) {
     throw new Error(savedResponse && savedResponse.error ? savedResponse.error : "Could not save debate round.");
   }
   let stateAfterRound = savedResponse.state;
+  let createdMasterPlanFromDebate = false;
+  if (wasFinalSynthesis && savedResponse.round && savedResponse.round.id) {
+    const createdVersionResponse = await desktopApi.createMasterPlanVersionFromDebate({
+      workflowId,
+      roundId: savedResponse.round.id
+    });
+    if (!createdVersionResponse || createdVersionResponse.ok === false) {
+      throw new Error(createdVersionResponse && createdVersionResponse.error ? createdVersionResponse.error : "Could not create master plan draft from final synthesis.");
+    }
+    stateAfterRound = createdVersionResponse.state || stateAfterRound;
+    createdMasterPlanFromDebate = true;
+  }
   if (normalizedText.trim()) {
     const advancedResponse = await desktopApi.advanceDebateWorkflow({ workflowId });
     if (!advancedResponse || advancedResponse.ok === false) {
@@ -1492,7 +1523,11 @@ async function renderResponse(text) {
   };
   renderDebateState();
   renderWorkflowStatus();
-  setStatus("AI response received. Review it, then send the next gated step or generate Codex tasks.", "success");
+  if (createdMasterPlanFromDebate) {
+    setStatus("Master plan draft ready. Click Apply Master Plan to persist it.", "success");
+  } else {
+    setStatus("AI response received. Review it, then send the next gated step or generate Codex tasks.", "success");
+  }
 }
 
 function escapeHtml(value) {
@@ -2319,6 +2354,29 @@ async function startNextTask() {
   setStatus("Next task created from roadmap.", "success");
 }
 
+async function applyMasterPlanDraft() {
+  const project = (latestVaultState.projects || []).find((item) => item.id === drawerState.selectedProjectId)
+    || null;
+  if (!project) {
+    setStatus("Select a saved project first.", "error");
+    return;
+  }
+  const draft = getLatestMasterPlanDraftVersion(project);
+  if (!draft) {
+    setStatus("No master plan draft is ready to apply.", "error");
+    return;
+  }
+  const response = await desktopApi.applyMasterPlanVersion({
+    projectId: project.id,
+    versionId: draft.id
+  });
+  if (!response || response.ok === false) {
+    throw new Error(response && response.error ? response.error : "Could not apply master plan.");
+  }
+  renderVaultState(response.state);
+  setStatus("Master plan applied.", "success");
+}
+
 async function runPlanPrimaryAction() {
   const selected = getSelectedPlanProjectAndPack();
   const action = getPlanPrimaryAction({
@@ -2335,6 +2393,8 @@ async function runPlanPrimaryAction() {
 
   if (action.handler === "improveMasterPlan") {
     await improveMasterPlan();
+  } else if (action.handler === "applyMasterPlanDraft") {
+    await applyMasterPlanDraft();
   } else if (action.handler === "createTaskRoadmap") {
     await createTaskRoadmap();
   } else if (action.handler === "startNextTask") {

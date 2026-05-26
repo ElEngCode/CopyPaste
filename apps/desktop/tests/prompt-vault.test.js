@@ -349,13 +349,30 @@ try {
   assert.equal(reloadedWorkflow.workflow.rounds.length, 1);
   assert.equal(reloadedWorkflow.workflow.status, "complete");
 
+  const finalSynthesisWorkflow = store.createDebateWorkflow(savedBrief.project.id).workflow;
+  store.saveDebateRound(finalSynthesisWorkflow.id, {
+    stageId: "gpt_final_synthesis",
+    provider: "chatgpt",
+    role: "synthesis",
+    promptText: "Synthesize final master plan",
+    responseText: "Master plan debate final synthesis"
+  });
+  store.completeDebateWorkflow(finalSynthesisWorkflow.id);
+  const finalSynthesisState = store.getDebateWorkflow(finalSynthesisWorkflow.id);
+  const finalRound = finalSynthesisState.workflow.rounds[0];
+  const fromDebateVersion = store.createMasterPlanVersionFromDebate(finalSynthesisWorkflow.id, finalRound.id);
+  assert.equal(fromDebateVersion.version.sourceWorkflowId, finalSynthesisWorkflow.id);
+  assert.equal(fromDebateVersion.version.sourceRoundId, finalRound.id);
+  assert.equal(fromDebateVersion.version.responseText, "Master plan debate final synthesis");
+  assert.equal(fromDebateVersion.version.status, "draft");
+
   const masterVersion = store.addMasterPlanVersion(savedBrief.project.id, {
     source: "ai_improve",
     promptSnapshot: "Improve master plan",
     responseText: "Master plan v2"
   });
   assert.equal(masterVersion.version.responseText, "Master plan v2");
-  assert.equal(masterVersion.project.masterPlanVersions.length, 1);
+  assert.ok(masterVersion.project.masterPlanVersions.length >= 1);
 
   const appliedMaster = store.applyMasterPlanVersion(savedBrief.project.id, masterVersion.version.id);
   assert.equal(appliedMaster.project.masterPlan, "Master plan v2");

@@ -1,5 +1,13 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-27 Debate To Master Plan Versioning
+
+- Final synthesis debate output is now persisted as a draft master-plan version, not auto-applied project state.
+- Store API includes `createMasterPlanVersionFromDebate(workflowId, roundId)` with ownership and completion guards.
+- Renderer calls this method when receiving a `gpt_final_synthesis` round response.
+- UI exposes an explicit `Apply Master Plan` primary action when a draft master-plan version is available.
+- Applying remains a separate user-controlled step and writes `masterplan.md` only after explicit apply.
+
 ## 2026-05-27 Staged Debate Runtime
 
 - The legacy master-plan pingpong chain (automatic GPT->Claude->GPT within one response callback) is removed.
