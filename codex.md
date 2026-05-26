@@ -1,5 +1,22 @@
 # Codex Progress
 
+## 2026-05-27 Task 016-024 Continuation
+
+- Added protocol helper `buildTaskImprovePrompt(project, taskPrompt, activeMasterPlan, runHistory)`.
+- Added Prompt Vault task-prompt lifecycle methods:
+  - `addTaskPromptVersion`
+  - `applyTaskPromptVersion`
+  - `listTaskPromptVersions`
+  - `prepareTaskImprovePrompt`
+  - `saveTaskImproveResponse`
+  - `approveTaskPrompt`
+  - `copyCodexHandoff`
+  - `markTaskPromptDone`
+- Exposed new task-prompt APIs through desktop IPC and preload bridge.
+- Added UI primary-action helper alias `getPrimaryActionState` and switched primary action resolution to that helper.
+- Added workflow integration test `apps/desktop/tests/workflow-integration.test.js` and included it in desktop test runner.
+- Updated README with current staged planning workflow and persisted data locations.
+
 ## 2026-05-27 Task 010-015 Workflow Progress
 
 - Enforced roadmap generation gating in primary action logic: roadmap can be created only when a master plan version is explicitly applied (`activeMasterPlanVersionId`).

@@ -41,6 +41,23 @@ F:\Projects\CopyPaste\apps\extension
 
 Open ChatGPT and Claude tabs in the same Chrome window, then use the Electron app to send the next workflow step.
 
+## Planning Workflow
+
+Current workflow order:
+
+1. Create project
+2. Save idea
+3. Run staged AI debate
+4. Create master plan draft version
+5. Apply master plan
+6. Generate roadmap draft version
+7. Apply roadmap
+8. Create one task prompt from eligible roadmap item
+9. Improve task prompt (proposed version)
+10. Approve task prompt
+11. Copy Codex handoff
+12. Mark task done (unblocks dependencies)
+
 ## Verify
 
 ```powershell
@@ -49,9 +66,16 @@ npm.cmd run verify
 
 This runs extension syntax/tests and desktop tests.
 
+## Local Data Paths
+
+- Desktop DB: `%APPDATA%/next-step/prompt-vault-db.json` (Electron userData)
+- Generated project files: `F:\Projects\CopyPaste\Projects\...`
+- Applied master plan file: `<project>/masterplan.md`
+- Applied roadmap file: `<project>/plan-roadmap.md`
+- Task prompt files: `<project>/tasks/task-###-slug.md`
+
 ## Notes
 
 - The Chrome extension is still installed separately even though the code lives in this monorepo.
 - The local WebSocket bridge currently uses `ws://localhost:8080`.
 - The original `F:\Projects\Next Step` folder was not deleted during migration.
-

@@ -1,5 +1,16 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-27 Task Prompt Versioning + Handoff Gate
+
+- Protocol now provides `buildTaskImprovePrompt(...)` for deterministic AI task-improvement prompt generation.
+- Prompt Vault now has first-class task prompt version lifecycle:
+  - create proposed versions (`addTaskPromptVersion` / `saveTaskImproveResponse`)
+  - apply historical/proposed versions (`applyTaskPromptVersion`)
+  - list versions newest-first (`listTaskPromptVersions`)
+- Codex handoff is now taskPrompt-based (`copyCodexHandoff`) and explicitly gated by `approved` status.
+- Task completion path (`markTaskPromptDone`) persists run metadata and computes next roadmap-ready item.
+- Desktop IPC/preload bridge includes dedicated task-prompt channels for versioning, improve preparation, approval, handoff copy, and completion.
+
 ## 2026-05-27 Roadmap + Task Prompt Hardening (Task 010-015 scope)
 
 - Plan primary action now gates roadmap generation behind an applied master-plan version (`project.activeMasterPlanVersionId`), preventing roadmap prompts from being built from draft/editor-only text.
