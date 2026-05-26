@@ -1,5 +1,18 @@
 # Codex Progress
 
+## 2026-05-27 Task 005 Move Debate State Out Of Renderer
+
+- Removed renderer-global mutable `activeDebate` as debate source of truth.
+- Renderer debate state now derives from persisted Prompt Vault workflows in `latestVaultState.debateWorkflows`.
+- Added renderer helpers to map persisted workflow rounds/stage into the existing debate view model.
+- Project selection now ensures an active persisted debate workflow exists (load existing or create new).
+- `triggerWorkflowStep` now uses persisted workflow stage context, not local debate creation.
+- `renderResponse` debate flow now:
+  - saves round via IPC `saveDebateRound`
+  - advances workflow via IPC `advanceDebateWorkflow` when response is non-empty
+  - re-renders from refreshed persistent state
+- Debate round history and next-stage indicators are now rendered from DB-backed workflow state so reload keeps progress.
+
 ## 2026-05-27 Task 004 Persistent Debate Workflow Methods
 
 - Added persistent debate workflow stage order in Prompt Vault store:

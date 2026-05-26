@@ -1,5 +1,16 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-27 Renderer Debate Source Of Truth
+
+- Renderer no longer keeps mutable debate workflow state as the product source of truth.
+- Debate stage/round UI now derives from persisted `debateWorkflows` inside Prompt Vault state snapshots.
+- On project selection, renderer requests an active workflow and creates one if missing.
+- Debate response handling is persisted through IPC store calls:
+  - save round
+  - advance workflow stage
+  - rehydrate renderer from updated vault state
+- This makes current stage and round history resilient across renderer refresh/reload.
+
 ## 2026-05-27 Debate Workflow Store API
 
 - Prompt Vault now stores debate workflows as first-class persisted records under `debateWorkflows`.

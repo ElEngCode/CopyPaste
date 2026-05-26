@@ -115,7 +115,6 @@ let latestWorkflowStatus = {
   extensionState: "disconnected",
   nextTarget: "ChatGPT"
 };
-let activeDebate = null;
 const drawerState = {
   selectedProjectId: "",
   selectedPackId: "",
@@ -125,6 +124,8 @@ const drawerState = {
   activeWorkflowContext: "debate_plan",
   lastImprovePrompt: "",
   activeRoadmapPackId: "",
+  activeDebateWorkflowId: "",
+  pendingDebatePrompt: null,
   masterPlanPingPong: null,
   showAllProjects: false
 };
@@ -628,6 +629,57 @@ function getNewProjectDraft(defaultPath) {
     branchName: "",
     commitMessage: ""
   };
+}
+
+function getSelectedProject() {
+  return (latestVaultState.projects || []).find((item) => item.id === drawerState.selectedProjectId) || null;
+}
+
+function getActiveDebateWorkflowFromState(projectId) {
+  const workflows = Array.isArray(latestVaultState.debateWorkflows) ? latestVaultState.debateWorkflows : [];
+  return workflows
+    .filter((item) => item.projectId === projectId && item.status !== "complete")
+    .sort((left, right) => String(right.updatedAt || right.createdAt || "").localeCompare(String(left.updatedAt || left.createdAt || "")))[0] || null;
+}
+
+function debateFromWorkflow(workflow, fallbackRawIdea) {
+  const debate = createRootDebateState(fallbackRawIdea || "");
+  if (!workflow) {
+    return debate;
+  }
+  debate.current_stage_id = workflow.currentStageId || debate.current_stage_id;
+  const rounds = Array.isArray(workflow.rounds) ? workflow.rounds : [];
+  debate.rounds = rounds.map((round, index) => ({
+    id: round.id || `round_${index + 1}`,
+    round_number: index + 1,
+    stage_id: round.stageId,
+    stage_label: getStepById(round.stageId)?.label || round.stageId,
+    provider: round.provider,
+    role: round.role,
+    prompt_sent: round.promptText || "",
+    response_received: round.responseText || "",
+    status: round.responseText ? "received" : "waiting_response"
+  }));
+  return debate;
+}
+
+async function ensureProjectDebateWorkflow(projectId) {
+  if (!projectId || !desktopApi || typeof desktopApi.getActiveDebateWorkflow !== "function") {
+    return null;
+  }
+  const activeResponse = await desktopApi.getActiveDebateWorkflow({ projectId });
+  if (activeResponse && activeResponse.ok !== false && activeResponse.workflow) {
+    latestVaultState = activeResponse.state || latestVaultState;
+    drawerState.activeDebateWorkflowId = activeResponse.workflow.id;
+    return activeResponse.workflow;
+  }
+  const createdResponse = await desktopApi.createDebateWorkflow({ projectId });
+  if (!createdResponse || createdResponse.ok === false || !createdResponse.workflow) {
+    throw new Error(createdResponse && createdResponse.error ? createdResponse.error : "Could not create debate workflow.");
+  }
+  latestVaultState = createdResponse.state || latestVaultState;
+  drawerState.activeDebateWorkflowId = createdResponse.workflow.id;
+  return createdResponse.workflow;
 }
 
 function buildProjectBrowserTree(state) {
@@ -1169,7 +1221,12 @@ function toggleSetupToolsPanel() {
 }
 
 function renderDebateState() {
-  const debate = activeDebate || createRootDebateState(elements.currentText ? elements.currentText.value : "");
+  const project = getSelectedProject();
+  const workflow = project ? getActiveDebateWorkflowFromState(project.id) : null;
+  if (workflow) {
+    drawerState.activeDebateWorkflowId = workflow.id;
+  }
+  const debate = debateFromWorkflow(workflow, elements.currentText ? elements.currentText.value : "");
   const view = getDebateStageView(debate);
 
   if (elements.currentStage) elements.currentStage.textContent = view.currentStage;
@@ -1243,13 +1300,20 @@ function resetActionButtons() {
 }
 
 function getWorkflowPayload() {
-  if (!activeDebate) {
-    activeDebate = createRootDebateState(elements.currentText.value);
-  }
-  return createStageWorkflowPayload(activeDebate, {
+  const project = getSelectedProject();
+  const workflow = project ? getActiveDebateWorkflowFromState(project.id) : null;
+  const debate = debateFromWorkflow(workflow, elements.currentText.value);
+  const payload = createStageWorkflowPayload(debate, {
     chatgptPrefix: elements.chatgptPrefix.value,
     claudePrefix: elements.claudePrefix.value
   });
+  drawerState.pendingDebatePrompt = {
+    stageId: payload.currentStageId,
+    provider: payload.targetProvider,
+    role: payload.currentRole,
+    promptText: payload.text
+  };
+  return payload;
 }
 
 function getVaultPayload() {
@@ -1282,7 +1346,9 @@ function renderStatus(payload) {
   const extensionState = payload && typeof payload === "object" && Object.prototype.hasOwnProperty.call(payload, "extensionState")
     ? normalizeExtensionState(payload.extensionState)
     : normalizeExtensionState(latestWorkflowStatus.extensionState);
-  const debateProvider = activeDebate ? getDebateStageView(activeDebate).currentProvider : "";
+  const project = getSelectedProject();
+  const workflow = project ? getActiveDebateWorkflowFromState(project.id) : null;
+  const debateProvider = getDebateStageView(debateFromWorkflow(workflow, elements.currentText ? elements.currentText.value : "")).currentProvider;
   const nextTarget = payload && typeof payload === "object"
     ? normalizeNextTarget(debateProvider || payload.nextTarget || latestWorkflowStatus.nextTarget)
     : latestWorkflowStatus.nextTarget;
@@ -1307,19 +1373,20 @@ function renderStatus(payload) {
 }
 
 async function triggerWorkflowStep() {
-  if (!elements.currentText.value.trim() && (!activeDebate || !activeDebate.raw_idea)) {
+  const project = getSelectedProject();
+  if (!project) {
+    setStatus("Select and save a project before starting debate.", "error");
+    return;
+  }
+  if (!elements.currentText.value.trim() && !(project.idea || "").trim()) {
     setStatus("Project idea / working plan is empty. Add text before sending.", "error");
     return;
   }
-
-  if (!activeDebate) {
-    activeDebate = createRootDebateState(elements.currentText.value);
-  } else if (!activeDebate.rounds.length && elements.currentText.value.trim()) {
-    activeDebate.raw_idea = elements.currentText.value.trim();
-  }
+  await ensureProjectDebateWorkflow(project.id);
 
   const payload = getWorkflowPayload();
-  const view = getDebateStageView(activeDebate);
+  const workflow = getActiveDebateWorkflowFromState(project.id);
+  const view = getDebateStageView(debateFromWorkflow(workflow, elements.currentText.value || project.idea || ""));
   setBusy(true);
   latestWorkflowStatus = {
     message: `Sending ${view.currentStage} to ${view.currentProvider}...`,
@@ -1567,8 +1634,35 @@ async function renderResponse(text) {
   }
 
   const normalizedText = String(text || "");
-  const result = applyDebateResponse(activeDebate || createRootDebateState(elements.currentText.value), normalizedText);
-  activeDebate = result.debate;
+  const workflowId = drawerState.activeDebateWorkflowId;
+  if (!workflowId) {
+    throw new Error("No active debate workflow exists for this project.");
+  }
+  const pending = drawerState.pendingDebatePrompt || {};
+  const savedResponse = await desktopApi.saveDebateRound({
+    workflowId,
+    stageId: pending.stageId || "",
+    provider: pending.provider || "",
+    role: pending.role || "",
+    promptText: pending.promptText || "",
+    responseText: normalizedText
+  });
+  if (!savedResponse || savedResponse.ok === false) {
+    throw new Error(savedResponse && savedResponse.error ? savedResponse.error : "Could not save debate round.");
+  }
+  let stateAfterRound = savedResponse.state;
+  if (normalizedText.trim()) {
+    const advancedResponse = await desktopApi.advanceDebateWorkflow({ workflowId });
+    if (!advancedResponse || advancedResponse.ok === false) {
+      throw new Error(advancedResponse && advancedResponse.error ? advancedResponse.error : "Could not advance debate workflow.");
+    }
+    stateAfterRound = advancedResponse.state;
+  }
+  latestVaultState = stateAfterRound || latestVaultState;
+  drawerState.pendingDebatePrompt = null;
+  const project = getSelectedProject();
+  const workflow = project ? getActiveDebateWorkflowFromState(project.id) : null;
+  const stageView = getDebateStageView(debateFromWorkflow(workflow, elements.currentText.value));
 
   elements.currentText.value = normalizedText;
   elements.responseView.innerHTML = renderProjectPlanHtml(normalizedText);
@@ -1578,7 +1672,7 @@ async function renderResponse(text) {
     message: "AI response received. Ready for next step.",
     tone: "success",
     extensionState: "connected",
-    nextTarget: result.stageView.currentProvider
+    nextTarget: stageView.currentProvider
   };
   renderDebateState();
   renderWorkflowStatus();
@@ -1677,6 +1771,11 @@ function applyProject(projectId) {
   renderInspector();
   updateWordCount();
   updatePlanPrimaryAction();
+  ensureProjectDebateWorkflow(project.id)
+    .then(() => {
+      renderDebateState();
+    })
+    .catch((error) => setStatus(error.message, "error"));
 }
 
 function renderVaultState(state) {
@@ -2942,7 +3041,7 @@ if (typeof window !== "undefined") {
     installEventListeners();
     resetActionButtons();
     setStatus("Waiting for Chrome extension WebSocket connection...", "neutral");
-    activeDebate = createRootDebateState(elements.currentText.value);
+    drawerState.pendingDebatePrompt = null;
     renderDebateState();
     renderWorkflowStatus();
     updateWordCount();
