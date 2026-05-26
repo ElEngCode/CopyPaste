@@ -8,7 +8,8 @@ const tests = [
   "prompt-vault.test.js",
   "electron-security.test.js",
   "ws-session.test.js",
-  "controller-ui.test.js"
+  "controller-ui.test.js",
+  "workflow-integration.test.js"
 ];
 
 let failed = 0;
