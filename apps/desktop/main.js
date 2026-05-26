@@ -41,8 +41,19 @@ const VAULT_COMPLETE_DEBATE_WORKFLOW_CHANNEL = "VAULT_COMPLETE_DEBATE_WORKFLOW";
 const VAULT_CREATE_MASTER_PLAN_FROM_DEBATE_CHANNEL = "VAULT_CREATE_MASTER_PLAN_FROM_DEBATE";
 const VAULT_ADD_MASTER_PLAN_VERSION_CHANNEL = "VAULT_ADD_MASTER_PLAN_VERSION";
 const VAULT_APPLY_MASTER_PLAN_VERSION_CHANNEL = "VAULT_APPLY_MASTER_PLAN_VERSION";
+const VAULT_ARCHIVE_MASTER_PLAN_VERSION_CHANNEL = "VAULT_ARCHIVE_MASTER_PLAN_VERSION";
+const VAULT_LIST_MASTER_PLAN_VERSIONS_CHANNEL = "VAULT_LIST_MASTER_PLAN_VERSIONS";
 const VAULT_ADD_ROADMAP_VERSION_CHANNEL = "VAULT_ADD_ROADMAP_VERSION";
+const VAULT_PREPARE_ROADMAP_GENERATION_CHANNEL = "VAULT_PREPARE_ROADMAP_GENERATION";
 const VAULT_APPLY_ROADMAP_VERSION_CHANNEL = "VAULT_APPLY_ROADMAP_VERSION";
+const VAULT_LIST_ROADMAP_VERSIONS_CHANNEL = "VAULT_LIST_ROADMAP_VERSIONS";
+const VAULT_ARCHIVE_ROADMAP_VERSION_CHANNEL = "VAULT_ARCHIVE_ROADMAP_VERSION";
+const VAULT_GET_ROADMAP_ELIGIBILITY_CHANNEL = "VAULT_GET_ROADMAP_ELIGIBILITY";
+const VAULT_GET_NEXT_ROADMAP_ITEM_CHANNEL = "VAULT_GET_NEXT_ROADMAP_ITEM";
+const VAULT_MARK_ROADMAP_IN_PROGRESS_CHANNEL = "VAULT_MARK_ROADMAP_IN_PROGRESS";
+const VAULT_MARK_ROADMAP_DONE_CHANNEL = "VAULT_MARK_ROADMAP_DONE";
+const VAULT_CREATE_TASK_PROMPT_CHANNEL = "VAULT_CREATE_TASK_PROMPT";
+const VAULT_UPDATE_TASK_PROMPT_CHANNEL = "VAULT_UPDATE_TASK_PROMPT";
 const VAULT_START_ROADMAP_PROMPT_CHANNEL = "VAULT_START_ROADMAP_PROMPT";
 const VAULT_APPROVE_PROMPT_CHANNEL = "VAULT_APPROVE_PROMPT";
 const VAULT_COPY_PROMPT_TO_CODEX_CHANNEL = "VAULT_COPY_PROMPT_TO_CODEX";
@@ -753,6 +764,17 @@ ipcMain.handle(VAULT_APPLY_MASTER_PLAN_VERSION_CHANNEL, (_event, payload) => inv
   return { ok: true, version: result.version, project: result.project, state: result.state };
 }));
 
+ipcMain.handle(VAULT_ARCHIVE_MASTER_PLAN_VERSION_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().archiveMasterPlanVersion(String(payload && payload.projectId || ""), String(payload && payload.versionId || ""));
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, version: result.version, project: result.project, state: result.state };
+}));
+
+ipcMain.handle(VAULT_LIST_MASTER_PLAN_VERSIONS_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().listMasterPlanVersions(String(payload && payload.projectId || ""));
+  return { ok: true, versions: result.versions, project: result.project, state: result.state };
+}));
+
 ipcMain.handle(VAULT_ADD_ROADMAP_VERSION_CHANNEL, (_event, payload) => invokeSafely(async () => {
   const result = getVaultStore().addRoadmapVersion(
     String(payload && payload.packId || ""),
@@ -762,6 +784,11 @@ ipcMain.handle(VAULT_ADD_ROADMAP_VERSION_CHANNEL, (_event, payload) => invokeSaf
   return { ok: true, version: result.version, pack: result.pack, state: result.state };
 }));
 
+ipcMain.handle(VAULT_PREPARE_ROADMAP_GENERATION_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().prepareRoadmapGeneration(String(payload && payload.projectId || ""));
+  return { ok: true, project: result.project, activeMasterPlan: result.activeMasterPlan, state: result.state };
+}));
+
 ipcMain.handle(VAULT_APPLY_ROADMAP_VERSION_CHANNEL, (_event, payload) => invokeSafely(async () => {
   const result = getVaultStore().applyRoadmapVersion(
     String(payload && payload.packId || ""),
@@ -769,6 +796,51 @@ ipcMain.handle(VAULT_APPLY_ROADMAP_VERSION_CHANNEL, (_event, payload) => invokeS
   );
   sendVaultStateToRenderer(result.state);
   return { ok: true, version: result.version, pack: result.pack, project: result.project, state: result.state };
+}));
+
+ipcMain.handle(VAULT_LIST_ROADMAP_VERSIONS_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().listRoadmapVersions(String(payload && payload.projectId || ""));
+  return { ok: true, versions: result.versions, project: result.project, pack: result.pack, state: result.state };
+}));
+
+ipcMain.handle(VAULT_ARCHIVE_ROADMAP_VERSION_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().archiveRoadmapVersion(String(payload && payload.projectId || ""), String(payload && payload.versionId || ""));
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, version: result.version, project: result.project, pack: result.pack, state: result.state };
+}));
+
+ipcMain.handle(VAULT_GET_ROADMAP_ELIGIBILITY_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().getRoadmapItemEligibility(String(payload && payload.projectId || ""));
+  return { ok: true, items: result.items, project: result.project, pack: result.pack, state: result.state };
+}));
+
+ipcMain.handle(VAULT_GET_NEXT_ROADMAP_ITEM_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().getNextEligibleRoadmapItem(String(payload && payload.projectId || ""));
+  return { ok: true, nextItem: result.nextItem, items: result.items, project: result.project, pack: result.pack, state: result.state };
+}));
+
+ipcMain.handle(VAULT_MARK_ROADMAP_IN_PROGRESS_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().markRoadmapItemInProgress(String(payload && payload.projectId || ""), String(payload && payload.roadmapItemId || ""));
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, project: result.project, pack: result.pack, chunk: result.chunk, state: result.state };
+}));
+
+ipcMain.handle(VAULT_MARK_ROADMAP_DONE_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().markRoadmapItemDone(String(payload && payload.projectId || ""), String(payload && payload.roadmapItemId || ""));
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, project: result.project, pack: result.pack, chunk: result.chunk, state: result.state };
+}));
+
+ipcMain.handle(VAULT_CREATE_TASK_PROMPT_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().createTaskPromptFromRoadmapItem(String(payload && payload.projectId || ""), String(payload && payload.roadmapItemId || ""));
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, taskPrompt: result.taskPrompt, version: result.version, project: result.project, pack: result.pack, chunk: result.chunk, state: result.state };
+}));
+
+ipcMain.handle(VAULT_UPDATE_TASK_PROMPT_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().updateTaskPromptContent(String(payload && payload.taskPromptId || ""), payload || {});
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, taskPrompt: result.taskPrompt, state: result.state };
 }));
 
 ipcMain.handle(VAULT_START_ROADMAP_PROMPT_CHANNEL, (_event, payload) => invokeSafely(async () => {

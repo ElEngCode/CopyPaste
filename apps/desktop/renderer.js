@@ -2277,22 +2277,20 @@ async function improveMasterPlan() {
 
 async function createTaskRoadmap() {
   const idea = elements.projectIdea ? elements.projectIdea.value : "";
-  const currentPlan = elements.currentText ? elements.currentText.value : "";
-  if (isEmptyMasterPlanText(currentPlan)) {
-    setStatus("Create the master plan first, then create the task roadmap.", "error");
-    return;
+  const project = (latestVaultState.projects || []).find((item) => item.id === drawerState.selectedProjectId) || null;
+  if (!project) throw new Error("Select a saved project first.");
+  const prep = await desktopApi.prepareRoadmapGeneration({ projectId: project.id });
+  if (!prep || prep.ok === false) {
+    throw new Error(prep && prep.error ? prep.error : "Master plan must be applied before roadmap generation.");
   }
-
   const saved = await desktopApi.saveProjectBrief({
     projectId: drawerState.selectedProjectId,
     projectName: elements.projectName.value,
     projectPath: elements.projectPath.value,
     idea,
-    masterPlan: currentPlan
+    masterPlan: prep.activeMasterPlan
   });
-  if (!saved || saved.ok === false) {
-    throw new Error(saved && saved.error ? saved.error : "Could not save project before creating task roadmap.");
-  }
+  if (!saved || saved.ok === false) throw new Error(saved && saved.error ? saved.error : "Could not save project before creating task roadmap.");
   drawerState.selectedProjectId = saved.project.id;
   const activePackId = saved.project.activePromptPackId;
   if (!activePackId) {
@@ -2301,12 +2299,21 @@ async function createTaskRoadmap() {
   renderVaultState(saved.state);
   if (elements.projectSelect) elements.projectSelect.value = saved.project.id;
 
-  const payload = getTaskRoadmapPayload({
-    projectName: elements.projectName.value,
-    projectPath: elements.projectPath.value,
-    projectIdea: idea,
-    masterPlan: currentPlan
-  });
+  const promptText = typeof projectBuilderProtocol.buildRoadmapPrompt === "function"
+    ? projectBuilderProtocol.buildRoadmapPrompt(saved.project, prep.activeMasterPlan)
+    : getTaskRoadmapPayload({
+      projectName: elements.projectName.value,
+      projectPath: elements.projectPath.value,
+      projectIdea: idea,
+      masterPlan: prep.activeMasterPlan
+    }).text;
+  const payload = {
+    targetProvider: "chatgpt",
+    currentStageId: "task_roadmap",
+    currentStageLabel: "Task Roadmap",
+    currentRole: "planner",
+    text: promptText
+  };
   drawerState.activeWorkflowContext = "roadmap";
   drawerState.activeRoadmapPackId = activePackId;
   drawerState.lastImprovePrompt = payload.text;
@@ -2334,17 +2341,18 @@ async function startNextTask() {
     setStatus("Create the task roadmap first.", "error");
     return;
   }
-  const nextItem = getNextEligibleRoadmapItem(pack);
+  const nextItemResponse = await desktopApi.getNextEligibleRoadmapItem({ projectId: project.id });
+  const nextItem = nextItemResponse && nextItemResponse.ok !== false ? nextItemResponse.nextItem : getNextEligibleRoadmapItem(pack);
   if (!nextItem) {
     setStatus("No eligible roadmap task found. Create a roadmap or mark dependency tasks done.", "error");
     return;
   }
-  const response = await desktopApi.startRoadmapPrompt({
-    packId: pack.id,
+  const response = await desktopApi.createTaskPromptFromRoadmapItem({
+    projectId: project.id,
     roadmapItemId: nextItem.id
   });
   if (!response || response.ok === false) {
-    throw new Error(response && response.error ? response.error : "Could not start next task.");
+    throw new Error(response && response.error ? response.error : "Could not create next task prompt.");
   }
   drawerState.selectedProjectId = project.id;
   drawerState.selectedPackId = response.pack.id;

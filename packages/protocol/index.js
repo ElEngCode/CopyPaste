@@ -492,6 +492,99 @@
     };
   }
 
+  function buildRoadmapPrompt(project = {}, activeMasterPlan = "") {
+    const projectName = asText(project.name) || "Untitled Project";
+    const projectPath = asText(project.path);
+    const masterPlan = asText(activeMasterPlan);
+    if (!masterPlan) {
+      throw new Error("Active master plan is required.");
+    }
+    return [
+      "Generate a project roadmap strictly from the applied master plan.",
+      "",
+      `Project name: ${projectName}`,
+      projectPath ? `Project path: ${projectPath}` : "",
+      "",
+      "Applied master plan:",
+      masterPlan,
+      "",
+      "Return JSON only with shape:",
+      "{\"items\":[{\"id\":\"roadmap_1\",\"order\":1,\"title\":\"Task title\",\"goal\":\"Goal\",\"why\":\"Why this exists\",\"targetFiles\":[\"path\"],\"researchNeeded\":[],\"acceptanceCriteria\":[],\"verificationCommands\":[\"npm.cmd run verify\"],\"dependsOn\":[],\"parallelGroup\":\"\"}]}",
+      "",
+      "Rules:",
+      "- no markdown fences",
+      "- deterministic order",
+      "- dependsOn must reference existing ids",
+      "- verificationCommands must be an array of strings"
+    ].filter(Boolean).join("\n");
+  }
+
+  function normalizeRoadmap(roadmap = {}) {
+    const sourceItems = Array.isArray(roadmap.items) ? roadmap.items : [];
+    return {
+      items: sourceItems.map((item, index) => ({
+        id: asText(item.id) || `roadmap_${index + 1}`,
+        order: Number.isFinite(Number(item.order)) ? Number(item.order) : index + 1,
+        title: asText(item.title),
+        goal: asText(item.goal),
+        why: asText(item.why || item.whyThisExists),
+        targetFiles: Array.isArray(item.targetFiles) ? item.targetFiles.map((v) => asText(v)).filter(Boolean) : [],
+        researchNeeded: Array.isArray(item.researchNeeded) ? item.researchNeeded.map((v) => asText(v)).filter(Boolean) : [],
+        acceptanceCriteria: Array.isArray(item.acceptanceCriteria) ? item.acceptanceCriteria.map((v) => asText(v)).filter(Boolean) : [],
+        verificationCommands: Array.isArray(item.verificationCommands) ? item.verificationCommands.map((v) => asText(v)).filter(Boolean) : [],
+        dependsOn: Array.isArray(item.dependsOn) ? item.dependsOn.map((v) => asText(v)).filter(Boolean) : [],
+        parallelGroup: asText(item.parallelGroup)
+      }))
+    };
+  }
+
+  function validateRoadmap(roadmap = {}) {
+    const normalized = normalizeRoadmap(roadmap);
+    const ids = new Set(normalized.items.map((item) => item.id));
+    for (const item of normalized.items) {
+      if (!item.title) throw new Error(`Roadmap item ${item.id} must have a non-empty title.`);
+      if (!Number.isFinite(Number(item.order))) throw new Error(`Roadmap item ${item.id} must have numeric order.`);
+      if (!Array.isArray(item.verificationCommands)) throw new Error(`Roadmap item ${item.id} must define verificationCommands array.`);
+      for (const dependencyId of item.dependsOn) {
+        if (dependencyId === item.id) throw new Error(`Roadmap item ${item.id} cannot depend on itself.`);
+        if (!ids.has(dependencyId)) throw new Error(`Roadmap item ${item.id} depends on missing id ${dependencyId}.`);
+      }
+    }
+    const adjacency = new Map(normalized.items.map((item) => [item.id, item.dependsOn]));
+    const visiting = new Set();
+    const visited = new Set();
+    function dfs(nodeId) {
+      if (visiting.has(nodeId)) throw new Error(`Roadmap has circular dependency at ${nodeId}.`);
+      if (visited.has(nodeId)) return;
+      visiting.add(nodeId);
+      for (const dep of adjacency.get(nodeId) || []) dfs(dep);
+      visiting.delete(nodeId);
+      visited.add(nodeId);
+    }
+    for (const item of normalized.items) dfs(item.id);
+    return true;
+  }
+
+  function parseRoadmapResponse(text = "") {
+    const raw = asText(text);
+    if (!raw) throw new Error("Roadmap response is empty.");
+    const candidates = [raw];
+    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced && fenced[1]) candidates.push(asText(fenced[1]));
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate);
+        const roadmap = parsed && Array.isArray(parsed.items) ? parsed : (parsed && parsed.roadmap && Array.isArray(parsed.roadmap.items) ? parsed.roadmap : null);
+        if (!roadmap) continue;
+        validateRoadmap(roadmap);
+        return normalizeRoadmap(roadmap);
+      } catch (_error) {
+        // continue
+      }
+    }
+    throw new Error("Invalid roadmap response. Expected JSON with an items array.");
+  }
+
   return {
     PROVIDERS,
     WORKFLOW_STEPS,
@@ -506,6 +599,10 @@
     createAiProjectBuilderWorkflow,
     createProjectBuilderDebate,
     buildPlanningDebatePrompt,
+    buildRoadmapPrompt,
+    parseRoadmapResponse,
+    validateRoadmap,
+    normalizeRoadmap,
     createNextDebatePrompt,
     saveDebateRound,
     advanceDebateStage,

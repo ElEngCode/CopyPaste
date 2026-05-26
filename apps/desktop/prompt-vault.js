@@ -356,6 +356,10 @@ function sanitizeTaskPrompt(prompt) {
     roadmapItemId: normalizeString(source.roadmapItemId),
     title: normalizeString(source.title) || "Task Prompt",
     content: String(source.content || source.prompt || ""),
+    order: Number.isFinite(Number(source.order)) ? Number(source.order) : 1,
+    taskFileName: normalizeString(source.taskFileName),
+    taskFilePath: normalizeWindowsPath(source.taskFilePath),
+    sourceChunkId: normalizeString(source.sourceChunkId),
     status: normalizeString(source.status) || "draft",
     activeVersionId: normalizeString(source.activeVersionId),
     createdAt: normalizeString(source.createdAt) || createTimestamp(),
@@ -413,6 +417,8 @@ function sanitizeDatabase(rawDatabase) {
       idea: String(project.idea || ""),
       masterPlan: String(project.masterPlan || ""),
       masterPlanVersions: sanitizeVersionList(project.masterPlanVersions, "master_plan"),
+      activeMasterPlanVersionId: normalizeString(project.activeMasterPlanVersionId),
+      activeRoadmapVersionId: normalizeString(project.activeRoadmapVersionId),
       activePromptPackId: normalizeString(project.activePromptPackId),
       git: {
         enabled: project.git ? project.git.enabled !== false : true,
@@ -1080,6 +1086,8 @@ function createVaultStore({ dbPath }) {
           idea: readTextIfExists(path.join(projectPath, "codex.md")),
           masterPlan: readTextIfExists(path.join(projectPath, "masterplan.md")),
           masterPlanVersions: [],
+          activeMasterPlanVersionId: "",
+          activeRoadmapVersionId: "",
           activePromptPackId: "",
           git: { enabled: true, remote: "origin", defaultBranch: "main", branchPrefix: "codex/" },
           defaults: { gitMode: DEFAULT_GIT_MODE, chunkStrategy: DEFAULT_CHUNK_STRATEGY, chunkCount: DEFAULT_CHUNK_COUNT, commitMessage: "Implement Codex execution pack" },
@@ -1138,6 +1146,8 @@ function createVaultStore({ dbPath }) {
       idea: existing ? existing.idea || "" : "",
       masterPlan: existing ? existing.masterPlan || readTextIfExists(path.join(projectPath, "masterplan.md")) : readTextIfExists(path.join(projectPath, "masterplan.md")),
       masterPlanVersions: existing ? existing.masterPlanVersions || [] : [],
+      activeMasterPlanVersionId: existing ? existing.activeMasterPlanVersionId || "" : "",
+      activeRoadmapVersionId: existing ? existing.activeRoadmapVersionId || "" : "",
       activePromptPackId: existing ? existing.activePromptPackId || "" : "",
       stage: existing ? existing.stage || "" : "",
       nextAction: existing ? existing.nextAction || "" : "",
@@ -1483,6 +1493,7 @@ function createVaultStore({ dbPath }) {
   function updateChunkContent(packId, chunkId, input) {
     const database = readDatabase();
     const pack = getPackById(database, packId);
+    const project = getProjectById(database, pack.projectId);
     const chunk = getChunkById(pack, chunkId);
     const previousPrompt = String(chunk.prompt || "");
 
@@ -1509,6 +1520,15 @@ function createVaultStore({ dbPath }) {
     chunk.prompt = nextPrompt;
     if (nextScope) {
       chunk.scope = nextScope;
+    }
+    const taskPrompt = (database.taskPrompts || []).find((item) => item.sourceChunkId === chunk.id && item.projectId === project.id);
+    if (taskPrompt) {
+      taskPrompt.title = chunk.title;
+      taskPrompt.content = chunk.prompt;
+      taskPrompt.updatedAt = createTimestamp();
+      const taskFile = writeTaskPromptFile(project.path, taskPrompt);
+      taskPrompt.taskFileName = taskFile.taskFileName;
+      taskPrompt.taskFilePath = taskFile.taskFilePath;
     }
     pack.updatedAt = createTimestamp();
 
@@ -1553,6 +1573,7 @@ function createVaultStore({ dbPath }) {
   function applyChunkVersion(packId, chunkId, versionId) {
     const database = readDatabase();
     const pack = getPackById(database, packId);
+    const project = getProjectById(database, pack.projectId);
     const chunk = getChunkById(pack, chunkId);
     const versions = Array.isArray(chunk.versions) ? chunk.versions : [];
     const version = versions.find((item) => item.id === versionId);
@@ -1563,6 +1584,14 @@ function createVaultStore({ dbPath }) {
 
     chunk.prompt = String(version.responseText || chunk.prompt || "");
     version.appliedAt = createTimestamp();
+    const taskPrompt = (database.taskPrompts || []).find((item) => item.sourceChunkId === chunk.id && item.projectId === project.id);
+    if (taskPrompt) {
+      taskPrompt.content = chunk.prompt;
+      taskPrompt.updatedAt = createTimestamp();
+      const taskFile = writeTaskPromptFile(project.path, taskPrompt);
+      taskPrompt.taskFileName = taskFile.taskFileName;
+      taskPrompt.taskFilePath = taskFile.taskFilePath;
+    }
     pack.updatedAt = createTimestamp();
 
     return {
@@ -1846,6 +1875,7 @@ function createVaultStore({ dbPath }) {
     project.masterPlan = String(version.responseText || version.content || "");
     version.appliedAt = createTimestamp();
     version.status = "applied";
+    project.activeMasterPlanVersionId = version.id;
     (project.masterPlanVersions || []).forEach((item) => {
       if (item.id !== version.id && String(item.status || "") === "applied") {
         item.status = "archived";
@@ -1875,7 +1905,41 @@ function createVaultStore({ dbPath }) {
     return { version, project, state: writeDatabase(database) };
   }
 
+  function archiveMasterPlanVersion(projectId, versionId) {
+    const database = readDatabase();
+    const project = getProjectById(database, projectId);
+    const version = (project.masterPlanVersions || []).find((item) => item.id === versionId);
+    if (!version) throw new Error("Master plan version not found.");
+    version.status = "archived";
+    version.archivedAt = createTimestamp();
+    if (project.activeMasterPlanVersionId === version.id) {
+      project.activeMasterPlanVersionId = "";
+    }
+    database.masterPlanVersions = (database.masterPlanVersions || []).map((item) => item.id === version.id
+      ? sanitizeMasterPlanVersion({
+        ...item,
+        status: "archived",
+        archivedAt: version.archivedAt,
+        updatedAt: createTimestamp()
+      })
+      : item);
+    return { version, project, state: writeDatabase(database) };
+  }
+
+  function listMasterPlanVersions(projectId) {
+    const database = readDatabase();
+    const project = getProjectById(database, projectId);
+    const versions = (project.masterPlanVersions || [])
+      .slice()
+      .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+    return { versions, project, state: writeDatabase(database) };
+  }
+
   function parseRoadmapResponse(responseText) {
+    if (globalThis.NextStepAiProjectBuilderProtocol
+      && typeof globalThis.NextStepAiProjectBuilderProtocol.parseRoadmapResponse === "function") {
+      return globalThis.NextStepAiProjectBuilderProtocol.parseRoadmapResponse(responseText);
+    }
     const raw = String(responseText || "").trim();
     if (!raw) return { items: [] };
     try {
@@ -1938,6 +2002,20 @@ function createVaultStore({ dbPath }) {
     return { version, pack, state: writeDatabase(database) };
   }
 
+  function prepareRoadmapGeneration(projectId) {
+    const database = readDatabase();
+    const project = getProjectById(database, projectId);
+    const activeMasterPlan = String(project.masterPlan || "").trim();
+    if (!activeMasterPlan) {
+      throw new Error("Applied master plan is required before roadmap generation.");
+    }
+    return {
+      project,
+      activeMasterPlan,
+      state: writeDatabase(database)
+    };
+  }
+
   function applyRoadmapVersion(packId, versionId) {
     const database = readDatabase();
     const pack = getPackById(database, packId);
@@ -1946,9 +2024,182 @@ function createVaultStore({ dbPath }) {
     if (!version) throw new Error("Roadmap version not found.");
     pack.roadmap = parseRoadmapResponse(version.responseText);
     version.appliedAt = createTimestamp();
+    version.status = "applied";
     pack.updatedAt = createTimestamp();
+    project.activeRoadmapVersionId = version.id;
     writeRoadmapFile(project, pack.roadmap);
     return { version, pack, project, state: writeDatabase(database) };
+  }
+
+  function addRoadmapVersionForProject(projectId, input) {
+    const database = readDatabase();
+    const project = getProjectById(database, projectId);
+    const pack = getActivePackForProject(database, project) || createEmptyPromptPackForProject(database, project);
+    const response = addRoadmapVersion(pack.id, input);
+    return {
+      ...response,
+      project,
+      packId: pack.id
+    };
+  }
+
+  function applyRoadmapVersionForProject(projectId, versionId) {
+    const database = readDatabase();
+    const project = getProjectById(database, projectId);
+    const pack = getActivePackForProject(database, project);
+    if (!pack) throw new Error("Active roadmap pack not found.");
+    return applyRoadmapVersion(pack.id, versionId);
+  }
+
+  function listRoadmapVersions(projectId) {
+    const database = readDatabase();
+    const project = getProjectById(database, projectId);
+    const pack = getActivePackForProject(database, project);
+    const versions = pack && Array.isArray(pack.roadmapVersions) ? pack.roadmapVersions.slice() : [];
+    versions.sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+    return { versions, project, pack, state: writeDatabase(database) };
+  }
+
+  function archiveRoadmapVersion(projectId, versionId) {
+    const database = readDatabase();
+    const project = getProjectById(database, projectId);
+    const pack = getActivePackForProject(database, project);
+    if (!pack) throw new Error("Active roadmap pack not found.");
+    const version = (pack.roadmapVersions || []).find((item) => item.id === versionId);
+    if (!version) throw new Error("Roadmap version not found.");
+    version.status = "archived";
+    version.archivedAt = createTimestamp();
+    if (project.activeRoadmapVersionId === version.id) {
+      project.activeRoadmapVersionId = "";
+    }
+    return { version, project, pack, state: writeDatabase(database) };
+  }
+
+  function getRoadmapItemEligibility(projectId) {
+    const database = readDatabase();
+    const project = getProjectById(database, projectId);
+    const pack = getActivePackForProject(database, project);
+    if (!pack) return { items: [], project, pack: null, state: writeDatabase(database) };
+    const eligibility = getRoadmapEligibility(pack.id);
+    const items = (eligibility.items || []).map((item) => {
+      const taskChunk = (pack.chunks || []).find((chunk) => chunk.roadmapItemId === item.id);
+      let status = "ready";
+      if (taskChunk && taskChunk.status === "done") status = "done";
+      else if (taskChunk && taskChunk.status === "in_progress") status = "in_progress";
+      else if (!item.eligible) status = "blocked";
+      return { ...item, status };
+    });
+    return { items, project, pack, state: writeDatabase(database) };
+  }
+
+  function getNextEligibleRoadmapItem(projectId) {
+    const result = getRoadmapItemEligibility(projectId);
+    const nextItem = (result.items || [])
+      .filter((item) => item.status === "ready")
+      .sort((left, right) => Number(left.order || 0) - Number(right.order || 0))[0] || null;
+    return { ...result, nextItem };
+  }
+
+  function markRoadmapItemInProgress(projectId, roadmapItemId) {
+    const database = readDatabase();
+    const project = getProjectById(database, projectId);
+    const pack = getActivePackForProject(database, project);
+    if (!pack) throw new Error("Active roadmap pack not found.");
+    const existing = (pack.chunks || []).find((chunk) => chunk.roadmapItemId === roadmapItemId);
+    if (!existing) {
+      const started = startRoadmapPrompt(pack.id, roadmapItemId);
+      return { project, pack: started.pack, chunk: started.chunk, state: started.state };
+    }
+    const updated = updateChunkStatus(pack.id, existing.id, "in_progress");
+    return { project, pack: getPackById(readDatabase(), pack.id), chunk: updated.chunk, state: updated.state };
+  }
+
+  function markRoadmapItemDone(projectId, roadmapItemId) {
+    const database = readDatabase();
+    const project = getProjectById(database, projectId);
+    const pack = getActivePackForProject(database, project);
+    if (!pack) throw new Error("Active roadmap pack not found.");
+    const existing = (pack.chunks || []).find((chunk) => chunk.roadmapItemId === roadmapItemId);
+    if (!existing) throw new Error("Roadmap item has no started task.");
+    const updated = updateChunkStatus(pack.id, existing.id, "done");
+    return { project, pack: getPackById(readDatabase(), pack.id), chunk: updated.chunk, state: updated.state };
+  }
+
+  function createTaskPromptFromRoadmapItem(projectId, roadmapItemId) {
+    const database = readDatabase();
+    const project = getProjectById(database, projectId);
+    const pack = getActivePackForProject(database, project);
+    if (!pack) throw new Error("Active roadmap pack not found.");
+    const eligibility = getRoadmapEligibility(pack.id);
+    const item = (eligibility.items || []).find((entry) => entry.id === roadmapItemId);
+    if (!item) throw new Error("Roadmap item not found.");
+    if (!item.eligible) throw new Error("Roadmap item is not ready.");
+    const existingTaskPrompt = (database.taskPrompts || []).find((prompt) => prompt.projectId === project.id && prompt.roadmapItemId === roadmapItemId);
+    if (existingTaskPrompt) throw new Error("Task prompt already exists for this roadmap item.");
+    const created = startRoadmapPrompt(pack.id, roadmapItemId);
+    const chunk = created.chunk;
+    const taskPrompt = sanitizeTaskPrompt({
+      id: createId("task_prompt"),
+      projectId: project.id,
+      roadmapItemId,
+      title: chunk.title,
+      content: chunk.prompt,
+      status: "draft",
+      taskFileName: `task-${String(chunk.order).padStart(3, "0")}-${slugify(chunk.title)}.md`,
+      order: chunk.order,
+      sourceChunkId: chunk.id,
+      createdAt: createTimestamp(),
+      updatedAt: createTimestamp()
+    });
+    const version = sanitizeTaskPromptVersion({
+      id: createId("task_prompt_version"),
+      taskPromptId: taskPrompt.id,
+      source: "generated",
+      content: taskPrompt.content,
+      status: "applied",
+      createdAt: createTimestamp(),
+      updatedAt: createTimestamp(),
+      appliedAt: createTimestamp()
+    });
+    taskPrompt.activeVersionId = version.id;
+    database.taskPrompts.unshift(taskPrompt);
+    database.taskPromptVersions.unshift(version);
+    const taskFile = writeTaskPromptFile(project.path, taskPrompt);
+    taskPrompt.taskFileName = taskFile.taskFileName;
+    taskPrompt.taskFilePath = taskFile.taskFilePath;
+    return {
+      taskPrompt,
+      version,
+      project,
+      pack: created.pack,
+      chunk,
+      state: writeDatabase(database)
+    };
+  }
+
+  function updateTaskPromptContent(taskPromptId, input) {
+    const database = readDatabase();
+    const taskPrompt = (database.taskPrompts || []).find((item) => item.id === taskPromptId);
+    if (!taskPrompt) throw new Error("Task prompt not found.");
+    const previousContent = String(taskPrompt.content || "");
+    const nextContent = String(input && input.content || "");
+    if (previousContent !== nextContent) {
+      database.taskPromptVersions.unshift(sanitizeTaskPromptVersion({
+        id: createId("task_prompt_version"),
+        taskPromptId: taskPrompt.id,
+        source: "manual_edit_snapshot",
+        content: previousContent,
+        status: "snapshot",
+        createdAt: createTimestamp(),
+        updatedAt: createTimestamp()
+      }));
+    }
+    taskPrompt.content = nextContent;
+    taskPrompt.updatedAt = createTimestamp();
+    const taskFile = writeTaskPromptFile(getProjectById(database, taskPrompt.projectId).path, taskPrompt);
+    taskPrompt.taskFileName = taskFile.taskFileName;
+    taskPrompt.taskFilePath = taskFile.taskFilePath;
+    return { taskPrompt, state: writeDatabase(database) };
   }
 
   function getRoadmapEligibility(packId) {
@@ -2030,6 +2281,20 @@ function createVaultStore({ dbPath }) {
       runHistory: [],
       createdAt: createTimestamp()
     });
+  }
+
+  function getTaskFileName(taskPrompt) {
+    const stableNumber = Number(taskPrompt.order || 0) || 1;
+    return taskPrompt.taskFileName || `task-${String(stableNumber).padStart(3, "0")}-${slugify(taskPrompt.title || "task")}.md`;
+  }
+
+  function writeTaskPromptFile(projectPath, taskPrompt) {
+    ensureProjectScaffold(projectPath);
+    const projectFiles = getProjectPaths(projectPath);
+    const taskFileName = getTaskFileName(taskPrompt);
+    const taskFilePath = path.join(projectFiles.tasksDir, taskFileName);
+    fs.writeFileSync(taskFilePath, String(taskPrompt.content || ""), "utf8");
+    return { taskFileName, taskFilePath };
   }
 
   function startRoadmapPrompt(packId, roadmapItemId) {
@@ -2206,10 +2471,23 @@ function createVaultStore({ dbPath }) {
     addMasterPlanVersion,
     createMasterPlanVersionFromDebate,
     applyMasterPlanVersion,
+    archiveMasterPlanVersion,
+    listMasterPlanVersions,
+    prepareRoadmapGeneration,
     addRoadmapVersion,
+    addRoadmapVersionForProject,
     applyRoadmapVersion,
+    applyRoadmapVersionForProject,
+    listRoadmapVersions,
+    archiveRoadmapVersion,
     getRoadmapEligibility,
+    getRoadmapItemEligibility,
+    getNextEligibleRoadmapItem,
+    markRoadmapItemInProgress,
+    markRoadmapItemDone,
     startRoadmapPrompt,
+    createTaskPromptFromRoadmapItem,
+    updateTaskPromptContent,
     approvePrompt,
     copyPromptToCodex,
     copyRoadmapHandoffToCodex,
