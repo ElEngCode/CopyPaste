@@ -1,5 +1,12 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-27 Staged Debate Runtime
+
+- The legacy master-plan pingpong chain (automatic GPT->Claude->GPT within one response callback) is removed.
+- Planning debate runtime now executes one stage per user action and persists each round before the next stage can be sent.
+- Renderer no longer issues automatic cross-provider follow-up sends during `renderResponse`; stage advancement remains human-gated.
+- This aligns runtime behavior with the official planning debate protocol and persistent workflow store.
+
 ## 2026-05-27 Official Planning Debate Contract
 
 - Planning debate uses a strict protocol surface distinct from later post-plan prompt-forge stages.

@@ -14,7 +14,6 @@ const {
   getVisibleProjectBrowserNodes,
   getTaskImprovePayload,
   getMasterPlanImprovePayload,
-  getMasterPlanPingPongPayload,
   getTaskRoadmapPayload,
   getNextEligibleRoadmapItem,
   getPlanPrimaryAction,
@@ -228,40 +227,6 @@ assert.equal(masterPlanPayload.currentStageId, "master_plan");
 assert.equal(masterPlanPayload.targetProvider, "chatgpt");
 assert.match(masterPlanPayload.text, /a perfect spinning ball/);
 assert.match(masterPlanPayload.text, /Return a complete master plan/);
-
-const masterPlanDraftPayload = getMasterPlanPingPongPayload({
-  stage: "gpt_draft",
-  projectName: "Spinning Ball",
-  projectIdea: "a perfect spinning ball",
-  masterPlan: "# Master Plan\n\n"
-});
-assert.equal(masterPlanDraftPayload.currentStageId, "master_plan_gpt_draft");
-assert.equal(masterPlanDraftPayload.targetProvider, "chatgpt");
-assert.match(masterPlanDraftPayload.text, /Project idea:/);
-assert.match(masterPlanDraftPayload.text, /a perfect spinning ball/);
-
-const masterPlanCritiquePayload = getMasterPlanPingPongPayload({
-  stage: "claude_critique",
-  projectName: "Spinning Ball",
-  projectIdea: "a perfect spinning ball",
-  draft: "# Master Plan\n\nBuild a ball."
-});
-assert.equal(masterPlanCritiquePayload.currentStageId, "master_plan_claude_critique");
-assert.equal(masterPlanCritiquePayload.targetProvider, "claude");
-assert.match(masterPlanCritiquePayload.text, /find the flaws/i);
-assert.match(masterPlanCritiquePayload.text, /Build a ball/);
-
-const masterPlanRevisionPayload = getMasterPlanPingPongPayload({
-  stage: "gpt_revision",
-  projectName: "Spinning Ball",
-  projectIdea: "a perfect spinning ball",
-  draft: "# Master Plan\n\nBuild a ball.",
-  critique: "Missing verification."
-});
-assert.equal(masterPlanRevisionPayload.currentStageId, "master_plan_gpt_revision");
-assert.equal(masterPlanRevisionPayload.targetProvider, "chatgpt");
-assert.match(masterPlanRevisionPayload.text, /Claude critique/);
-assert.match(masterPlanRevisionPayload.text, /Missing verification/);
 
 const roadmapPayload = getTaskRoadmapPayload({
   projectName: "Spinning Ball",

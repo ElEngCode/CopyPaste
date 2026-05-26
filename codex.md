@@ -1,5 +1,14 @@
 # Codex Progress
 
+## 2026-05-27 Task 007 Replace PingPong With Staged Debate
+
+- Removed hardcoded `master_plan_pingpong` runtime flow from renderer.
+- Removed transient pingpong state and helper payload builder tied to GPT->Claude->GPT auto-chain.
+- `improveMasterPlan()` now sends exactly one current planning stage via the persisted workflow path (`triggerWorkflowStep()`), human-gated.
+- `renderResponse()` no longer auto-dispatches a follow-up provider in the same callback.
+- Debate progression now advances one stage only after each saved response and explicit user-triggered next send.
+- Updated controller UI tests to remove pingpong-specific payload expectations.
+
 ## 2026-05-27 Task 006 Official Planning Debate Prompts
 
 - Added official planning-stage helper APIs in protocol:

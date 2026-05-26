@@ -126,7 +126,6 @@ const drawerState = {
   activeRoadmapPackId: "",
   activeDebateWorkflowId: "",
   pendingDebatePrompt: null,
-  masterPlanPingPong: null,
   showAllProjects: false
 };
 const projectDraftState = {
@@ -801,108 +800,6 @@ function getMasterPlanImprovePayload(input = {}) {
   };
 }
 
-function getMasterPlanPingPongPayload(input = {}) {
-  const stage = String(input.stage || "gpt_draft");
-  const projectName = String(input.projectName || "Untitled Project").trim() || "Untitled Project";
-  const projectPath = String(input.projectPath || "").trim();
-  const projectIdea = String(input.projectIdea || "").trim();
-  const masterPlan = String(input.masterPlan || "").trim();
-  const draft = String(input.draft || "").trim();
-  const critique = String(input.critique || "").trim();
-  const hasExistingPlan = !isEmptyMasterPlanText(masterPlan);
-
-  if (stage === "claude_critique") {
-    return {
-      targetProvider: "claude",
-      currentStageId: "master_plan_claude_critique",
-      currentStageLabel: "Master Plan Critique",
-      currentRole: "critic",
-      text: [
-        "Review this master plan like a skeptical senior engineer and product planner.",
-        "Find the flaws, missing assumptions, weak sequencing, missing tests, and hidden risks.",
-        "",
-        `Project name: ${projectName}`,
-        projectPath ? `Project path: ${projectPath}` : "",
-        "",
-        "Project idea:",
-        projectIdea || "(No project idea provided.)",
-        "",
-        "Master plan draft from ChatGPT:",
-        draft || "(No draft provided.)",
-        "",
-        "Return a concise critique in Markdown with:",
-        "- blocking flaws",
-        "- risky assumptions",
-        "- missing tasks or architecture pieces",
-        "- concrete changes ChatGPT must make",
-        "",
-        "Do not rewrite the full plan. Return only the critique."
-      ].filter((line) => line !== "").join("\n")
-    };
-  }
-
-  if (stage === "gpt_revision") {
-    return {
-      targetProvider: "chatgpt",
-      currentStageId: "master_plan_gpt_revision",
-      currentStageLabel: "Master Plan Revision",
-      currentRole: "planner",
-      text: [
-        "Revise the master plan using Claude's critique.",
-        "",
-        `Project name: ${projectName}`,
-        projectPath ? `Project path: ${projectPath}` : "",
-        "",
-        "Project idea:",
-        projectIdea || "(No project idea provided.)",
-        "",
-        "Original ChatGPT draft:",
-        draft || "(No draft provided.)",
-        "",
-        "Claude critique:",
-        critique || "(No critique provided.)",
-        "",
-        "Return the final master plan in Markdown with:",
-        "- clear goal and success criteria",
-        "- project architecture and major parts",
-        "- task roadmap in execution order",
-        "- testing and verification plan",
-        "- risks, assumptions, and next actions",
-        "",
-        "Do not include meta commentary. Return only the final master plan."
-      ].filter((line) => line !== "").join("\n")
-    };
-  }
-
-  return {
-    targetProvider: "chatgpt",
-    currentStageId: "master_plan_gpt_draft",
-    currentStageLabel: "Master Plan Draft",
-    currentRole: "planner",
-    text: [
-      hasExistingPlan ? "Improve this existing master plan into a practical execution plan." : "Create a practical master plan for this project.",
-      "",
-      `Project name: ${projectName}`,
-      projectPath ? `Project path: ${projectPath}` : "",
-      "",
-      "Project idea:",
-      projectIdea || "(No project idea provided.)",
-      "",
-      "Existing master plan:",
-      hasExistingPlan ? masterPlan : "(No useful master plan yet.)",
-      "",
-      "Return a complete master plan in Markdown with:",
-      "- clear goal and success criteria",
-      "- project architecture and major parts",
-      "- task roadmap in execution order",
-      "- testing and verification plan",
-      "- risks, assumptions, and next actions",
-      "",
-      "Do not return commentary about this request. Return only the master plan draft."
-    ].filter((line) => line !== "").join("\n")
-  };
-}
-
 function getTaskRoadmapPayload(input = {}) {
   const projectName = String(input.projectName || "Untitled Project").trim() || "Untitled Project";
   const projectPath = String(input.projectPath || "").trim();
@@ -1459,90 +1356,6 @@ function saveFinalText() {
 }
 
 async function renderResponse(text) {
-  if (drawerState.activeWorkflowContext === "master_plan_pingpong") {
-    const normalizedText = String(text || "").trim();
-    const flow = drawerState.masterPlanPingPong || {};
-    if (!normalizedText) {
-      drawerState.activeWorkflowContext = "debate_plan";
-      drawerState.masterPlanPingPong = null;
-      setBusy(false);
-      setStatus("AI returned an empty master plan response.", "error");
-      return;
-    }
-
-    if (flow.stage === "gpt_draft") {
-      drawerState.masterPlanPingPong = {
-        ...flow,
-        stage: "claude_critique",
-        draft: normalizedText
-      };
-      const payload = getMasterPlanPingPongPayload({
-        ...drawerState.masterPlanPingPong,
-        stage: "claude_critique"
-      });
-      drawerState.lastImprovePrompt = payload.text;
-      setStatus("ChatGPT draft received. Sending it to Claude to find flaws.", "busy");
-      const response = await desktopApi.sendWorkflow(payload);
-      if (!response || response.ok === false) {
-        drawerState.activeWorkflowContext = "debate_plan";
-        drawerState.masterPlanPingPong = null;
-        setBusy(false);
-        throw new Error(response && response.error ? response.error : "Could not send master plan draft to Claude.");
-      }
-      return;
-    }
-
-    if (flow.stage === "claude_critique") {
-      drawerState.masterPlanPingPong = {
-        ...flow,
-        stage: "gpt_revision",
-        critique: normalizedText
-      };
-      const payload = getMasterPlanPingPongPayload({
-        ...drawerState.masterPlanPingPong,
-        stage: "gpt_revision"
-      });
-      drawerState.lastImprovePrompt = payload.text;
-      setStatus("Claude critique received. Sending revision request back to ChatGPT.", "busy");
-      const response = await desktopApi.sendWorkflow(payload);
-      if (!response || response.ok === false) {
-        drawerState.activeWorkflowContext = "debate_plan";
-        drawerState.masterPlanPingPong = null;
-        setBusy(false);
-        throw new Error(response && response.error ? response.error : "Could not send master plan revision to ChatGPT.");
-      }
-      return;
-    }
-
-    if (elements.currentText) elements.currentText.value = normalizedText;
-    updateWordCount();
-    if (drawerState.selectedProjectId) {
-      const response = await desktopApi.addMasterPlanVersion({
-        projectId: drawerState.selectedProjectId,
-        source: "ai_master_plan_pingpong",
-        promptSnapshot: drawerState.lastImprovePrompt,
-        responseText: normalizedText
-      });
-      if (response && response.ok !== false) {
-        const applyResponse = await desktopApi.applyMasterPlanVersion({
-          projectId: drawerState.selectedProjectId,
-          versionId: response.version.id
-        });
-        if (applyResponse && applyResponse.ok !== false) {
-          renderVaultState(applyResponse.state);
-        } else {
-          renderVaultState(response.state);
-        }
-      }
-    }
-    drawerState.activeWorkflowContext = "debate_plan";
-    drawerState.masterPlanPingPong = null;
-    drawerState.lastImprovePrompt = "";
-    setBusy(false);
-    setStatus("Master plan finalized after ChatGPT -> Claude critique -> ChatGPT revision.", "success");
-    return;
-  }
-
   if (drawerState.activeWorkflowContext === "master_plan") {
     const normalizedText = String(text || "").trim();
     if (normalizedText) {
@@ -2422,29 +2235,9 @@ async function improveMasterPlan() {
   renderVaultState(saved.state);
   if (elements.projectSelect) elements.projectSelect.value = saved.project.id;
 
-  const flow = {
-    stage: "gpt_draft",
-    projectId: saved.project.id,
-    projectName: elements.projectName.value,
-    projectPath: elements.projectPath.value,
-    projectIdea: idea,
-    masterPlan: currentPlan,
-    draft: "",
-    critique: ""
-  };
-  const payload = getMasterPlanPingPongPayload(flow);
-  drawerState.activeWorkflowContext = "master_plan_pingpong";
-  drawerState.masterPlanPingPong = flow;
-  drawerState.lastImprovePrompt = payload.text;
-  setBusy(true);
-  setStatus("Sending project idea to ChatGPT for a master plan draft. Claude critique follows automatically.", "busy");
-  const response = await desktopApi.sendWorkflow(payload);
-  if (!response || response.ok === false) {
-    drawerState.activeWorkflowContext = "debate_plan";
-    drawerState.masterPlanPingPong = null;
-    setBusy(false);
-    throw new Error(response && response.error ? response.error : "Could not send master plan request to AI.");
-  }
+  drawerState.activeWorkflowContext = "debate_plan";
+  setStatus("Sending current planning stage. Use Continue current debate for each next stage.", "busy");
+  await triggerWorkflowStep();
 }
 
 async function createTaskRoadmap() {
@@ -3022,7 +2815,6 @@ function installEventListeners() {
   desktopApi.onResponse((text) => {
     renderResponse(text).catch((error) => {
       drawerState.activeWorkflowContext = "debate_plan";
-      drawerState.masterPlanPingPong = null;
       drawerState.activeRoadmapPackId = "";
       setBusy(false);
       setStatus(error.message || "Could not process AI response.", "error");
@@ -3068,7 +2860,6 @@ if (typeof module !== "undefined") {
     buildProjectBrowserTree,
     getTaskImprovePayload,
     getMasterPlanImprovePayload,
-    getMasterPlanPingPongPayload,
     getTaskRoadmapPayload,
     getNextEligibleRoadmapItem,
     getPlanPrimaryAction,
