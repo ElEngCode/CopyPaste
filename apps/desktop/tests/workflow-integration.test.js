@@ -3,6 +3,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const protocol = require("../../../packages/protocol");
+globalThis.NextStepAiProjectBuilderProtocol = protocol;
+const { buildProjectBrowserTree, buildProjectWorkflowView, getPlanPrimaryAction } = require("../renderer");
 const { createVaultStore } = require("../prompt-vault");
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "next-step-workflow-integration-"));
@@ -76,11 +78,32 @@ try {
   store.applyRoadmapVersion(activePackId, roadmapVersion.id);
   const createdTask = store.getOrCreateTaskPromptFromRoadmapItem(projectId, "roadmap_1");
   assert.equal(createdTask.created, true);
+  assert.doesNotThrow(() => store.getOrCreateTaskPromptFromRoadmapItem(projectId, "roadmap_1"));
   const reopenedTask = store.getOrCreateTaskPromptFromRoadmapItem(projectId, "roadmap_1");
   assert.equal(reopenedTask.created, false);
   assert.equal(reopenedTask.taskPrompt.id, createdTask.taskPrompt.id);
   assert.equal(reopenedTask.chunk.id, createdTask.chunk.id);
+  assert.equal(reopenedTask.taskPrompt.roadmapItemId, "roadmap_1");
   const taskPrompt = createdTask.taskPrompt;
+  const stateAfterReopen = store.getState();
+  const treeAfterReopen = buildProjectBrowserTree(stateAfterReopen);
+  const projectNode = treeAfterReopen.find((node) => node.id === projectId);
+  assert.ok(projectNode);
+  assert.ok(projectNode.tasks.some((task) => task.taskPromptId === taskPrompt.id));
+  assert.ok(projectNode.tasks.some((task) => /Task 1/.test(task.title)));
+  const workflowAfterReopen = buildProjectWorkflowView(stateAfterReopen, {
+    selectedProjectId: projectId,
+    selectedTaskPromptId: taskPrompt.id
+  });
+  const workflowProject = workflowAfterReopen.projects.find((project) => project.id === projectId);
+  assert.ok(workflowProject);
+  assert.equal(workflowProject.tasks.some((task) => task.selected), true);
+  const actionAfterReopen = getPlanPrimaryAction({
+    project: stateAfterReopen.projects.find((project) => project.id === projectId),
+    pack: stateAfterReopen.promptPacks.find((pack) => pack.id === activePackId),
+    taskPrompts: stateAfterReopen.taskPrompts.filter((prompt) => prompt.projectId === projectId)
+  });
+  assert.ok(actionAfterReopen.handler === "openTaskFromPrimary" || actionAfterReopen.handler === "startNextTask");
   const improved = store.saveTaskImproveResponse(taskPrompt.id, "Improved task prompt content.").version;
   store.applyTaskPromptVersion(taskPrompt.id, improved.id);
   store.approveTaskPrompt(taskPrompt.id);

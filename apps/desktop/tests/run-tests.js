@@ -9,7 +9,8 @@ const tests = [
   "electron-security.test.js",
   "ws-session.test.js",
   "controller-ui.test.js",
-  "workflow-integration.test.js"
+  "workflow-integration.test.js",
+  "ui-workflow-regression.test.js"
 ];
 
 for (const file of tests) {

@@ -1,5 +1,27 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-28 Regression Test X-Ray (Real Workflow Guards)
+
+- Added new desktop regression test module:
+  - `apps/desktop/tests/ui-workflow-regression.test.js`
+- Test architecture intent:
+  - validates workflow projection from persisted state (`renderer.buildProjectWorkflowView`, `renderer.buildProjectBrowserTree`)
+  - validates roadmap-to-task idempotent flow from persisted vault state (`prompt-vault.createVaultStore`)
+  - validates plan preview non-stale behavior using real master-plan content rendering contract (`renderer.renderProjectPlanHtml`)
+  - validates navigation behavior contract for roadmap item selection by checking handler block behavior branches in `apps/desktop/renderer.js`
+  - validates source hygiene by scanning active desktop source for machine-local hardcoded path literals.
+- Existing test modules extended:
+  - `apps/desktop/tests/controller-ui.test.js` now includes direct model-to-preview guard.
+  - `apps/desktop/tests/prompt-vault.test.js` now enforces duplicate-safe task retrieval and strict taskPrompt/chunk status synchronization.
+  - `apps/desktop/tests/workflow-integration.test.js` now enforces duplicate-safe full flow reopening and browser-visible task projection.
+- Test orchestration:
+  - `apps/desktop/tests/run-tests.js` now executes `ui-workflow-regression.test.js` in desktop test runs.
+- Affected production source under regression scan:
+  - `apps/desktop/renderer.js`
+  - `apps/desktop/index.html`
+  - `apps/desktop/main.js`
+  - `apps/desktop/prompt-vault.js`
+
 ## 2026-05-27 Desktop Project Browser + Workspace X-Ray (Workflow UI Rebuild)
 
 - Core renderer architecture now uses normalized workflow projection:

@@ -256,6 +256,8 @@ assert.equal(workflowModel.projects[0].tasks.length, 1);
 assert.equal(workflowModel.projects[0].tasks[0].title, "Audit workspace");
 assert.equal(workflowModel.projects[0].tasks[0].status, "approved");
 assert.equal(workflowModel.projects[0].tasks[0].selected, true);
+const workflowPreviewHtml = renderProjectPlanHtml(workflowModel.projects[0].project.masterPlan || "");
+assert.doesNotMatch(workflowPreviewHtml, /No plan yet/i);
 
 const copiedStatusWorkflow = buildProjectWorkflowView({
   projects: [{

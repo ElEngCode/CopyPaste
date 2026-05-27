@@ -493,10 +493,12 @@ try {
 
   const taskPromptCreated = store.getOrCreateTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_2");
   assert.equal(taskPromptCreated.created, true);
+  assert.doesNotThrow(() => store.getOrCreateTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_2"));
   const taskPromptExisting = store.getOrCreateTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_2");
   assert.equal(taskPromptExisting.created, false);
   assert.equal(taskPromptExisting.taskPrompt.id, taskPromptCreated.taskPrompt.id);
   assert.equal(taskPromptExisting.chunk.id, taskPromptCreated.chunk.id);
+  assert.equal(taskPromptExisting.taskPrompt.roadmapItemId, taskPromptCreated.taskPrompt.roadmapItemId);
   const taskPromptFromCreate = store.createTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_2");
   assert.equal(taskPromptFromCreate.created, false);
   assert.equal(taskPromptFromCreate.taskPrompt.id, taskPromptCreated.taskPrompt.id);
@@ -546,17 +548,21 @@ try {
   const approvedTaskPrompt = store.approveTaskPrompt(taskPromptCreated.taskPrompt.id);
   assert.equal(approvedTaskPrompt.taskPrompt.status, "approved");
   const afterApproveState = store.getState();
+  const afterApprovePrompt = afterApproveState.taskPrompts.find((entry) => entry.id === taskPromptCreated.taskPrompt.id);
   const afterApproveChunk = afterApproveState.promptPacks
     .find((pack) => pack.id === taskPromptCreated.pack.id)
     .chunks.find((chunk) => chunk.id === taskPromptCreated.taskPrompt.sourceChunkId);
+  assert.equal(afterApprovePrompt.status, "approved");
   assert.equal(afterApproveChunk.status, "approved");
   const copiedTaskPrompt = store.copyCodexHandoff(taskPromptCreated.taskPrompt.id);
   assert.equal(copiedTaskPrompt.taskPrompt.status, "copied");
   assert.match(copiedTaskPrompt.handoffText, /Full task prompt/);
   const afterCopyState = store.getState();
+  const afterCopyPrompt = afterCopyState.taskPrompts.find((entry) => entry.id === taskPromptCreated.taskPrompt.id);
   const afterCopyChunk = afterCopyState.promptPacks
     .find((pack) => pack.id === taskPromptCreated.pack.id)
     .chunks.find((chunk) => chunk.id === taskPromptCreated.taskPrompt.sourceChunkId);
+  assert.equal(afterCopyPrompt.status, "copied");
   assert.equal(afterCopyChunk.status, "copied");
   assert.ok(afterCopyChunk.copiedAt);
   assert.throws(
@@ -571,9 +577,11 @@ try {
   });
   assert.equal(completedTaskPrompt.taskPrompt.status, "done");
   const afterDoneState = store.getState();
+  const afterDonePrompt = afterDoneState.taskPrompts.find((entry) => entry.id === taskPromptCreated.taskPrompt.id);
   const afterDoneChunk = afterDoneState.promptPacks
     .find((pack) => pack.id === taskPromptCreated.pack.id)
     .chunks.find((chunk) => chunk.id === taskPromptCreated.taskPrompt.sourceChunkId);
+  assert.equal(afterDonePrompt.status, "done");
   assert.equal(afterDoneChunk.status, "done");
   const storedRuns = afterDoneState.taskRuns.filter((run) => run.taskPromptId === taskPromptCreated.taskPrompt.id);
   assert.equal(storedRuns.length >= 1, true);

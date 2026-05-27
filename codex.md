@@ -1,5 +1,35 @@
 # Codex Progress
 
+## 2026-05-28 Real Workflow Regression Test Coverage (`codex/add-real-workflow-regression-tests`)
+
+- Added dedicated regression suite: `apps/desktop/tests/ui-workflow-regression.test.js`.
+- Coverage now explicitly validates real workflow behavior and state transitions:
+  - applied master plan + roadmap + linked taskPrompt/chunk view model projection
+  - preview guard (master plan content must not render `No plan yet`)
+  - idempotent roadmap task open/create path (no duplicate-create throw path on repeat action)
+  - browser tree reflects real task prompt nodes (`Task 001`) and selected task state
+  - roadmap item selection handler contains both useful branches (`task` open path and `roadmap_item` detail path)
+  - browser/navigation regression guard against `Stage/Next` dominant UI copy
+  - static source check for hardcoded local path `F:\Projects\CopyPaste` in active desktop source files.
+- Strengthened existing tests:
+  - `apps/desktop/tests/prompt-vault.test.js`:
+    - explicit duplicate-safe re-open assertion (`doesNotThrow` + same id/item link)
+    - explicit status sync assertions for taskPrompt and linked chunk after approve/copy/done.
+  - `apps/desktop/tests/workflow-integration.test.js`:
+    - duplicate-safe repeat open on `roadmap_1`
+    - browser tree/task visibility checks from real store state
+    - primary-action behavior guard (`openTaskFromPrimary` or `startNextTask`).
+  - `apps/desktop/tests/controller-ui.test.js`:
+    - view-model backed master-plan preview guard (`No plan yet` must not appear for real plan content).
+- Test runner updated:
+  - `apps/desktop/tests/run-tests.js` now includes `ui-workflow-regression.test.js`.
+- Verification commands run successfully:
+  - `node apps/desktop/tests/controller-ui.test.js`
+  - `node apps/desktop/tests/prompt-vault.test.js`
+  - `node apps/desktop/tests/workflow-integration.test.js`
+  - `npm.cmd run desktop:test`
+  - `npm.cmd run verify`
+
 ## 2026-05-27 Project Browser Workflow UI Rebuild (`codex/rebuild-project-browser-ui`)
 
 - Rebuilt desktop workflow navigation around a normalized UI model in `apps/desktop/renderer.js`:
