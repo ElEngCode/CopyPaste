@@ -10,7 +10,7 @@ const {
   createSessionGate
 } = require("./main/ws-session");
 
-const WS_PORT = 8080;
+const DEFAULT_WS_PORT = 8080;
 const EXTENSION_MESSAGE_CHANNEL = "AI_RESPONSE_RECEIVED";
 const STATUS_CHANNEL = "WORKFLOW_STATUS";
 const TRIGGER_WORKFLOW_CHANNEL = "TRIGGER_AI_WORKFLOW";
@@ -74,7 +74,11 @@ const EXTENSION_COPY_PATH_CHANNEL = "EXTENSION_COPY_PATH";
 const EXTENSION_COPY_URL_CHANNEL = "EXTENSION_COPY_URL";
 const EXTENSION_OPEN_FOLDER_CHANNEL = "EXTENSION_OPEN_FOLDER";
 const EXTENSION_OPEN_MANAGE_PAGE_CHANNEL = "EXTENSION_OPEN_MANAGE_PAGE";
-const COPYPASTE_EXTENSION_ID = "akbkdpfnbkafgnfanoddlkdlgdlkacdk";
+const DEFAULT_COPYPASTE_EXTENSION_ID = "akbkdpfnbkafgnfanoddlkdlgdlkacdk";
+const WS_PORT_ENV = "COPYPASTE_WS_PORT";
+const EXTENSION_ID_ENV = "COPYPASTE_EXTENSION_ID";
+const WS_PORT = resolveWsPort();
+const COPYPASTE_EXTENSION_ID = resolveExtensionId();
 const COPYPASTE_EXTENSION_WAKE_URL = `chrome-extension://${COPYPASTE_EXTENSION_ID}/wake.html`;
 const CHROME_EXTENSIONS_URL = "chrome://extensions";
 const EXTENSION_STATE = Object.freeze({
@@ -96,6 +100,36 @@ writeSessionTokenFile(extensionRoot, wsSessionToken);
 
 const wss = new WebSocketServer({ port: WS_PORT });
 
+function resolveWsPort() {
+  const raw = String(process.env[WS_PORT_ENV] || "").trim();
+
+  if (!raw) {
+    return DEFAULT_WS_PORT;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    throw new Error(`${WS_PORT_ENV} must be an integer between 1 and 65535.`);
+  }
+
+  return parsed;
+}
+
+function resolveExtensionId() {
+  const raw = String(process.env[EXTENSION_ID_ENV] || "").trim();
+
+  if (!raw) {
+    return DEFAULT_COPYPASTE_EXTENSION_ID;
+  }
+
+  if (!/^[a-p]{32}$/i.test(raw)) {
+    throw new Error(`${EXTENSION_ID_ENV} must be a 32-character Chrome extension id (letters a-p).`);
+  }
+
+  return raw.toLowerCase();
+}
+
 function logServer(message, details) {
   if (details) {
     console.log(`[Next Step][WS] ${message}`, details);
@@ -103,6 +137,17 @@ function logServer(message, details) {
   }
 
   console.log(`[Next Step][WS] ${message}`);
+}
+
+function buildWorkflowLogMeta(payload, connectionId) {
+  const safePayload = payload && typeof payload === "object" ? payload : {};
+  return {
+    provider: String(safePayload.targetProvider || safePayload.target || "unknown"),
+    stageId: String(safePayload.currentStageId || "unknown"),
+    textLength: typeof safePayload.text === "string" ? safePayload.text.length : 0,
+    sessionId: connectionId ? String(connectionId) : "unknown",
+    timestamp: new Date().toISOString()
+  };
 }
 
 function isSocketOpen(socket) {
@@ -242,7 +287,10 @@ function sendWorkflowToExtension(payload) {
   }
 
   const serialized = JSON.stringify(payload);
-  logServer("Dispatching workflow payload to extension.", payload);
+  logServer("Dispatching workflow payload to extension.", buildWorkflowLogMeta(
+    payload,
+    extensionSocket && extensionSocket.__connectionId
+  ));
   try {
     extensionSocket.send(serialized);
     return {
@@ -370,7 +418,7 @@ async function setupExtensionOnce() {
     setupUrl: CHROME_EXTENSIONS_URL,
     extensionPath: extensionRoot,
     extensionsUrl: CHROME_EXTENSIONS_URL,
-    manualFallback: "If Chrome opened a blank tab, type chrome://extensions in the address bar."
+    manualFallback: "If Chrome opened a blank tab, type chrome://extensions in the address bar. Load unpacked from the apps/extension folder in this repo."
   };
 }
 
@@ -977,6 +1025,7 @@ wss.on("connection", (ws, request) => {
     expectedToken: wsSessionToken,
     onAuthenticated: (hello) => {
       extensionSocket = ws;
+      extensionSocket.__connectionId = connectionId;
       setExtensionState(EXTENSION_STATE.CONNECTED);
       logServer(`Extension authenticated (#${connectionId}).`, { remoteAddress });
       sendWorkflowStatusToRenderer("Extension connected. Ready for next AI step.", "success", hello.nextTarget || "ChatGPT", EXTENSION_STATE.CONNECTED);
@@ -997,8 +1046,8 @@ wss.on("connection", (ws, request) => {
     if (!sessionResult.ok) {
       logServer("Rejected unauthenticated or invalid WebSocket message.", { error: sessionResult.error });
       if (sessionGate.isAuthenticated()) {
-        const rawText = rawData.toString("utf8");
-        logServer("Received invalid JSON from extension.", { rawText, error: sessionResult.error });
+        const rawLength = Buffer.isBuffer(rawData) ? rawData.length : String(rawData || "").length;
+        logServer("Received invalid JSON from extension.", { rawLength, error: sessionResult.error });
         sendStatusToRenderer("Extension returned invalid JSON.", "error");
       } else {
         sendStatusToRenderer("Extension WebSocket session rejected.", "error");
@@ -1014,7 +1063,11 @@ wss.on("connection", (ws, request) => {
     const parsedData = sessionResult.message;
 
     if (parsedData && parsedData.type === "EXTENSION_CONNECTED") {
-      logServer("Extension client announced readiness.", parsedData);
+      logServer("Extension client announced readiness.", {
+        sessionId: String(connectionId),
+        timestamp: new Date().toISOString(),
+        nextTarget: parsedData.nextTarget || "chatgpt"
+      });
       setExtensionState(EXTENSION_STATE.CONNECTED);
       sendWorkflowStatusToRenderer("Extension connected. Ready for next AI step.", "success", parsedData.nextTarget || "ChatGPT", EXTENSION_STATE.CONNECTED);
       return;
@@ -1034,18 +1087,36 @@ wss.on("connection", (ws, request) => {
       const errorMessage = typeof parsedData.error === "string"
         ? parsedData.error
         : "Extension reported a workflow error.";
-      logServer("Extension reported an error.", parsedData);
+      logServer("Extension reported an error.", {
+        sessionId: String(connectionId),
+        timestamp: new Date().toISOString(),
+        provider: String(parsedData.target || "unknown"),
+        stageId: String(parsedData.currentStageId || "unknown"),
+        textLength: typeof parsedData.text === "string" ? parsedData.text.length : 0
+      });
       sendStatusToRenderer(errorMessage, "error");
       return;
     }
 
-    logServer("Received AI response from extension.", parsedData);
+    logServer("Received AI response from extension.", {
+      sessionId: String(connectionId),
+      timestamp: new Date().toISOString(),
+      provider: String(parsedData && (parsedData.target || parsedData.targetProvider) || "unknown"),
+      stageId: String(parsedData && parsedData.currentStageId || "unknown"),
+      textLength: typeof parsedData.text === "string" ? parsedData.text.length : 0
+    });
     if (typeof parsedData.text === "string" && parsedData.text.trim()) {
       sendToRenderer(EXTENSION_MESSAGE_CHANNEL, parsedData.text);
       return;
     }
 
-    logServer("Extension message did not include response text; dropping renderer update.", parsedData);
+    logServer("Extension message did not include response text; dropping renderer update.", {
+      sessionId: String(connectionId),
+      timestamp: new Date().toISOString(),
+      provider: String(parsedData && (parsedData.target || parsedData.targetProvider) || "unknown"),
+      stageId: String(parsedData && parsedData.currentStageId || "unknown"),
+      textLength: typeof parsedData.text === "string" ? parsedData.text.length : 0
+    });
   });
 
   ws.on("close", (code, reasonBuffer) => {
@@ -1071,7 +1142,16 @@ wss.on("listening", () => {
 });
 
 wss.on("error", (error) => {
-  logServer("WebSocket server error.", { error: error.message });
+  logServer("WebSocket server error.", { error: error.message, port: WS_PORT });
+
+  if (error && error.code === "EADDRINUSE") {
+    setExtensionState(EXTENSION_STATE.ERROR);
+    const message = `Desktop WebSocket port ${WS_PORT} is already in use. Close the other CopyPaste desktop instance, or configure a different port via ${WS_PORT_ENV}.`;
+    sendWorkflowStatusToRenderer(message, "error", "ChatGPT", EXTENSION_STATE.ERROR);
+    return;
+  }
+
+  sendStatusToRenderer(`Desktop WebSocket error: ${error.message}`, "error");
 });
 
 app.whenReady().then(() => {

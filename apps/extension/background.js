@@ -264,6 +264,7 @@ async function runManualStep(command) {
 
   try {
     const payload = command && typeof command === "object" ? command : {};
+    const currentStageId = String(payload.currentStageId || "");
 
     await readStoredNextTarget();
 
@@ -315,6 +316,8 @@ async function runManualStep(command) {
     const resultPayload = {
       ok: true,
       target,
+      targetProvider: target,
+      currentStageId,
       nextTarget: next,
       text: capturedResult
     };

@@ -14,6 +14,14 @@
   var SUBMIT_READY_TIMEOUT_MS = 7000;
   var SUBMIT_READY_INTERVAL_MS = 100;
   var STABLE_RESPONSE_POLLS = 2;
+  var COMPLETION_STATES = {
+    BEFORE_SEND: "before_send",
+    SUBMITTED: "submitted",
+    GENERATION_STARTED: "generation_started",
+    RESPONSE_CHANGING: "response_changing",
+    STABLE_COMPLETE: "stable_complete",
+    TIMEOUT: "timeout"
+  };
 
   var INPUT_SELECTORS = [
     "#prompt-textarea p",
@@ -184,7 +192,7 @@
     var input = normalizeInputElement(queryFirst(INPUT_SELECTORS, doc || getDocument()));
 
     if (!input) {
-      throw new Error("Could not resolve an input container.");
+      throw new Error("composer not found");
     }
 
     return input;
@@ -628,6 +636,10 @@
     var button = await waitForSubmitButton(input);
     var beforeText = getInputText(input);
 
+    if (!button && !isClaudeHost()) {
+      throw new Error("submit button not found");
+    }
+
     if (button) {
       clickSubmitButton(button);
 
@@ -640,6 +652,10 @@
 
     if (await waitForSubmitStart(input, beforeText)) {
       return "enterKeyFallback";
+    }
+
+    if (!button && !isClaudeHost()) {
+      throw new Error("submit button not found");
     }
 
     return button ? "submitButtonMouseChainNoStartSignal" : "enterKeyFallbackNoStartSignal";
@@ -858,11 +874,88 @@
     return Boolean(normalizedText && normalizedSource && normalizedText === normalizedSource);
   }
 
-  function isProcessingComplete(doc) {
-    if (hasActiveStopControl(doc)) {
+  function getResponseObservation(doc) {
+    var rootDoc = doc || getDocument();
+    var docs = getSearchDocuments(rootDoc);
+    var claudeResponseCount = 0;
+    var structuredCritiqueCount = 0;
+
+    docs.forEach(function countClaudeResponses(searchDoc) {
+      claudeResponseCount += queryAll([
+        ".font-claude-response",
+        "[class*='claude-response']"
+      ], searchDoc).length;
+
+      structuredCritiqueCount += queryAll([
+        ".crit-wrap",
+        "[class*='crit-wrap']"
+      ], searchDoc).length;
+    });
+
+    var genericResponseCount = queryAll(RESPONSE_CONTAINER_SELECTORS, rootDoc).length;
+    var responseText = extractLatestFinalAnswerText(rootDoc);
+    var hasContainer = claudeResponseCount > 0 || structuredCritiqueCount > 0 || genericResponseCount > 0;
+    var signature = [
+      claudeResponseCount,
+      structuredCritiqueCount,
+      genericResponseCount,
+      sanitizeText(responseText)
+    ].join("|");
+
+    return {
+      hasContainer: hasContainer,
+      text: responseText,
+      signature: signature
+    };
+  }
+
+  function isProcessingComplete(readState, observation) {
+    var hasStop = hasActiveStopControl(readState.doc);
+    var responseChangedAfterSubmit = observation.signature !== readState.baselineSignature;
+
+    if (!readState.hasGenerationStarted && (hasStop || responseChangedAfterSubmit)) {
+      readState.hasGenerationStarted = true;
+      readState.state = COMPLETION_STATES.GENERATION_STARTED;
+    }
+
+    if (responseChangedAfterSubmit) {
+      readState.hasObservedResponseChange = true;
+      if (readState.hasGenerationStarted) {
+        readState.state = COMPLETION_STATES.RESPONSE_CHANGING;
+      }
+    }
+
+    if (!readState.hasGenerationStarted || !readState.hasObservedResponseChange) {
+      readState.stablePolls = 0;
+      readState.lastText = "";
       return false;
     }
 
+    var text = observation.text;
+    var hasValidText = Boolean(
+      text
+      && !isSameText(text, readState.previousText)
+      && !isPromptEcho(text, readState.sourceText)
+    );
+
+    if (!hasValidText || hasStop) {
+      readState.stablePolls = 0;
+      readState.lastText = "";
+      return false;
+    }
+
+    if (text === readState.lastText) {
+      readState.stablePolls += 1;
+    } else {
+      readState.lastText = text;
+      readState.stablePolls = 1;
+    }
+
+    if (readState.stablePolls < STABLE_RESPONSE_POLLS) {
+      return false;
+    }
+
+    readState.state = COMPLETION_STATES.STABLE_COMPLETE;
     return true;
   }
 
@@ -899,48 +992,54 @@
     var timeoutMs = options && options.timeoutMs ? Number(options.timeoutMs) : READ_RESPONSE_TIMEOUT_MS;
     var previousText = options && options.previousText ? String(options.previousText) : "";
     var sourceText = options && options.sourceText ? String(options.sourceText) : "";
+    var baselineObservation = getResponseObservation(doc);
     var startedAt = Date.now();
-    var lastText = "";
-    var stablePolls = 0;
+    var readState = {
+      doc: doc,
+      state: COMPLETION_STATES.BEFORE_SEND,
+      hasGenerationStarted: false,
+      hasObservedResponseChange: false,
+      sawAnyResponseContainer: Boolean(baselineObservation.hasContainer),
+      baselineSignature: baselineObservation.signature,
+      previousText: previousText,
+      sourceText: sourceText,
+      lastText: "",
+      stablePolls: 0
+    };
 
     return new Promise(function readResponsePromise(resolve, reject) {
+      readState.state = COMPLETION_STATES.SUBMITTED;
       var intervalId = setInterval(function pollDom() {
         try {
           if (Date.now() - startedAt > timeoutMs) {
             clearInterval(intervalId);
-            reject(new Error("Timed out while waiting for AI response."));
+            readState.state = COMPLETION_STATES.TIMEOUT;
+            reject(new Error(
+              readState.sawAnyResponseContainer
+                ? "timeout waiting for completion"
+                : "response container not found"
+            ));
             return;
           }
 
-          if (!isProcessingComplete(doc)) {
-            return;
+          var observation = getResponseObservation(doc);
+
+          if (observation.hasContainer) {
+            readState.sawAnyResponseContainer = true;
           }
 
-          var text = extractLatestFinalAnswerText(doc);
-
-          if (!text || isSameText(text, previousText) || isPromptEcho(text, sourceText)) {
-            return;
-          }
-
-          if (text === lastText) {
-            stablePolls += 1;
-          } else {
-            lastText = text;
-            stablePolls = 1;
-          }
-
-          if (stablePolls < STABLE_RESPONSE_POLLS) {
+          if (!isProcessingComplete(readState, observation)) {
             return;
           }
 
           clearInterval(intervalId);
           resolve({
             ok: true,
-            text: text
+            text: observation.text
           });
         } catch (error) {
           clearInterval(intervalId);
-          reject(error);
+          reject(new Error(error && error.message ? error.message : "timeout waiting for completion"));
         }
       }, intervalMs);
     });

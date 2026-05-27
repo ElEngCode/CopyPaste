@@ -204,6 +204,151 @@ test("handleReadResponse waits for send control and ignores Thought placeholders
   });
 });
 
+test("handleReadResponse does not complete before generation starts even with stale response text", async () => {
+  let stopActive = false;
+  const staleNode = {
+    innerText: "stale prior response",
+    textContent: "stale prior response"
+  };
+
+  global.document = {
+    querySelector(selector) {
+      if (selector === "button[data-testid='stop-button']") {
+        return stopActive ? { disabled: false, getAttribute: () => null } : null;
+      }
+
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === "article") {
+        return [{
+          innerText: staleNode.innerText,
+          textContent: staleNode.textContent,
+          querySelector() {
+            return staleNode;
+          }
+        }];
+      }
+
+      return [];
+    }
+  };
+  global.window = global;
+  global.window.hasExtensionRun = false;
+  global.location = { hostname: "chatgpt.com" };
+
+  const { handleReadResponse } = loadContentModuleForHost("chatgpt.com");
+
+  await assert.rejects(
+    () => handleReadResponse({
+      intervalMs: 1,
+      timeoutMs: 30,
+      previousText: "",
+      sourceText: "new prompt text"
+    }),
+    /timeout waiting for completion/i
+  );
+});
+
+test("handleReadResponse completes only after generation starts, response changes, and text becomes stable", async () => {
+  let stopActive = true;
+  let activeText = "Thought for 2 seconds";
+  const markdownNode = {
+    get innerText() {
+      return activeText;
+    },
+    get textContent() {
+      return activeText;
+    }
+  };
+
+  global.document = {
+    querySelector(selector) {
+      if (selector === "button[data-testid='stop-button']") {
+        return stopActive ? { disabled: false, getAttribute: () => null } : null;
+      }
+
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === "article") {
+        return [{
+          innerText: activeText,
+          textContent: activeText,
+          querySelector() {
+            return markdownNode;
+          }
+        }];
+      }
+
+      return [];
+    }
+  };
+  global.window = global;
+  global.window.hasExtensionRun = false;
+  global.location = { hostname: "chatgpt.com" };
+
+  const { handleReadResponse } = loadContentModuleForHost("chatgpt.com");
+
+  setTimeout(() => {
+    activeText = "Generated line 1";
+  }, 5);
+  setTimeout(() => {
+    activeText = "Generated line 1\nGenerated line 2";
+  }, 8);
+  setTimeout(() => {
+    stopActive = false;
+  }, 10);
+
+  const result = await handleReadResponse({
+    intervalMs: 1,
+    timeoutMs: 100,
+    previousText: "",
+    sourceText: "new prompt text"
+  });
+
+  assert.deepEqual(result, {
+    ok: true,
+    text: "Generated line 1\nGenerated line 2"
+  });
+});
+
+test("handleReadResponse does not complete when no stop button exists and response text is empty", async () => {
+  global.document = {
+    querySelector() {
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === "article") {
+        return [{
+          innerText: "",
+          textContent: "",
+          querySelector() {
+            return { innerText: "", textContent: "" };
+          }
+        }];
+      }
+
+      return [];
+    }
+  };
+  global.window = global;
+  global.window.hasExtensionRun = false;
+  global.location = { hostname: "chatgpt.com" };
+
+  const { handleReadResponse } = loadContentModuleForHost("chatgpt.com");
+
+  await assert.rejects(
+    () => handleReadResponse({
+      intervalMs: 1,
+      timeoutMs: 20,
+      previousText: "",
+      sourceText: "new prompt text"
+    }),
+    /timeout waiting for completion/i
+  );
+});
+
 test("Claude extraction combines response blocks instead of returning only the last paragraph", () => {
   const blocks = [
     {

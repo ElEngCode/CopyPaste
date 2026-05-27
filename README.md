@@ -77,5 +77,8 @@ This runs extension syntax/tests and desktop tests.
 ## Notes
 
 - The Chrome extension is still installed separately even though the code lives in this monorepo.
-- The local WebSocket bridge currently uses `ws://localhost:8080`.
+- The local WebSocket bridge defaults to `ws://localhost:8080`.
+- Desktop runtime env overrides:
+  - `COPYPASTE_WS_PORT` to change the desktop WebSocket server port.
+  - `COPYPASTE_EXTENSION_ID` to override the wake URL extension id (must be a 32-char Chrome id).
 - The original `F:\Projects\Next Step` folder was not deleted during migration.

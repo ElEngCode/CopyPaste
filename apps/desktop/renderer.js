@@ -1973,8 +1973,8 @@ async function setupExtensionOnce() {
     if (!response || response.ok === false) {
       throw new Error(response && response.error ? response.error : "Could not open Chrome extension setup.");
     }
-    const extensionPath = response.extensionPath || "F:\\Projects\\CopyPaste\\apps\\extension";
-    const fallback = response.manualFallback || "If Chrome opened a blank tab, type chrome://extensions in the address bar.";
+    const extensionPath = response.extensionPath || "apps/extension folder in this repo";
+    const fallback = response.manualFallback || "If Chrome opened a blank tab, type chrome://extensions in the address bar. Load unpacked from the apps/extension folder in this repo.";
     const message = `Setup started. ${fallback} Extension path: ${extensionPath}`;
     renderStatus({
       message,
@@ -2007,7 +2007,7 @@ async function connectInstalledExtension() {
       nextTarget: latestWorkflowStatus.nextTarget
     });
   } catch (error) {
-    const details = "If this extension was installed before the fixed ID change, remove the old CopyPaste Orchestrator from Chrome and load unpacked again from the shown folder.";
+    const details = "If this extension was installed with a different ID, remove the old CopyPaste Orchestrator from Chrome and load unpacked again from the shown folder.";
     setStatus(`${error.message} ${details}`, "error");
   } finally {
     setBusy(false);

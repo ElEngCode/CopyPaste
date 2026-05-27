@@ -104,6 +104,83 @@ function createChromeMock({ storedNextTarget = "chatgpt", readText = "processed 
   return { chromeMock, operations, storageState };
 }
 
+function createChromeMockWithReadFailure({ storedNextTarget = "chatgpt", readError = "timeout waiting for completion" } = {}) {
+  const operations = [];
+  const storageState = { nextTarget: storedNextTarget };
+  const tabs = [
+    { id: 12, url: "https://chatgpt.com/c/current-active", active: true, currentWindow: true },
+    { id: 20, url: "https://claude.ai/chat/current", active: false, currentWindow: true }
+  ];
+
+  const chromeMock = {
+    runtime: {
+      lastError: null,
+      getURL(resourcePath) {
+        operations.push(["runtime.getURL", resourcePath]);
+        return `chrome-extension://copy/${resourcePath}`;
+      },
+      onMessage: {
+        addListener(listener) {
+          operations.push(["runtime.onMessage.addListener", typeof listener]);
+        }
+      }
+    },
+    storage: {
+      local: {
+        get(keys, callback) {
+          operations.push(["storage.get", keys]);
+          callback({ nextTarget: storageState.nextTarget });
+        },
+        set(items) {
+          operations.push(["storage.set", items]);
+          Object.assign(storageState, items);
+        }
+      }
+    },
+    scripting: {
+      executeScript(details, callback) {
+        operations.push(["executeScript", details]);
+        callback([{ frameId: 0, result: true }]);
+      }
+    },
+    tabs: {
+      query(queryInfo, callback) {
+        operations.push(["query", queryInfo]);
+        callback(filterTabs(tabs, queryInfo));
+      },
+      update(tabId, updateProperties, callback) {
+        operations.push(["update", tabId, updateProperties]);
+        callback({ id: tabId, active: updateProperties.active === true });
+      },
+      sendMessage(tabId, payload, options, callback) {
+        const messageOptions = typeof options === "function" ? {} : (options || {});
+        const done = typeof options === "function" ? options : callback;
+        operations.push(["sendMessage", tabId, payload, messageOptions]);
+
+        if (payload.action === "READ_RESPONSE") {
+          done({
+            ok: false,
+            error: readError
+          });
+          return;
+        }
+
+        done({ ok: true, status: "submitted", previousText: "old output" });
+      },
+      remove(tabId, callback) {
+        operations.push(["remove", tabId]);
+        if (callback) callback();
+      },
+      create(createProperties, callback) {
+        operations.push(["create", createProperties]);
+        callback({ id: 88, url: createProperties.url });
+      }
+    }
+  };
+
+  return { chromeMock, operations, storageState };
+}
+
 test("runManualStep sends a ChatGPT step, reads output, and toggles to Claude", async () => {
   const { chromeMock, operations, storageState } = createChromeMock({
     storedNextTarget: "chatgpt",
@@ -120,6 +197,8 @@ test("runManualStep sends a ChatGPT step, reads output, and toggles to Claude", 
   assert.deepEqual(result, {
     ok: true,
     target: "chatgpt",
+    targetProvider: "chatgpt",
+    currentStageId: "",
     nextTarget: "claude",
     text: "chatgpt answer"
   });
@@ -176,6 +255,8 @@ test("runManualStep uses the Claude prefix when persistent target is Claude", as
   assert.deepEqual(result, {
     ok: true,
     target: "claude",
+    targetProvider: "claude",
+    currentStageId: "",
     nextTarget: "chatgpt",
     text: "claude answer"
   });
@@ -216,6 +297,8 @@ test("runManualStep honors explicit targetProvider without modifying stored next
   assert.deepEqual(result, {
     ok: true,
     target: "chatgpt",
+    targetProvider: "chatgpt",
+    currentStageId: "",
     nextTarget: "claude",
     text: "gpt planner answer"
   });
@@ -234,6 +317,36 @@ test("runManualStep honors explicit targetProvider without modifying stored next
       action: "WRITE_AND_SEND",
       text: "Stage: GPT Planner",
       target: "chatgpt"
+    },
+    {}
+  ]);
+});
+
+test("runManualStep propagates READ_RESPONSE error details", async () => {
+  const { chromeMock, operations, storageState } = createChromeMockWithReadFailure({
+    storedNextTarget: "chatgpt",
+    readError: "timeout waiting for completion"
+  });
+  const { runManualStep } = loadBackgroundWithChromeMock(chromeMock);
+
+  await assert.rejects(
+    () => runManualStep({
+      chatgptPrefix: "Analyze: ",
+      claudePrefix: "Critique: ",
+      text: "initial prompt"
+    }),
+    /timeout waiting for completion/
+  );
+
+  assert.equal(storageState.nextTarget, "chatgpt");
+  assert.deepEqual(operations[5], [
+    "sendMessage",
+    12,
+    {
+      action: "READ_RESPONSE",
+      target: "chatgpt",
+      sourceText: "Analyze: initial prompt",
+      previousText: "old output"
     },
     {}
   ]);

@@ -1,5 +1,38 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-28 Runtime Hardening X-Ray (Extension + Desktop WS)
+
+- `apps/extension/content.js` now uses explicit response completion states:
+  - `before_send` -> `submitted` -> `generation_started` -> `response_changing` -> `stable_complete` / `timeout`
+- Completion gates now require:
+  - response text present
+  - response changed after send baseline
+  - no active Stop control
+  - stable text for required polls
+- Explicit runtime failure reasons:
+  - `composer not found`
+  - `submit button not found`
+  - `response container not found`
+  - `timeout waiting for completion`
+- Selector strategy remains multi-fallback for ChatGPT/Claude composer/send/response surfaces.
+
+- `apps/desktop/main.js` runtime hardening:
+  - WebSocket server port configurable via `COPYPASTE_WS_PORT` (default `8080`)
+  - EADDRINUSE now surfaces user-facing remediation status
+  - extension wake id configurable via `COPYPASTE_EXTENSION_ID` with Chrome-id validation
+  - workflow logging redacted to metadata only (provider, stage id, text length, session id, timestamp)
+
+- `apps/desktop/renderer.js` setup fallback path is now repo-generic (no machine-specific `F:\Projects...` fallback).
+
+- Verification and guardrails:
+  - `apps/extension/content.test.js` adds regression tests for non-premature completion and stable completion behavior
+  - `apps/extension/background.test.js` validates `READ_RESPONSE` error propagation
+  - `apps/desktop/tests/electron-security.test.js` enforces no payload-object logs, EADDRINUSE remediation path, and no hardcoded extension path literals in active runtime files
+  - `apps/desktop/tests/ws-session.test.js` continues session token/handshake validation
+
+- Runtime docs updated in `README.md` for:
+  - `COPYPASTE_WS_PORT`
+  - `COPYPASTE_EXTENSION_ID`
 ## 2026-05-27 Path Drift Cleanup
 
 - Removed remaining machine-specific UI defaults from desktop renderer/UI:

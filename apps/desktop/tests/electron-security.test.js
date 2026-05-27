@@ -11,6 +11,8 @@ const htmlSource = fs.readFileSync(path.join(desktopRoot, "index.html"), "utf8")
 const extensionManifestSource = fs.readFileSync(path.join(desktopRoot, "..", "extension", "manifest.json"), "utf8");
 const extensionWakeHtmlSource = fs.readFileSync(path.join(desktopRoot, "..", "extension", "wake.html"), "utf8");
 const extensionWakeJsSource = fs.readFileSync(path.join(desktopRoot, "..", "extension", "wake.js"), "utf8");
+const extensionBackgroundSource = fs.readFileSync(path.join(desktopRoot, "..", "extension", "background.js"), "utf8");
+const extensionContentSource = fs.readFileSync(path.join(desktopRoot, "..", "extension", "content.js"), "utf8");
 const extensionManifest = JSON.parse(extensionManifestSource);
 
 function createChromeExtensionId(publicKeyBase64) {
@@ -69,7 +71,8 @@ assert.doesNotMatch(mainSource, /process\.kill\(pid\)/);
 assert.doesNotMatch(mainSource, /waitForExtensionReady/);
 assert.doesNotMatch(mainSource, /chrome-copypaste-profile-v3/);
 assert.doesNotMatch(mainSource, /runProcessCapture\("powershell\.exe"/);
-assert.match(mainSource, /COPYPASTE_EXTENSION_ID\s*=\s*"akbkdpfnbkafgnfanoddlkdlgdlkacdk"/);
+assert.match(mainSource, /DEFAULT_COPYPASTE_EXTENSION_ID\s*=\s*"akbkdpfnbkafgnfanoddlkdlgdlkacdk"/);
+assert.match(mainSource, /function resolveExtensionId\(\)/);
 assert.match(mainSource, /chrome-extension:\/\/\$\{COPYPASTE_EXTENSION_ID\}\/wake\.html/);
 assert.match(mainSource, /EXTENSION_SETUP_ONCE_CHANNEL/);
 assert.match(mainSource, /EXTENSION_CONNECT_INSTALLED_CHANNEL/);
@@ -79,6 +82,17 @@ assert.match(mainSource, /EXTENSION_OPEN_FOLDER_CHANNEL/);
 assert.match(mainSource, /clipboard\.writeText\(extensionRoot\)/);
 assert.match(mainSource, /"--new-window",\s*CHROME_EXTENSIONS_URL/);
 assert.match(mainSource, /manualFallback/);
+assert.match(mainSource, /buildWorkflowLogMeta/);
+assert.doesNotMatch(mainSource, /Dispatching workflow payload to extension\.",\s*payload/);
+assert.doesNotMatch(mainSource, /Received AI response from extension\.",\s*parsedData/);
+assert.match(mainSource, /EADDRINUSE/);
+assert.match(mainSource, /Close the other CopyPaste desktop instance/);
+assert.match(mainSource, /COPYPASTE_WS_PORT/);
+
+assert.doesNotMatch(mainSource, /F:\\Projects\\CopyPaste\\apps\\extension/);
+assert.doesNotMatch(rendererSource, /F:\\Projects\\CopyPaste\\apps\\extension/);
+assert.doesNotMatch(extensionBackgroundSource, /F:\\Projects\\CopyPaste\\apps\\extension/);
+assert.doesNotMatch(extensionContentSource, /F:\\Projects\\CopyPaste\\apps\\extension/);
 
 assert.doesNotMatch(rendererSource, /require\(["']electron["']\)/);
 assert.doesNotMatch(rendererSource, /require\(/);
