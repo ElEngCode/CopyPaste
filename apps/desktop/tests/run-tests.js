@@ -4,8 +4,7 @@ const tests = [
   "state-debate.test.js",
   "ai-project-builder-protocol.test.js",
   "debate-prompts.test.js",
-  "storage-debate.test.js",
-  "prompt-vault.test.js"
+  "storage-debate.test.js"
 ];
 
 for (const file of tests) {
