@@ -12,17 +12,14 @@ const tests = [
   "workflow-integration.test.js"
 ];
 
-let failed = 0;
-
 for (const file of tests) {
+  console.log(`running ${file}`);
   try {
     require(path.join(__dirname, file));
     console.log(`ok ${file}`);
   } catch (error) {
-    failed += 1;
     console.error(`not ok ${file}`);
     console.error(error && error.stack ? error.stack : error);
+    process.exit(1);
   }
 }
-
-if (failed) process.exit(1);
