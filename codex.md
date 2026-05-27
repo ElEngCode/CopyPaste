@@ -1,5 +1,39 @@
 # Codex Progress
 
+## 2026-05-27 Prompt Vault State Model Hardening (`codex/harden-prompt-vault-state-model`)
+
+- Hardened Prompt Vault into a coherent source-of-truth model:
+  - `project.masterPlan` + `project.masterPlanVersions` + `project.activeMasterPlanVersionId`
+  - active pack roadmap (`pack.roadmap`, `pack.roadmapVersions`) + `project.activeRoadmapVersionId`
+  - task prompt as primary task entity, with linked chunk compatibility object.
+- Added repair/lookup helpers in `apps/desktop/prompt-vault.js`:
+  - `findTaskForRoadmapItem(database, projectId, roadmapItemId)`
+  - `ensureTaskPromptChunkLink(database, project, pack, taskPromptOrChunk)`
+- Added duplicate safety and sanitize-time reconciliation:
+  - dedupe `taskPrompts` by `projectId + roadmapItemId` and by `sourceChunkId`
+  - keep the most complete/newest prompt and ignore stale duplicates safely.
+- Made task creation idempotent:
+  - `createTaskPromptFromRoadmapItem(...)` and `getOrCreateTaskPromptFromRoadmapItem(...)` now return existing linked task/chunk instead of creating duplicates.
+- Synced task/chunk lifecycle and status normalization:
+  - task statuses constrained to `draft | approved | copied | done`
+  - chunk compatibility statuses normalized (`ready`/`draft` -> `in_progress`)
+  - chunk status changes sync back to linked task prompt where applicable.
+- Enforced filesystem mirroring rules:
+  - `masterplan.md` mirrors `project.masterPlan`
+  - `plan-roadmap.md` mirrors active pack roadmap
+  - `tasks/*.md` content comes from `taskPrompt.content` when a task prompt exists.
+- Added/updated regression coverage in `apps/desktop/tests/prompt-vault.test.js` for:
+  - idempotent task create behavior
+  - chunk-only legacy task repair into taskPrompt
+  - missing-chunk/missing-task link repair
+  - duplicate historical taskPrompt sanitization
+  - next eligible roadmap behavior and status sync flows.
+- Verification commands run successfully:
+  - `node apps/desktop/tests/prompt-vault.test.js`
+  - `node apps/desktop/tests/workflow-integration.test.js`
+  - `npm.cmd run desktop:test`
+  - `npm.cmd run verify`
+
 ## 2026-05-27 Real Project Workflow Repair (`codex/repair-real-project-workflow`)
 
 - Repaired end-to-end project execution flow from roadmap to task completion, focused on real usage (not shallow CI-only behavior).

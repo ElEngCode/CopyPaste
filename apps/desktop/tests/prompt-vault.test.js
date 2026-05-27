@@ -497,6 +497,9 @@ try {
   assert.equal(taskPromptExisting.created, false);
   assert.equal(taskPromptExisting.taskPrompt.id, taskPromptCreated.taskPrompt.id);
   assert.equal(taskPromptExisting.chunk.id, taskPromptCreated.chunk.id);
+  const taskPromptFromCreate = store.createTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_2");
+  assert.equal(taskPromptFromCreate.created, false);
+  assert.equal(taskPromptFromCreate.taskPrompt.id, taskPromptCreated.taskPrompt.id);
   assert.equal(taskPromptCreated.taskPrompt.roadmapItemId, "roadmap_2");
   assert.equal(taskPromptCreated.taskPrompt.status, "draft");
   const stateAfterTaskPromptCreate = store.getState();
@@ -574,6 +577,12 @@ try {
   assert.equal(afterDoneChunk.status, "done");
   const storedRuns = afterDoneState.taskRuns.filter((run) => run.taskPromptId === taskPromptCreated.taskPrompt.id);
   assert.equal(storedRuns.length >= 1, true);
+  const nextEligibleAfterDone = store.getNextEligibleRoadmapItem(savedBrief.project.id);
+  assert.equal(nextEligibleAfterDone.nextItem && nextEligibleAfterDone.nextItem.id, "roadmap_3");
+  const taskThreeCreateOne = store.createTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_3");
+  const taskThreeCreateTwo = store.createTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_3");
+  assert.equal(taskThreeCreateOne.taskPrompt.id, taskThreeCreateTwo.taskPrompt.id);
+  assert.equal(taskThreeCreateTwo.created, false);
 
   const reloadedState = store.getState();
   const syncedTaskPrompt = reloadedState.taskPrompts.find((entry) => entry.id === taskPromptCreated.taskPrompt.id);
@@ -635,6 +644,120 @@ try {
   assert.ok(legacyChunk);
   assert.equal(legacyChunk.roadmapItemId, "legacy_roadmap_1");
   assert.equal(legacyChunk.status, "in_progress");
+
+  const chunkOnlyDbPath = path.join(tmpRoot, "chunk-only-db.json");
+  const chunkOnlyProjectPath = path.join(tmpRoot, "ChunkOnly");
+  fs.mkdirSync(path.join(chunkOnlyProjectPath, "tasks"), { recursive: true });
+  fs.writeFileSync(path.join(chunkOnlyProjectPath, "codex.md"), "idea", "utf8");
+  fs.writeFileSync(path.join(chunkOnlyProjectPath, "architecture.md"), "# Architecture\n\n", "utf8");
+  fs.writeFileSync(path.join(chunkOnlyProjectPath, "masterplan.md"), "Master", "utf8");
+  fs.writeFileSync(path.join(chunkOnlyProjectPath, "plan-roadmap.md"), "# Plan Roadmap\n\n", "utf8");
+  fs.writeFileSync(chunkOnlyDbPath, JSON.stringify({
+    version: 1,
+    schemaVersion: 2,
+    projectsBasePath: tmpRoot,
+    projects: [{
+      id: "chunk_only_project",
+      name: "ChunkOnly",
+      path: chunkOnlyProjectPath,
+      idea: "idea",
+      masterPlan: "Master",
+      activePromptPackId: "chunk_only_pack",
+      activeRoadmapVersionId: "chunk_only_roadmap_v1"
+    }],
+    promptPacks: [{
+      id: "chunk_only_pack",
+      projectId: "chunk_only_project",
+      title: "ChunkOnly Pack",
+      roadmap: { items: [{ id: "chunk_only_item_1", order: 1, title: "Chunk item 1", dependsOn: [] }] },
+      roadmapVersions: [{ id: "chunk_only_roadmap_v1", source: "fixture", responseText: "{\"items\":[{\"id\":\"chunk_only_item_1\",\"order\":1,\"title\":\"Chunk item 1\"}]}", createdAt: "2024-01-01T00:00:00.000Z", appliedAt: "2024-01-01T00:00:00.000Z" }],
+      chunks: [{
+        id: "chunk_only_chunk_1",
+        order: 1,
+        title: "Chunk item 1",
+        status: "ready",
+        prompt: "Chunk prompt body",
+        roadmapItemId: "chunk_only_item_1"
+      }]
+    }],
+    taskPrompts: [],
+    taskPromptVersions: [],
+    taskRuns: []
+  }), "utf8");
+  const chunkOnlyStore = createVaultStore({ dbPath: chunkOnlyDbPath });
+  const chunkOnlyTask = chunkOnlyStore.createTaskPromptFromRoadmapItem("chunk_only_project", "chunk_only_item_1");
+  assert.equal(chunkOnlyTask.chunk.id, "chunk_only_chunk_1");
+  assert.equal(chunkOnlyTask.taskPrompt.sourceChunkId, "chunk_only_chunk_1");
+  assert.equal(chunkOnlyTask.taskPrompt.roadmapItemId, "chunk_only_item_1");
+  const chunkOnlyState = chunkOnlyStore.getState();
+  const chunkOnlyPrompts = chunkOnlyState.taskPrompts.filter((item) => item.projectId === "chunk_only_project" && item.roadmapItemId === "chunk_only_item_1");
+  assert.equal(chunkOnlyPrompts.length, 1);
+  assert.equal(chunkOnlyPrompts[0].content, "Chunk prompt body");
+
+  const duplicateDbPath = path.join(tmpRoot, "duplicate-task-prompts-db.json");
+  const duplicateProjectPath = path.join(tmpRoot, "DuplicatePromptProject");
+  fs.mkdirSync(path.join(duplicateProjectPath, "tasks"), { recursive: true });
+  fs.writeFileSync(path.join(duplicateProjectPath, "codex.md"), "idea", "utf8");
+  fs.writeFileSync(path.join(duplicateProjectPath, "architecture.md"), "# Architecture\n\n", "utf8");
+  fs.writeFileSync(path.join(duplicateProjectPath, "masterplan.md"), "Master", "utf8");
+  fs.writeFileSync(path.join(duplicateProjectPath, "plan-roadmap.md"), "# Plan Roadmap\n\n", "utf8");
+  fs.writeFileSync(duplicateDbPath, JSON.stringify({
+    version: 1,
+    schemaVersion: 2,
+    projectsBasePath: tmpRoot,
+    projects: [{
+      id: "duplicate_project",
+      name: "DuplicatePromptProject",
+      path: duplicateProjectPath,
+      idea: "idea",
+      masterPlan: "Master",
+      activePromptPackId: "duplicate_pack"
+    }],
+    promptPacks: [{
+      id: "duplicate_pack",
+      projectId: "duplicate_project",
+      title: "Duplicate Pack",
+      roadmap: { items: [{ id: "dup_item_1", order: 1, title: "Duplicate item", dependsOn: [] }] },
+      chunks: [{
+        id: "dup_chunk_1",
+        order: 1,
+        title: "Duplicate item",
+        status: "in_progress",
+        prompt: "Chunk prompt",
+        roadmapItemId: "dup_item_1"
+      }]
+    }],
+    taskPrompts: [
+      {
+        id: "dup_task_old",
+        projectId: "duplicate_project",
+        roadmapItemId: "dup_item_1",
+        title: "Duplicate item",
+        content: "old content",
+        status: "draft",
+        sourceChunkId: "dup_chunk_1",
+        updatedAt: "2024-01-01T00:00:00.000Z"
+      },
+      {
+        id: "dup_task_new",
+        projectId: "duplicate_project",
+        roadmapItemId: "dup_item_1",
+        title: "Duplicate item",
+        content: "new content",
+        status: "approved",
+        sourceChunkId: "dup_chunk_1",
+        updatedAt: "2024-02-01T00:00:00.000Z"
+      }
+    ],
+    taskPromptVersions: [],
+    taskRuns: []
+  }), "utf8");
+  const duplicateStore = createVaultStore({ dbPath: duplicateDbPath });
+  const duplicateState = duplicateStore.getState();
+  const duplicatePrompts = duplicateState.taskPrompts.filter((item) => item.projectId === "duplicate_project" && item.roadmapItemId === "dup_item_1");
+  assert.equal(duplicatePrompts.length, 1);
+  assert.equal(duplicatePrompts[0].id, "dup_task_new");
+  assert.equal(duplicatePrompts[0].content, "new content");
 
   const settingsResult = store.updateSettings({ projectsBasePath: path.join(tmpRoot, "Tasks") });
   assert.equal(settingsResult.state.projectsBasePath, path.join(tmpRoot, "Tasks"));

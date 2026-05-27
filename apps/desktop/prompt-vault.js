@@ -10,6 +10,7 @@ const DEFAULT_CHUNK_STRATEGY = "simple_3";
 const DEFAULT_GIT_MODE = "every_chunk";
 const VALID_GIT_MODES = new Set(["none", "final_only", "every_chunk"]);
 const VALID_CHUNK_STATUSES = new Set(["draft", "ready", "approved", "copied", "launcher_copied", "in_progress", "done"]);
+const VALID_TASK_PROMPT_STATUSES = new Set(["draft", "approved", "copied", "done"]);
 const VALID_CHUNK_STRATEGIES = new Set(["simple_3", "steps_1_3", "architecture_implementation_tests_release"]);
 const PLANNING_DEBATE_STAGES = [
   "gpt_clarifier",
@@ -261,6 +262,25 @@ function normalizeChunkStatus(value) {
   return "in_progress";
 }
 
+function normalizeTaskPromptStatus(value) {
+  const status = normalizeString(value);
+  if (status === "ready" || status === "in_progress") return "draft";
+  if (VALID_TASK_PROMPT_STATUSES.has(status)) return status;
+  return "draft";
+}
+
+function taskPromptStatusToChunkStatus(value) {
+  const status = normalizeTaskPromptStatus(value);
+  if (status === "approved" || status === "copied" || status === "done") return status;
+  return "in_progress";
+}
+
+function chunkStatusToTaskPromptStatus(value) {
+  const status = normalizeChunkStatus(value);
+  if (status === "approved" || status === "copied" || status === "done") return status;
+  return "draft";
+}
+
 function sanitizeVersionList(items, defaultSource) {
   return (Array.isArray(items) ? items : []).map((item) => ({
     id: normalizeString(item && item.id) || createId("version"),
@@ -377,7 +397,7 @@ function sanitizeTaskPrompt(prompt) {
     taskFileName: normalizeString(source.taskFileName),
     taskFilePath: normalizeWindowsPath(source.taskFilePath),
     sourceChunkId: normalizeString(source.sourceChunkId),
-    status: normalizeString(source.status) || "draft",
+    status: normalizeTaskPromptStatus(source.status),
     activeVersionId: normalizeString(source.activeVersionId),
     createdAt: normalizeString(source.createdAt) || createTimestamp(),
     updatedAt: normalizeString(source.updatedAt) || createTimestamp(),
@@ -1005,32 +1025,6 @@ function createVaultStore({ dbPath }) {
     throw new Error("prompt vault dbPath is required.");
   }
 
-  function reconcileDatabaseTaskPromptLinks(database) {
-    const prompts = Array.isArray(database.taskPrompts) ? database.taskPrompts : [];
-    for (const taskPrompt of prompts) {
-      if (!taskPrompt || !taskPrompt.projectId) continue;
-      try {
-        resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
-      } catch (_error) {
-        // Keep loading resilient for legacy/incomplete datasets.
-      }
-    }
-  }
-
-  function readDatabase() {
-    const sanitized = sanitizeDatabase(readJsonFile(dbPath, createEmptyDatabase()));
-    reconcileDatabaseTaskPromptLinks(sanitized);
-    return sanitized;
-  }
-
-  function writeDatabase(database) {
-    const sanitized = sanitizeDatabase(database);
-    reconcileDatabaseTaskPromptLinks(sanitized);
-    sanitized.updatedAt = createTimestamp();
-    writeJsonFile(dbPath, sanitized);
-    return sanitized;
-  }
-
   function refreshProjectProgress(project) {
     if (!project || !project.path) {
       return project;
@@ -1071,6 +1065,265 @@ function createVaultStore({ dbPath }) {
       .sort((left, right) => String(right.updatedAt || right.createdAt || "").localeCompare(String(left.updatedAt || left.createdAt || "")))[0] || null;
   }
 
+  function getTaskPromptCompletenessScore(taskPrompt) {
+    if (!taskPrompt) return -1;
+    let score = 0;
+    const contentLength = String(taskPrompt.content || "").trim().length;
+    if (normalizeString(taskPrompt.title)) score += 1;
+    if (contentLength > 0) score += 4;
+    if (normalizeString(taskPrompt.sourceChunkId)) score += 2;
+    if (normalizeString(taskPrompt.roadmapItemId)) score += 3;
+    if (normalizeString(taskPrompt.taskFileName)) score += 1;
+    const normalizedStatus = normalizeTaskPromptStatus(taskPrompt.status);
+    if (normalizedStatus === "approved") score += 1;
+    if (normalizedStatus === "copied") score += 2;
+    if (normalizedStatus === "done") score += 3;
+    return score;
+  }
+
+  function choosePreferredTaskPrompt(left, right) {
+    if (!left) return right;
+    if (!right) return left;
+    const scoreDelta = getTaskPromptCompletenessScore(left) - getTaskPromptCompletenessScore(right);
+    if (scoreDelta > 0) return left;
+    if (scoreDelta < 0) return right;
+    const leftTimestamp = String(left.updatedAt || left.createdAt || "");
+    const rightTimestamp = String(right.updatedAt || right.createdAt || "");
+    return leftTimestamp >= rightTimestamp ? left : right;
+  }
+
+  function findTaskForRoadmapItem(database, projectId, roadmapItemId) {
+    const project = database.projects.find((item) => item.id === projectId);
+    if (!project) {
+      return { taskPrompt: null, chunk: null, pack: null };
+    }
+    const pack = getActivePackForProject(database, project);
+    if (!pack) {
+      return { taskPrompt: null, chunk: null, pack: null };
+    }
+    const chunks = Array.isArray(pack.chunks) ? pack.chunks : [];
+    const projectTaskPrompts = (database.taskPrompts || []).filter((prompt) => prompt.projectId === project.id);
+    const roadmapChunks = chunks.filter((chunk) => chunk.roadmapItemId === roadmapItemId);
+    const roadmapChunkIds = new Set(roadmapChunks.map((chunk) => chunk.id));
+    const candidateTaskPrompts = projectTaskPrompts.filter((prompt) => {
+      if (prompt.roadmapItemId === roadmapItemId) return true;
+      return prompt.sourceChunkId && roadmapChunkIds.has(prompt.sourceChunkId);
+    });
+
+    let taskPrompt = null;
+    for (const candidate of candidateTaskPrompts) {
+      taskPrompt = choosePreferredTaskPrompt(taskPrompt, candidate);
+    }
+
+    let chunk = null;
+    if (taskPrompt && taskPrompt.sourceChunkId) {
+      chunk = chunks.find((item) => item.id === taskPrompt.sourceChunkId) || null;
+    }
+    if (!chunk && taskPrompt && taskPrompt.roadmapItemId) {
+      chunk = chunks.find((item) => item.roadmapItemId === taskPrompt.roadmapItemId) || null;
+    }
+    if (!chunk && roadmapChunks.length) {
+      chunk = roadmapChunks
+        .slice()
+        .sort((left, right) => String(right.updatedAt || right.createdAt || "").localeCompare(String(left.updatedAt || left.createdAt || "")))[0];
+    }
+    if (!taskPrompt && chunk) {
+      taskPrompt = projectTaskPrompts.find((prompt) => prompt.sourceChunkId === chunk.id)
+        || projectTaskPrompts.find((prompt) => prompt.roadmapItemId && prompt.roadmapItemId === chunk.roadmapItemId)
+        || null;
+    }
+
+    return { taskPrompt: taskPrompt || null, chunk: chunk || null, pack };
+  }
+
+  function ensureTaskPromptChunkLink(database, project, pack, taskPromptOrChunk, options = {}) {
+    if (!project || !pack) {
+      return { taskPrompt: null, chunk: null, pack };
+    }
+    if (!Array.isArray(database.taskPrompts)) database.taskPrompts = [];
+    if (!Array.isArray(database.taskPromptVersions)) database.taskPromptVersions = [];
+    if (!Array.isArray(pack.chunks)) pack.chunks = [];
+
+    const createMissingChunk = options.createMissingChunk !== false;
+    const createMissingTaskPrompt = options.createMissingTaskPrompt !== false;
+    const preferChunkAsSource = options.preferChunkAsSource === true;
+    const entry = taskPromptOrChunk || null;
+    let taskPrompt = entry && entry.projectId ? entry : null;
+    let chunk = taskPrompt ? null : entry;
+
+    if (taskPrompt && taskPrompt.projectId !== project.id) {
+      taskPrompt = null;
+    }
+
+    if (taskPrompt) {
+      if (taskPrompt.sourceChunkId) {
+        chunk = pack.chunks.find((item) => item.id === taskPrompt.sourceChunkId) || null;
+      }
+      if (!chunk && taskPrompt.roadmapItemId) {
+        chunk = pack.chunks.find((item) => item.roadmapItemId === taskPrompt.roadmapItemId) || null;
+      }
+    } else if (chunk) {
+      taskPrompt = (database.taskPrompts || []).find((item) => item.projectId === project.id && item.sourceChunkId === chunk.id)
+        || (chunk.roadmapItemId
+          ? (database.taskPrompts || []).find((item) => item.projectId === project.id && item.roadmapItemId === chunk.roadmapItemId)
+          : null)
+        || null;
+    }
+
+    if (!chunk && taskPrompt && createMissingChunk) {
+      const roadmapItem = pack.roadmap && Array.isArray(pack.roadmap.items)
+        ? pack.roadmap.items.find((item) => item.id === taskPrompt.roadmapItemId) || null
+        : null;
+      chunk = createChunkForTaskPrompt({ project, pack, taskPrompt, roadmapItem });
+      pack.updatedAt = createTimestamp();
+    }
+
+    if (!taskPrompt && chunk && createMissingTaskPrompt) {
+      const hasConflict = Boolean(chunk.roadmapItemId && (database.taskPrompts || []).some((item) => item.projectId === project.id && item.roadmapItemId === chunk.roadmapItemId));
+      if (!hasConflict) {
+        const createdAt = createTimestamp();
+        taskPrompt = sanitizeTaskPrompt({
+          id: createId("task_prompt"),
+          projectId: project.id,
+          roadmapItemId: chunk.roadmapItemId || "",
+          title: chunk.title || "Task Prompt",
+          content: chunk.prompt || "",
+          status: chunkStatusToTaskPromptStatus(chunk.status),
+          order: Number(chunk.order) || 1,
+          taskFileName: `task-${String(Number(chunk.order) || 1).padStart(3, "0")}-${slugify(chunk.title || "task")}.md`,
+          sourceChunkId: chunk.id,
+          createdAt,
+          updatedAt: createdAt
+        });
+        const version = sanitizeTaskPromptVersion({
+          id: createId("task_prompt_version"),
+          taskPromptId: taskPrompt.id,
+          source: "legacy_chunk_link",
+          content: taskPrompt.content,
+          status: "applied",
+          createdAt,
+          updatedAt: createdAt,
+          appliedAt: createdAt
+        });
+        taskPrompt.activeVersionId = version.id;
+        database.taskPrompts.unshift(taskPrompt);
+        database.taskPromptVersions.unshift(version);
+      }
+    }
+
+    if (!taskPrompt || !chunk) {
+      return { taskPrompt: taskPrompt || null, chunk: chunk || null, pack };
+    }
+
+    taskPrompt.status = normalizeTaskPromptStatus(taskPrompt.status);
+    taskPrompt.sourceChunkId = chunk.id;
+    if (!taskPrompt.roadmapItemId && chunk.roadmapItemId) taskPrompt.roadmapItemId = chunk.roadmapItemId;
+    if (!chunk.roadmapItemId && taskPrompt.roadmapItemId) chunk.roadmapItemId = taskPrompt.roadmapItemId;
+    if (!taskPrompt.order) taskPrompt.order = Number(chunk.order) || 1;
+    if (!chunk.order) chunk.order = Number(taskPrompt.order) || 1;
+    if (preferChunkAsSource) {
+      if (normalizeString(chunk.title)) taskPrompt.title = chunk.title;
+      if (String(chunk.prompt || "").trim()) taskPrompt.content = String(chunk.prompt || "");
+      taskPrompt.status = chunkStatusToTaskPromptStatus(chunk.status);
+    } else {
+      if (!normalizeString(taskPrompt.title) && normalizeString(chunk.title)) taskPrompt.title = chunk.title;
+      if (!String(taskPrompt.content || "").trim() && String(chunk.prompt || "").trim()) taskPrompt.content = chunk.prompt;
+      if (normalizeString(taskPrompt.title)) chunk.title = taskPrompt.title;
+      chunk.prompt = String(taskPrompt.content || "");
+      chunk.status = taskPromptStatusToChunkStatus(taskPrompt.status);
+    }
+    if (!taskPrompt.taskFileName) taskPrompt.taskFileName = getTaskFileName(taskPrompt);
+    if (project.path) {
+      taskPrompt.taskFilePath = path.join(getProjectPaths(project.path).tasksDir, taskPrompt.taskFileName);
+    }
+    taskPrompt.updatedAt = createTimestamp();
+    chunk.updatedAt = createTimestamp();
+    pack.updatedAt = createTimestamp();
+    return { taskPrompt, chunk, pack };
+  }
+
+  function sanitizeWorkflowState(database) {
+    for (const project of database.projects) {
+      if (!project) continue;
+      if (!Array.isArray(project.masterPlanVersions)) project.masterPlanVersions = [];
+      const appliedMasterPlanVersion = (project.masterPlanVersions || []).find((item) => item.id === project.activeMasterPlanVersionId)
+        || (project.masterPlanVersions || []).find((item) => item.status === "applied")
+        || null;
+      if (appliedMasterPlanVersion) {
+        project.activeMasterPlanVersionId = appliedMasterPlanVersion.id;
+        project.masterPlan = String(appliedMasterPlanVersion.responseText || appliedMasterPlanVersion.content || project.masterPlan || "");
+      }
+      const pack = getActivePackForProject(database, project);
+      if (!pack) continue;
+      if (!project.activePromptPackId) project.activePromptPackId = pack.id;
+      if (!Array.isArray(pack.chunks)) pack.chunks = [];
+      if (Array.isArray(pack.roadmapVersions) && project.activeRoadmapVersionId) {
+        const activeRoadmapVersion = pack.roadmapVersions.find((item) => item.id === project.activeRoadmapVersionId);
+        if (!activeRoadmapVersion) {
+          project.activeRoadmapVersionId = "";
+        }
+      }
+
+      const projectTaskPrompts = (database.taskPrompts || []).filter((item) => item.projectId === project.id);
+      const keepPromptIds = new Set(projectTaskPrompts.map((item) => item.id));
+      const byRoadmapItemId = new Map();
+      for (const prompt of projectTaskPrompts) {
+        if (!prompt.roadmapItemId) continue;
+        const existing = byRoadmapItemId.get(prompt.roadmapItemId);
+        const preferred = choosePreferredTaskPrompt(existing, prompt);
+        byRoadmapItemId.set(prompt.roadmapItemId, preferred);
+      }
+      for (const prompt of projectTaskPrompts) {
+        if (!prompt.roadmapItemId) continue;
+        const preferred = byRoadmapItemId.get(prompt.roadmapItemId);
+        if (preferred && preferred.id !== prompt.id) keepPromptIds.delete(prompt.id);
+      }
+      const filteredProjectPrompts = projectTaskPrompts.filter((prompt) => keepPromptIds.has(prompt.id));
+      const byChunkId = new Map();
+      for (const prompt of filteredProjectPrompts) {
+        if (!prompt.sourceChunkId) continue;
+        const existing = byChunkId.get(prompt.sourceChunkId);
+        const preferred = choosePreferredTaskPrompt(existing, prompt);
+        byChunkId.set(prompt.sourceChunkId, preferred);
+      }
+      for (const prompt of filteredProjectPrompts) {
+        if (!prompt.sourceChunkId) continue;
+        const preferred = byChunkId.get(prompt.sourceChunkId);
+        if (preferred && preferred.id !== prompt.id) keepPromptIds.delete(prompt.id);
+      }
+      database.taskPrompts = (database.taskPrompts || []).filter((prompt) => prompt.projectId !== project.id || keepPromptIds.has(prompt.id));
+
+      const stablePrompts = (database.taskPrompts || []).filter((item) => item.projectId === project.id);
+      for (const taskPrompt of stablePrompts) {
+        try {
+          ensureTaskPromptChunkLink(database, project, pack, taskPrompt, { createMissingChunk: true, createMissingTaskPrompt: false });
+        } catch (_error) {
+          // Keep loading resilient for legacy/incomplete datasets.
+        }
+      }
+      for (const chunk of pack.chunks) {
+        try {
+          ensureTaskPromptChunkLink(database, project, pack, chunk, { createMissingChunk: false, createMissingTaskPrompt: true });
+        } catch (_error) {
+          // Keep loading resilient for legacy/incomplete datasets.
+        }
+      }
+    }
+    return database;
+  }
+
+  function readDatabase() {
+    const sanitized = sanitizeDatabase(readJsonFile(dbPath, createEmptyDatabase()));
+    return sanitizeWorkflowState(sanitized);
+  }
+
+  function writeDatabase(database) {
+    const sanitized = sanitizeWorkflowState(sanitizeDatabase(database));
+    sanitized.updatedAt = createTimestamp();
+    writeJsonFile(dbPath, sanitized);
+    return sanitized;
+  }
+
   function syncProjectFilesFromDatabase(database) {
     for (const project of database.projects) {
       if (!project || !project.path) {
@@ -1079,17 +1332,28 @@ function createVaultStore({ dbPath }) {
       ensureProjectScaffold(project.path);
       const projectFiles = getProjectPaths(project.path);
       const masterPlan = String(project.masterPlan || "");
-      if (masterPlan.trim() && readTextIfExists(projectFiles.masterplan) !== masterPlan) {
+      if (readTextIfExists(projectFiles.masterplan) !== masterPlan) {
         fs.writeFileSync(projectFiles.masterplan, masterPlan, "utf8");
       }
 
       const activePack = getActivePackForProject(database, project);
-      const hasRoadmap = Boolean(activePack && activePack.roadmap && Array.isArray(activePack.roadmap.items) && activePack.roadmap.items.length);
-      if (hasRoadmap) {
-        const serializedRoadmap = serializeRoadmapToMarkdown(activePack.roadmap);
-        if (readTextIfExists(projectFiles.roadmap) !== serializedRoadmap) {
-          fs.writeFileSync(projectFiles.roadmap, serializedRoadmap, "utf8");
+      if (activePack) {
+        const serializedRoadmap = serializeRoadmapToMarkdown(activePack.roadmap || { items: [] });
+        if (readTextIfExists(projectFiles.roadmap) !== serializedRoadmap) fs.writeFileSync(projectFiles.roadmap, serializedRoadmap, "utf8");
+      }
+      const projectTaskPrompts = (database.taskPrompts || [])
+        .filter((prompt) => prompt.projectId === project.id)
+        .sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+      for (const taskPrompt of projectTaskPrompts) {
+        if (!taskPrompt) continue;
+        const taskFileName = taskPrompt.taskFileName || getTaskFileName(taskPrompt);
+        const taskFilePath = path.join(projectFiles.tasksDir, taskFileName);
+        const nextContent = String(taskPrompt.content || "");
+        if (readTextIfExists(taskFilePath) !== nextContent) {
+          fs.writeFileSync(taskFilePath, nextContent, "utf8");
         }
+        taskPrompt.taskFileName = taskFileName;
+        taskPrompt.taskFilePath = taskFilePath;
       }
       refreshProjectProgress(project);
     }
@@ -1413,6 +1677,18 @@ function createVaultStore({ dbPath }) {
     chunk.status = normalizedStatus;
     chunk.copiedAt = normalizedStatus === "copied" ? createTimestamp() : chunk.copiedAt;
     chunk.launcherCopiedAt = status === "launcher_copied" ? createTimestamp() : chunk.launcherCopiedAt;
+    const project = getProjectById(database, pack.projectId);
+    const linkedTaskPrompt = (database.taskPrompts || []).find((item) => item.projectId === project.id && (item.sourceChunkId === chunk.id || (chunk.roadmapItemId && item.roadmapItemId === chunk.roadmapItemId))) || null;
+    if (linkedTaskPrompt) {
+      linkedTaskPrompt.status = chunkStatusToTaskPromptStatus(normalizedStatus);
+      if (normalizedStatus === "copied") linkedTaskPrompt.copiedAt = chunk.copiedAt || createTimestamp();
+      if (normalizedStatus === "done") linkedTaskPrompt.doneAt = createTimestamp();
+      linkedTaskPrompt.updatedAt = createTimestamp();
+      ensureTaskPromptChunkLink(database, project, pack, linkedTaskPrompt, {
+        createMissingChunk: false,
+        createMissingTaskPrompt: false
+      });
+    }
     pack.updatedAt = createTimestamp();
 
     return {
@@ -1559,14 +1835,18 @@ function createVaultStore({ dbPath }) {
     if (nextScope) {
       chunk.scope = nextScope;
     }
-    const taskPrompt = (database.taskPrompts || []).find((item) => item.sourceChunkId === chunk.id && item.projectId === project.id);
-    if (taskPrompt) {
-      taskPrompt.title = chunk.title;
-      taskPrompt.content = chunk.prompt;
-      taskPrompt.updatedAt = createTimestamp();
-      const taskFile = writeTaskPromptFile(project.path, taskPrompt);
-      taskPrompt.taskFileName = taskFile.taskFileName;
-      taskPrompt.taskFilePath = taskFile.taskFilePath;
+    const repaired = ensureTaskPromptChunkLink(database, project, pack, chunk, {
+      createMissingChunk: false,
+      createMissingTaskPrompt: true,
+      preferChunkAsSource: true
+    });
+    if (repaired.taskPrompt) {
+      repaired.taskPrompt.title = chunk.title;
+      repaired.taskPrompt.content = chunk.prompt;
+      repaired.taskPrompt.updatedAt = createTimestamp();
+      const taskFile = writeTaskPromptFile(project.path, repaired.taskPrompt);
+      repaired.taskPrompt.taskFileName = taskFile.taskFileName;
+      repaired.taskPrompt.taskFilePath = taskFile.taskFilePath;
     }
     pack.updatedAt = createTimestamp();
 
@@ -1622,13 +1902,17 @@ function createVaultStore({ dbPath }) {
 
     chunk.prompt = String(version.responseText || chunk.prompt || "");
     version.appliedAt = createTimestamp();
-    const taskPrompt = (database.taskPrompts || []).find((item) => item.sourceChunkId === chunk.id && item.projectId === project.id);
-    if (taskPrompt) {
-      taskPrompt.content = chunk.prompt;
-      taskPrompt.updatedAt = createTimestamp();
-      const taskFile = writeTaskPromptFile(project.path, taskPrompt);
-      taskPrompt.taskFileName = taskFile.taskFileName;
-      taskPrompt.taskFilePath = taskFile.taskFilePath;
+    const repaired = ensureTaskPromptChunkLink(database, project, pack, chunk, {
+      createMissingChunk: false,
+      createMissingTaskPrompt: true,
+      preferChunkAsSource: true
+    });
+    if (repaired.taskPrompt) {
+      repaired.taskPrompt.content = chunk.prompt;
+      repaired.taskPrompt.updatedAt = createTimestamp();
+      const taskFile = writeTaskPromptFile(project.path, repaired.taskPrompt);
+      repaired.taskPrompt.taskFileName = taskFile.taskFileName;
+      repaired.taskPrompt.taskFilePath = taskFile.taskFilePath;
     }
     pack.updatedAt = createTimestamp();
 
@@ -2090,16 +2374,7 @@ function createVaultStore({ dbPath }) {
   }
 
   function findTaskPromptForRoadmapItem(database, projectId, roadmapItemId) {
-    return (database.taskPrompts || []).find((prompt) => prompt.projectId === projectId && prompt.roadmapItemId === roadmapItemId) || null;
-  }
-
-  function findChunkForRoadmapItem(pack, roadmapItemId, sourceChunkId) {
-    const chunks = Array.isArray(pack && pack.chunks) ? pack.chunks : [];
-    if (sourceChunkId) {
-      const byId = chunks.find((chunk) => chunk.id === sourceChunkId);
-      if (byId) return byId;
-    }
-    return chunks.find((chunk) => chunk.roadmapItemId === roadmapItemId) || null;
+    return findTaskForRoadmapItem(database, projectId, roadmapItemId).taskPrompt;
   }
 
   function createChunkForTaskPrompt({ project, pack, taskPrompt, roadmapItem }) {
@@ -2116,7 +2391,7 @@ function createVaultStore({ dbPath }) {
         tasks: [],
         gitAction: "none",
         commitMessage: taskPrompt.title || "Task Prompt",
-        status: "in_progress",
+        status: taskPromptStatusToChunkStatus(taskPrompt.status),
         prompt: taskPrompt.content || "",
         launcher: "",
         roadmapItemId: taskPrompt.roadmapItemId,
@@ -2128,6 +2403,7 @@ function createVaultStore({ dbPath }) {
     chunk.prompt = String(taskPrompt.content || chunk.prompt || "");
     chunk.title = normalizeString(taskPrompt.title) || chunk.title;
     chunk.roadmapItemId = taskPrompt.roadmapItemId || chunk.roadmapItemId;
+    chunk.status = taskPromptStatusToChunkStatus(taskPrompt.status);
     pack.chunks.push(chunk);
     pack.updatedAt = createTimestamp();
     return chunk;
@@ -2135,43 +2411,23 @@ function createVaultStore({ dbPath }) {
 
   function syncTaskPromptAndChunkStatus(taskPrompt, chunk) {
     if (!taskPrompt || !chunk) return;
-    const taskStatus = normalizeString(taskPrompt.status);
-    if (taskStatus === "approved" || taskStatus === "copied" || taskStatus === "done") {
-      chunk.status = taskStatus;
-    } else {
-      chunk.status = "in_progress";
-    }
+    const taskStatus = normalizeTaskPromptStatus(taskPrompt.status);
+    chunk.status = taskPromptStatusToChunkStatus(taskStatus);
     if (taskPrompt.copiedAt) chunk.copiedAt = taskPrompt.copiedAt;
     chunk.updatedAt = createTimestamp();
   }
 
   function resolveTaskPromptChunkLink(database, taskPrompt, options = {}) {
-    const createIfMissing = options.createIfMissing !== false;
     const project = getProjectById(database, taskPrompt.projectId);
     const pack = getActivePackForProject(database, project);
     if (!pack) {
       return { project, pack: null, chunk: null, taskPrompt };
     }
-
-    const roadmapItems = pack.roadmap && Array.isArray(pack.roadmap.items) ? pack.roadmap.items : [];
-    const roadmapItem = roadmapItems.find((item) => item.id === taskPrompt.roadmapItemId) || null;
-    let chunk = findChunkForRoadmapItem(pack, taskPrompt.roadmapItemId, taskPrompt.sourceChunkId);
-
-    if (!chunk && createIfMissing) {
-      chunk = createChunkForTaskPrompt({ project, pack, taskPrompt, roadmapItem });
-    }
-    if (chunk) {
-      taskPrompt.sourceChunkId = chunk.id;
-      taskPrompt.roadmapItemId = taskPrompt.roadmapItemId || chunk.roadmapItemId;
-      if (!taskPrompt.order) taskPrompt.order = Number(chunk.order) || 1;
-      chunk.title = normalizeString(taskPrompt.title) || chunk.title;
-      chunk.prompt = String(taskPrompt.content || chunk.prompt || "");
-      chunk.roadmapItemId = taskPrompt.roadmapItemId || chunk.roadmapItemId;
-      syncTaskPromptAndChunkStatus(taskPrompt, chunk);
-      pack.updatedAt = createTimestamp();
-    }
-
-    return { project, pack, chunk, taskPrompt };
+    const repaired = ensureTaskPromptChunkLink(database, project, pack, taskPrompt, {
+      createMissingChunk: options.createIfMissing !== false,
+      createMissingTaskPrompt: false
+    });
+    return { project, pack, chunk: repaired.chunk, taskPrompt: repaired.taskPrompt || taskPrompt };
   }
 
   function listRoadmapVersions(projectId) {
@@ -2207,8 +2463,9 @@ function createVaultStore({ dbPath }) {
     const items = (eligibility.items || []).map((item) => {
       if (item.done) return { ...item, status: "done" };
       if (item.taskPrompt || item.started) {
-        if (item.taskPrompt && item.taskPrompt.status === "approved") return { ...item, status: "approved" };
-        if (item.taskPrompt && item.taskPrompt.status === "copied") return { ...item, status: "copied" };
+        const promptStatus = item.taskPrompt ? normalizeTaskPromptStatus(item.taskPrompt.status) : "";
+        if (promptStatus === "approved") return { ...item, status: "approved" };
+        if (promptStatus === "copied") return { ...item, status: "copied" };
         return { ...item, status: "task_created" };
       }
       if (!item.eligible) return { ...item, status: "blocked" };
@@ -2220,7 +2477,7 @@ function createVaultStore({ dbPath }) {
   function getNextEligibleRoadmapItem(projectId) {
     const result = getRoadmapItemEligibility(projectId);
     const nextItem = (result.items || [])
-      .filter((item) => item.status === "ready")
+      .filter((item) => item.status === "ready" && !item.taskPrompt && !item.started)
       .sort((left, right) => Number(left.order || 0) - Number(right.order || 0))[0] || null;
     return { ...result, nextItem };
   }
@@ -2230,29 +2487,28 @@ function createVaultStore({ dbPath }) {
     const project = getProjectById(database, projectId);
     const pack = getActivePackForProject(database, project);
     if (!pack) throw new Error("Active roadmap pack not found.");
-    const existingTaskPrompt = findTaskPromptForRoadmapItem(database, project.id, roadmapItemId);
+    const existing = findTaskForRoadmapItem(database, project.id, roadmapItemId);
+    const existingTaskPrompt = existing.taskPrompt;
     if (existingTaskPrompt) {
-      const resolved = resolveTaskPromptChunkLink(database, existingTaskPrompt, { createIfMissing: true });
+      const resolved = ensureTaskPromptChunkLink(database, project, pack, existingTaskPrompt, {
+        createMissingChunk: true,
+        createMissingTaskPrompt: false
+      });
+      const taskFile = writeTaskPromptFile(project.path, resolved.taskPrompt || existingTaskPrompt);
+      (resolved.taskPrompt || existingTaskPrompt).taskFileName = taskFile.taskFileName;
+      (resolved.taskPrompt || existingTaskPrompt).taskFilePath = taskFile.taskFilePath;
       refreshProjectProgress(project);
       return {
         created: false,
-        taskPrompt: existingTaskPrompt,
-        chunk: resolved.chunk,
+        taskPrompt: resolved.taskPrompt || existingTaskPrompt,
+        chunk: resolved.chunk || existing.chunk,
         project,
-        pack: resolved.pack || pack,
+        pack,
         state: writeDatabase(database)
       };
     }
 
-    const created = createTaskPromptFromRoadmapItem(projectId, roadmapItemId);
-    return {
-      created: true,
-      taskPrompt: created.taskPrompt,
-      chunk: created.chunk,
-      project: created.project,
-      pack: created.pack,
-      state: created.state
-    };
+    return createTaskPromptFromRoadmapItem(projectId, roadmapItemId);
   }
 
   function markRoadmapItemInProgress(projectId, roadmapItemId) {
@@ -2260,7 +2516,7 @@ function createVaultStore({ dbPath }) {
     const project = getProjectById(database, projectId);
     const pack = getActivePackForProject(database, project);
     if (!pack) throw new Error("Active roadmap pack not found.");
-    const existing = (pack.chunks || []).find((chunk) => chunk.roadmapItemId === roadmapItemId);
+    const existing = findTaskForRoadmapItem(database, project.id, roadmapItemId).chunk;
     if (!existing) {
       const started = startRoadmapPrompt(pack.id, roadmapItemId);
       return { project, pack: started.pack, chunk: started.chunk, state: started.state };
@@ -2274,7 +2530,7 @@ function createVaultStore({ dbPath }) {
     const project = getProjectById(database, projectId);
     const pack = getActivePackForProject(database, project);
     if (!pack) throw new Error("Active roadmap pack not found.");
-    const existing = (pack.chunks || []).find((chunk) => chunk.roadmapItemId === roadmapItemId);
+    const existing = findTaskForRoadmapItem(database, project.id, roadmapItemId).chunk;
     if (!existing) throw new Error("Roadmap item has no started task.");
     const updated = updateChunkStatus(pack.id, existing.id, "done");
     return { project, pack: getPackById(readDatabase(), pack.id), chunk: updated.chunk, state: updated.state };
@@ -2285,12 +2541,33 @@ function createVaultStore({ dbPath }) {
     const project = getProjectById(database, projectId);
     const pack = getActivePackForProject(database, project);
     if (!pack) throw new Error("Active roadmap pack not found.");
+    const existing = findTaskForRoadmapItem(database, project.id, roadmapItemId);
+    if (existing.taskPrompt || existing.chunk) {
+      const repaired = ensureTaskPromptChunkLink(database, project, pack, existing.taskPrompt || existing.chunk, {
+        createMissingChunk: true,
+        createMissingTaskPrompt: true
+      });
+      if (!repaired.taskPrompt) throw new Error("Failed to resolve existing task prompt.");
+      const taskFile = writeTaskPromptFile(project.path, repaired.taskPrompt);
+      repaired.taskPrompt.taskFileName = taskFile.taskFileName;
+      repaired.taskPrompt.taskFilePath = taskFile.taskFilePath;
+      refreshProjectProgress(project);
+      return {
+        created: false,
+        taskPrompt: repaired.taskPrompt,
+        version: repaired.taskPrompt.activeVersionId
+          ? (database.taskPromptVersions || []).find((entry) => entry.id === repaired.taskPrompt.activeVersionId) || null
+          : null,
+        project,
+        pack,
+        chunk: repaired.chunk || existing.chunk || null,
+        state: writeDatabase(database)
+      };
+    }
     const eligibility = getRoadmapEligibility(pack.id);
     const item = (eligibility.items || []).find((entry) => entry.id === roadmapItemId);
     if (!item) throw new Error("Roadmap item not found.");
     if (!item.eligible) throw new Error("Roadmap item is not ready.");
-    const existingTaskPrompt = findTaskPromptForRoadmapItem(database, project.id, roadmapItemId);
-    if (existingTaskPrompt) throw new Error("Task prompt already exists for this roadmap item.");
     const maxOrder = (pack.chunks || []).reduce((max, chunk) => Math.max(max, Number(chunk.order) || 0), 0);
     const chunk = createPromptFromRoadmapItem({
       project,
@@ -2327,16 +2604,21 @@ function createVaultStore({ dbPath }) {
     taskPrompt.activeVersionId = version.id;
     database.taskPrompts.unshift(taskPrompt);
     database.taskPromptVersions.unshift(version);
-    const taskFile = writeTaskPromptFile(project.path, taskPrompt);
-    taskPrompt.taskFileName = taskFile.taskFileName;
-    taskPrompt.taskFilePath = taskFile.taskFilePath;
+    const repaired = ensureTaskPromptChunkLink(database, project, pack, taskPrompt, {
+      createMissingChunk: true,
+      createMissingTaskPrompt: false
+    });
+    const taskFile = writeTaskPromptFile(project.path, repaired.taskPrompt || taskPrompt);
+    (repaired.taskPrompt || taskPrompt).taskFileName = taskFile.taskFileName;
+    (repaired.taskPrompt || taskPrompt).taskFilePath = taskFile.taskFilePath;
     refreshProjectProgress(project);
     return {
-      taskPrompt,
+      created: true,
+      taskPrompt: repaired.taskPrompt || taskPrompt,
       version,
       project,
       pack,
-      chunk,
+      chunk: repaired.chunk || chunk,
       state: writeDatabase(database)
     };
   }
@@ -2362,17 +2644,18 @@ function createVaultStore({ dbPath }) {
     if (nextTitle) taskPrompt.title = nextTitle;
     taskPrompt.content = nextContent;
     taskPrompt.updatedAt = createTimestamp();
-    const { project, pack, chunk } = resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
+    const { project, pack, chunk, taskPrompt: repairedTaskPrompt } = resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
+    const targetTaskPrompt = repairedTaskPrompt || taskPrompt;
     if (chunk) {
       if (nextTitle) chunk.title = nextTitle;
       chunk.prompt = nextContent;
       chunk.updatedAt = createTimestamp();
       if (pack) pack.updatedAt = createTimestamp();
     }
-    const taskFile = writeTaskPromptFile(project.path, taskPrompt);
-    taskPrompt.taskFileName = taskFile.taskFileName;
-    taskPrompt.taskFilePath = taskFile.taskFilePath;
-    return { taskPrompt, state: writeDatabase(database) };
+    const taskFile = writeTaskPromptFile(project.path, targetTaskPrompt);
+    targetTaskPrompt.taskFileName = taskFile.taskFileName;
+    targetTaskPrompt.taskFilePath = taskFile.taskFilePath;
+    return { taskPrompt: targetTaskPrompt, state: writeDatabase(database) };
   }
 
   function addTaskPromptVersion(taskPromptId, input) {
@@ -2404,16 +2687,17 @@ function createVaultStore({ dbPath }) {
     taskPrompt.content = version.content;
     taskPrompt.activeVersionId = version.id;
     taskPrompt.updatedAt = createTimestamp();
-    const { project, pack, chunk } = resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
+    const { project, pack, chunk, taskPrompt: repairedTaskPrompt } = resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
+    const targetTaskPrompt = repairedTaskPrompt || taskPrompt;
     if (chunk) {
-      chunk.prompt = taskPrompt.content;
+      chunk.prompt = targetTaskPrompt.content;
       chunk.updatedAt = createTimestamp();
       if (pack) pack.updatedAt = createTimestamp();
     }
-    const taskFile = writeTaskPromptFile(project.path, taskPrompt);
-    taskPrompt.taskFileName = taskFile.taskFileName;
-    taskPrompt.taskFilePath = taskFile.taskFilePath;
-    return { taskPrompt, version, state: writeDatabase(database) };
+    const taskFile = writeTaskPromptFile(project.path, targetTaskPrompt);
+    targetTaskPrompt.taskFileName = taskFile.taskFileName;
+    targetTaskPrompt.taskFilePath = taskFile.taskFilePath;
+    return { taskPrompt: targetTaskPrompt, version, state: writeDatabase(database) };
   }
 
   function listTaskPromptVersions(taskPromptId) {
@@ -2455,19 +2739,19 @@ function createVaultStore({ dbPath }) {
     const database = readDatabase();
     const taskPrompt = (database.taskPrompts || []).find((item) => item.id === taskPromptId);
     if (!taskPrompt) throw new Error("Task prompt not found.");
-    taskPrompt.status = "approved";
+    taskPrompt.status = normalizeTaskPromptStatus("approved");
     taskPrompt.approvedAt = createTimestamp();
     taskPrompt.updatedAt = createTimestamp();
-    const { pack } = resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
+    const { pack, taskPrompt: repairedTaskPrompt } = resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
     if (pack) pack.updatedAt = createTimestamp();
-    return { taskPrompt, state: writeDatabase(database) };
+    return { taskPrompt: repairedTaskPrompt || taskPrompt, state: writeDatabase(database) };
   }
 
   function copyCodexHandoff(taskPromptId) {
     const database = readDatabase();
     const taskPrompt = (database.taskPrompts || []).find((item) => item.id === taskPromptId);
     if (!taskPrompt) throw new Error("Task prompt not found.");
-    if (taskPrompt.status !== "approved") {
+    if (normalizeTaskPromptStatus(taskPrompt.status) !== "approved") {
       throw new Error("Task prompt must be approved before copy.");
     }
     const project = getProjectById(database, taskPrompt.projectId);
@@ -2481,17 +2765,17 @@ function createVaultStore({ dbPath }) {
       "Full task prompt:",
       taskPrompt.content
     ].join("\n");
-    taskPrompt.status = "copied";
+    taskPrompt.status = normalizeTaskPromptStatus("copied");
     taskPrompt.copiedAt = createTimestamp();
     taskPrompt.updatedAt = createTimestamp();
-    const { pack, chunk } = resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
+    const { pack, chunk, taskPrompt: repairedTaskPrompt } = resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
     if (chunk) {
-      chunk.status = "copied";
+      chunk.status = taskPromptStatusToChunkStatus("copied");
       chunk.copiedAt = taskPrompt.copiedAt;
       chunk.updatedAt = createTimestamp();
     }
     if (pack) pack.updatedAt = createTimestamp();
-    return { taskPrompt, handoffText, state: writeDatabase(database) };
+    return { taskPrompt: repairedTaskPrompt || taskPrompt, handoffText, state: writeDatabase(database) };
   }
 
   function markTaskPromptDone(taskPromptId, input) {
@@ -2511,10 +2795,11 @@ function createVaultStore({ dbPath }) {
       createdAt: createTimestamp()
     });
     database.taskRuns.unshift(run);
-    taskPrompt.status = "done";
+    taskPrompt.status = normalizeTaskPromptStatus("done");
     taskPrompt.doneAt = createTimestamp();
     taskPrompt.updatedAt = createTimestamp();
-    const { project, pack } = resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
+    const { project, pack, taskPrompt: repairedTaskPrompt } = resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
+    const targetTaskPrompt = repairedTaskPrompt || taskPrompt;
     let nextItem = null;
     if (pack && pack.roadmap && Array.isArray(pack.roadmap.items)) {
       const doneRoadmapIds = (pack.chunks || [])
@@ -2522,7 +2807,7 @@ function createVaultStore({ dbPath }) {
         .map((entry) => entry.roadmapItemId);
       const taskPrompts = (database.taskPrompts || []).filter((entry) => entry.projectId === project.id);
       const taskPromptDoneRoadmapIds = taskPrompts
-        .filter((entry) => entry.status === "done" && entry.roadmapItemId)
+        .filter((entry) => normalizeTaskPromptStatus(entry.status) === "done" && entry.roadmapItemId)
         .map((entry) => entry.roadmapItemId);
       const startedRoadmapIds = [
         ...(pack.chunks || []).filter((entry) => entry.roadmapItemId).map((entry) => entry.roadmapItemId),
@@ -2540,7 +2825,7 @@ function createVaultStore({ dbPath }) {
           return blockedBy.length === 0;
         }) || null;
     }
-    return { taskPrompt, run, nextItem, state: writeDatabase(database) };
+    return { taskPrompt: targetTaskPrompt, run, nextItem, state: writeDatabase(database) };
   }
 
   function getRoadmapEligibility(packId) {
@@ -2551,17 +2836,24 @@ function createVaultStore({ dbPath }) {
     const taskPrompts = (database.taskPrompts || []).filter((prompt) => prompt.projectId === pack.projectId);
     const roadmapTaskPromptMap = new Map();
     for (const prompt of taskPrompts) {
-      if (prompt.roadmapItemId && !roadmapTaskPromptMap.has(prompt.roadmapItemId)) {
-        roadmapTaskPromptMap.set(prompt.roadmapItemId, prompt);
+      if (!prompt.roadmapItemId) continue;
+      const existing = roadmapTaskPromptMap.get(prompt.roadmapItemId);
+      roadmapTaskPromptMap.set(prompt.roadmapItemId, choosePreferredTaskPrompt(existing, prompt));
+    }
+    for (const chunk of chunks) {
+      if (!chunk.roadmapItemId) continue;
+      if (!roadmapTaskPromptMap.has(chunk.roadmapItemId)) {
+        const linkedPrompt = taskPrompts.find((prompt) => prompt.sourceChunkId === chunk.id) || null;
+        if (linkedPrompt) roadmapTaskPromptMap.set(chunk.roadmapItemId, linkedPrompt);
       }
     }
 
     const doneRoadmapIds = new Set([
       ...chunks
-        .filter((chunk) => chunk.status === "done" && chunk.roadmapItemId)
+        .filter((chunk) => normalizeChunkStatus(chunk.status) === "done" && chunk.roadmapItemId)
         .map((chunk) => chunk.roadmapItemId),
       ...taskPrompts
-        .filter((prompt) => prompt.status === "done" && prompt.roadmapItemId)
+        .filter((prompt) => normalizeTaskPromptStatus(prompt.status) === "done" && prompt.roadmapItemId)
         .map((prompt) => prompt.roadmapItemId)
     ]);
     const startedRoadmapIds = new Set([
@@ -2694,8 +2986,18 @@ function createPromptFromRoadmapItem({ project, pack, item, order }) {
     freshPack.activePromptId = chunk.id;
     freshPack.updatedAt = createTimestamp();
     ensureProjectScaffold(project.path);
-    const taskName = `task-${String(chunk.order).padStart(3, "0")}-${slugify(chunk.title)}.md`;
-    fs.writeFileSync(path.join(getProjectPaths(project.path).tasksDir, taskName), chunk.prompt, "utf8");
+    const repaired = ensureTaskPromptChunkLink(database, project, freshPack, chunk, {
+      createMissingChunk: false,
+      createMissingTaskPrompt: true
+    });
+    if (repaired.taskPrompt) {
+      const taskFile = writeTaskPromptFile(project.path, repaired.taskPrompt);
+      repaired.taskPrompt.taskFileName = taskFile.taskFileName;
+      repaired.taskPrompt.taskFilePath = taskFile.taskFilePath;
+    } else {
+      const taskName = `task-${String(chunk.order).padStart(3, "0")}-${slugify(chunk.title)}.md`;
+      fs.writeFileSync(path.join(getProjectPaths(project.path).tasksDir, taskName), chunk.prompt, "utf8");
+    }
     refreshProjectProgress(project);
     return { pack: freshPack, chunk, project, state: writeDatabase(database) };
   }
@@ -2800,7 +3102,11 @@ function createPromptFromRoadmapItem({ project, pack, item, order }) {
 
     for (const chunk of selectedChunks) {
       const taskPath = path.join(projectFiles.tasksDir, `task-${String(chunk.order).padStart(3, "0")}-${slugify(chunk.title)}.md`);
-      baseParts.push(`### ${path.basename(taskPath)}\n${readTextIfExists(taskPath) || chunk.prompt || ""}`);
+      const linkedTaskPrompt = (database.taskPrompts || []).find((prompt) => prompt.projectId === project.id && (prompt.sourceChunkId === chunk.id || (chunk.roadmapItemId && prompt.roadmapItemId === chunk.roadmapItemId))) || null;
+      const taskFileName = linkedTaskPrompt ? getTaskFileName(linkedTaskPrompt) : path.basename(taskPath);
+      const taskFilePath = linkedTaskPrompt ? path.join(projectFiles.tasksDir, taskFileName) : taskPath;
+      const taskBody = linkedTaskPrompt ? String(linkedTaskPrompt.content || "") : (readTextIfExists(taskFilePath) || chunk.prompt || "");
+      baseParts.push(`### ${path.basename(taskFilePath)}\n${taskBody}`);
     }
 
     return {

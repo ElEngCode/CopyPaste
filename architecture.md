@@ -1,5 +1,27 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-27 Prompt Vault Coherent State Model
+
+- `apps/desktop/prompt-vault.js` now enforces a single coherent workflow model:
+  - project owns applied planning pointers (`activeMasterPlanVersionId`, `activeRoadmapVersionId`, `activePromptPackId`)
+  - active pack owns active roadmap state
+  - task prompt is authoritative task object; chunk is legacy compatibility/rendering.
+- Added core reconciliation primitives:
+  - `findTaskForRoadmapItem(database, projectId, roadmapItemId)` resolves taskPrompt/chunk/pack from mixed legacy states.
+  - `ensureTaskPromptChunkLink(database, project, pack, taskPromptOrChunk)` repairs missing links and keeps task/chunk state aligned.
+- Sanitization now performs safe dedupe and repair:
+  - prevents multiple `taskPrompts` for the same `projectId + roadmapItemId`
+  - resolves stale duplicate records by keeping the newest/most complete prompt
+  - repairs orphan taskPrompt or orphan chunk records when safe.
+- File mirroring contract is now explicit:
+  - `masterplan.md` mirrors `project.masterPlan`
+  - `plan-roadmap.md` mirrors active pack roadmap serialization
+  - task files mirror `taskPrompt.content` whenever taskPrompt exists (chunk prompt no longer overrides improved task prompt text).
+- Status contract:
+  - task prompt statuses: `draft`, `approved`, `copied`, `done`
+  - chunk statuses normalize legacy values (`ready`/`draft` -> `in_progress`) and sync with linked task prompts.
+- `apps/desktop/tests/prompt-vault.test.js` and `apps/desktop/tests/workflow-integration.test.js` include coverage for idempotent create, link repair, status sync, next eligible roadmap selection, stale-file protection, and duplicate sanitize behavior.
+
 ## 2026-05-27 Real Workflow Repair (PR flow usability)
 
 - `apps/desktop/prompt-vault.js`
