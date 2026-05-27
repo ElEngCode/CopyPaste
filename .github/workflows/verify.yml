@@ -22,5 +22,8 @@ jobs:
       - name: Install dependencies
         run: npm.cmd ci
 
-      - name: Run verification
-        run: npm.cmd run verify
+      - name: Verify extension
+        run: npm.cmd run extension:verify
+
+      - name: Test desktop
+        run: npm.cmd run desktop:test
