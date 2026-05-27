@@ -1,0 +1,29 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  install-and-verify:
+    name: Install and verify
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm.cmd ci
+
+      - name: Verify extension
+        run: npm.cmd run extension:verify
+
+      - name: Test desktop
+        run: npm.cmd run desktop:test

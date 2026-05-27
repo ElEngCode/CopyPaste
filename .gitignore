@@ -1,0 +1,14 @@
+node_modules/
+.worktrees/
+dist/
+build/
+coverage/
+Projects/
+artifacts/
+*.log
+apps/extension/ws-session-token.json
+prompt-vault-db.json
+nextstep-db.json
+nextstep-db.backup.json
+nextstep-db.tmp
+*.corrupt-*.bak

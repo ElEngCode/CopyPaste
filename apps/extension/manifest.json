@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "CopyPaste Orchestrator",
+  "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmRMBm5hNLFNpt0vTkqL8AoiQ6zsw7tuFXTKLZvJ7pcrYoU+q5Y9qYFBpnmmFb7KCYnqyJgoZGSQMFrJl47s2fbGyUtCDP4IQnKLwoO9X2n5rIGSXdW40DsT9EJCsV5WkSrImsmQZ0lusKSRJWu47Y22HnFBxkAY1VYijjsVnJH83a4dPZ77Ws1Pzjk8tMILcVQiGfWs8g+Gw3D8zujuMniDIFvX5lFIMwQEfxtjPu6BOwcVbsDi1N2r4BX8Molj2Jhcm2ZO5628gb8uxhtwnjjP+D57s+TiDlnyrwqb7/Wj8hsZwG90Pup2uFh84b7/u/lklw6TwNt0nNNtIIfoIQQIDAQAB",
+  "description": "WebSocket-driven Chrome automation puppet for ChatGPT and Claude.",
+  "permissions": [
+    "tabs",
+    "scripting",
+    "activeTab",
+    "downloads",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://*.chatgpt.com/*",
+    "https://chatgpt.com/*",
+    "https://*.claude.ai/*",
+    "https://claude.ai/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src ws://localhost:8080 http://localhost:8080;"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

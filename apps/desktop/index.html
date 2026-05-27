@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Project Builder</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --panel-2: #f9fafb;
+      --ink: #172033;
+      --muted: #647084;
+      --line: #d8dee8;
+      --soft-line: #e8edf3;
+      --primary: #1f5fbf;
+      --primary-hover: #184d9d;
+      --primary-soft: #eef5ff;
+      --green: #137a45;
+      --green-soft: #ecfdf3;
+      --amber: #a15c07;
+      --amber-soft: #fff7e8;
+      --danger: #a0183a;
+      --danger-hover: #861331;
+      font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+      font-size: 13px;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink); }
+    main { max-width: 1496px; margin: 0 auto; padding: 16px 18px 22px; }
+    h1, h2, h3, p { margin: 0; }
+    .app-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .brand-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 7px; background: #172033; color: #fff; font-weight: 800; }
+    h1 { font-size: 19px; line-height: 1.2; font-weight: 750; letter-spacing: 0; }
+    .header-note, .section-note, .field-help, .muted { color: var(--muted); }
+    .header-note { font-size: 12px; margin-top: 2px; }
+    .top-status {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 10px 12px; margin-bottom: 14px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+    }
+    .connection-group, .status-group, .connection-actions, .setup-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .setup-tools { display: none; margin-top: 8px; border-top: 1px solid var(--soft-line); padding-top: 8px; }
+    .setup-tools[data-open="true"] { display: flex; }
+    .connection-pill, .target-pill, .provider-chip, .status-pill {
+      display: inline-flex; align-items: center; gap: 7px; border-radius: 999px; white-space: nowrap;
+    }
+    .connection-pill {
+      min-height: 28px; border: 1px solid #bae6c8; background: var(--green-soft); color: #14532d;
+      padding: 4px 11px; font-size: 12px; font-weight: 700;
+    }
+    .connection-pill[data-connected="false"] { border-color: #f6d28b; background: var(--amber-soft); color: #7a3f02; }
+    .connection-dot, .status-dot { width: 7px; height: 7px; border-radius: 999px; background: #18a957; }
+    .connection-pill[data-connected="false"] .connection-dot { background: #d97706; }
+    .status-group { color: #334155; font-size: 12px; }
+    #readinessText { font-weight: 750; }
+    .target-pill {
+      border: 1px solid #bdd4fb; background: var(--primary-soft); color: #174b96;
+      padding: 5px 10px; font-size: 12px; font-weight: 750;
+    }
+    .setup-hint { margin: 8px 0 14px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    #status {
+      display: none; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 7px;
+      padding: 9px 10px; background: #fff; color: var(--muted); font-weight: 700;
+    }
+    #status[data-tone="busy"] { border-color: #f0c98a; background: var(--amber-soft); color: var(--amber); }
+    #status[data-tone="success"] { border-color: #add9bd; background: var(--green-soft); color: var(--green); }
+    #status[data-tone="error"] { border-color: #f0b8c6; background: #fff1f4; color: var(--danger); }
+
+    .workspace-layout { display: grid; grid-template-columns: 300px minmax(640px, 1fr) 320px; gap: 14px; align-items: start; }
+    .panel {
+      border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); padding: 14px;
+    }
+    .section-header {
+      display: flex; justify-content: space-between; gap: 12px; align-items: center;
+      margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--soft-line);
+    }
+    h2 { font-size: 15px; line-height: 1.2; font-weight: 750; letter-spacing: 0; }
+    h3 { font-size: 14px; line-height: 1.25; font-weight: 750; }
+    .section-note, .field-help { font-size: 12px; line-height: 1.4; }
+    .field { margin-bottom: 10px; }
+    label { display: block; margin: 0 0 5px; color: #445066; font-size: 12px; font-weight: 700; }
+    input, select, textarea {
+      width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink);
+      font: 13px/1.45 "Segoe UI", Tahoma, Arial, sans-serif; outline: none;
+    }
+    input, select { min-height: 34px; padding: 7px 9px; }
+    textarea { resize: vertical; min-height: 82px; padding: 9px 10px; }
+    input:focus, select:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(31, 95, 191, 0.14); }
+    button {
+      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      min-height: 34px; border: 1px solid transparent; border-radius: 6px; padding: 7px 12px;
+      background: var(--primary); color: #fff; font: 750 13px/1 "Segoe UI", Tahoma, Arial, sans-serif;
+      cursor: pointer; white-space: nowrap; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.1);
+    }
+    button:hover:not(:disabled) { background: var(--primary-hover); }
+    button:disabled { opacity: 0.58; cursor: wait; box-shadow: none; }
+    .secondary-btn, .copy-btn { border-color: #b9c7da; background: #fff; color: #1e365f; }
+    .secondary-btn:hover:not(:disabled), .copy-btn:hover:not(:disabled) { background: #eef5ff; border-color: #9ab8e5; }
+    .danger-btn { background: var(--danger); }
+    .danger-btn:hover:not(:disabled) { background: var(--danger-hover); }
+    .progress-btn { border-color: #f0c98a; background: #fff7e8; color: #7a3f02; }
+    .done-btn { border-color: #add9bd; background: #ecfdf3; color: #14532d; }
+    .actions, .workflow-buttons { display: flex; flex-wrap: wrap; gap: 9px; }
+
+    #projectBrowserTree { display: grid; gap: 6px; max-height: calc(100vh - 320px); overflow: auto; }
+    .tree-project, .tree-pack, .tree-item {
+      width: 100%; display: flex; justify-content: flex-start; align-items: flex-start; text-align: left;
+      border: 1px solid var(--soft-line); border-radius: 6px; padding: 7px 9px; background: #fbfcfe; color: #24324a;
+      white-space: normal; overflow-wrap: anywhere; line-height: 1.35;
+    }
+    .tree-item { margin-left: 12px; justify-content: space-between; align-items: flex-start; gap: 8px; }
+    .tree-item > span:first-child { flex: 1; min-width: 0; text-align: left; }
+    .tree-item .status-pill { flex: 0 0 auto; align-self: center; }
+    .tree-item.active, .tree-project.active, .tree-pack.active { background: var(--primary-soft); border-color: #bdd4fb; }
+    .status-pill { background: #e8edf3; color: #3d4a61; padding: 2px 7px; font-size: 11px; font-weight: 750; }
+    .status-pill.pending { background: #e8edf3; color: #3d4a61; }
+    .status-pill.copied { background: #fff7e8; color: #7a3f02; }
+    .status-pill.in_progress { background: #fff7e8; color: #7a3f02; }
+    .status-pill.done { background: #ecfdf3; color: #14532d; }
+    .context-menu {
+      position: fixed; z-index: 50; display: none; min-width: 180px; padding: 5px;
+      border: 1px solid var(--line); border-radius: 7px; background: #fff;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
+    }
+    .context-menu[data-open="true"] { display: grid; gap: 3px; }
+    .context-menu button {
+      width: 100%; justify-content: flex-start; min-height: 30px; border: 0; box-shadow: none;
+      background: #fff; color: #24324a; padding: 7px 9px; font-weight: 700;
+    }
+    .context-menu button:hover { background: var(--primary-soft); }
+    .context-menu .danger-item { color: var(--danger); }
+
+    .main-stack { display: grid; gap: 14px; }
+    .idea-editor { position: relative; }
+    #currentText { min-height: 200px; padding-bottom: 30px; line-height: 1.55; }
+    .word-count { position: absolute; right: 10px; bottom: 8px; color: #7a8495; font-size: 11px; pointer-events: none; }
+    .provider-strip { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    .provider-chip { border: 1px solid #c9d7eb; background: #fff; color: #24324a; padding: 5px 9px; font-size: 12px; font-weight: 700; }
+    .provider-chip.active { border-color: #b8d7c2; background: var(--green-soft); color: #14532d; }
+    .provider-chip.disabled { border-style: dashed; color: #8a94a6; background: #f8fafc; }
+    .provider-badge { color: var(--muted); font-size: 11px; font-weight: 650; }
+    .stage-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+    .stage-box { border: 1px solid var(--soft-line); border-radius: 7px; background: #fff; padding: 8px 9px; min-width: 0; }
+    .stage-label { display: block; color: var(--muted); font-size: 11px; font-weight: 700; margin-bottom: 3px; }
+    .stage-value { display: block; color: var(--ink); font-size: 13px; font-weight: 750; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .prefix-stack { display: grid; gap: 8px; margin-top: 10px; }
+    .prefix-dropdown, details.advanced-settings, details.history-section { border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); }
+    .prefix-dropdown summary, details.advanced-settings summary, details.history-section summary {
+      display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 7px 10px; color: #273349;
+      cursor: pointer; font-size: 12px; font-weight: 750; list-style: none;
+    }
+    .prefix-dropdown summary::-webkit-details-marker, details.advanced-settings summary::-webkit-details-marker, details.history-section summary::-webkit-details-marker { display: none; }
+    .prefix-dropdown summary::after, details.advanced-settings summary::after, details.history-section summary::after { content: "v"; margin-left: auto; color: #647084; font-size: 14px; }
+    .prefix-dropdown[open] summary::after, details.advanced-settings[open] summary::after, details.history-section[open] summary::after { content: "^"; }
+    .prefix-dropdown textarea { min-height: 62px; border: 0; border-top: 1px solid var(--soft-line); border-radius: 0 0 7px 7px; background: #fff; }
+    .round-history { display: grid; gap: 7px; margin-top: 10px; max-height: 168px; overflow: auto; }
+    .round-item, .history-empty { border: 1px solid var(--soft-line); border-radius: 7px; background: #fff; padding: 8px 9px; }
+    .round-title { color: #273349; font-size: 12px; font-weight: 750; }
+    .round-subtitle, .history-empty { color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .round-subtitle { margin-top: 3px; }
+    #responseView {
+      min-height: 220px; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable;
+      white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--soft-line); border-radius: 7px;
+      background: #fbfcfe; padding: 10px 12px 28px 10px; color: var(--ink); font: 13px/1.58 "Segoe UI", Tahoma, Arial, sans-serif;
+    }
+    .plan-document { max-width: 780px; padding: 4px 2px 18px; color: #111827; }
+    .plan-document-empty { color: var(--muted); }
+    .plan-document p { margin: 8px 0; line-height: 1.62; }
+    .plan-eyebrow { margin: 0 0 8px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .plan-title { margin: 0 0 16px; color: #0f172a; font-size: 18px; line-height: 1.28; font-weight: 780; }
+    .plan-heading { margin: 20px 0 8px; padding-top: 10px; border-top: 1px solid var(--soft-line); color: #172033; font-size: 15px; line-height: 1.34; font-weight: 780; }
+    .plan-numbered-heading { margin: 22px 0 8px; color: #172033; font-size: 14px; line-height: 1.42; font-weight: 780; }
+    .plan-list { margin: 6px 0 14px 22px; padding: 0; display: grid; gap: 5px; }
+    .plan-list li { padding-left: 4px; line-height: 1.58; }
+    .plan-separator { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
+
+    .inspector { position: sticky; top: 14px; max-height: calc(100vh - 40px); overflow: auto; }
+    .inspector-tabs { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+    .inspector-tab.active { background: var(--primary); color: #fff; border-color: transparent; }
+    .inspector-section { display: none; }
+    .inspector-section.active { display: block; }
+    .workspace-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+    .workspace-tab.active { background: var(--primary); color: #fff; border-color: transparent; }
+    .workspace-panel { display: none; }
+    .workspace-panel.active { display: block; }
+    .task-workspace-meta { display: grid; gap: 8px; margin-bottom: 8px; }
+    .drawer-empty { color: var(--muted); border: 1px dashed var(--line); border-radius: 7px; padding: 10px; }
+    .list-box { display: grid; gap: 8px; max-height: 180px; overflow: auto; border: 1px solid var(--soft-line); border-radius: 7px; padding: 8px; background: #fbfcfe; }
+    .list-item { border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 8px; }
+
+    .vault-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .vault-grid .wide { grid-column: 1 / -1; }
+    .advanced-settings { margin-top: 4px; padding: 0; }
+    .advanced-inner { padding: 0 10px 10px; }
+    .advanced-settings .vault-grid { margin-top: 10px; }
+    .pack-list { display: grid; gap: 10px; margin-top: 12px; }
+    .pack-card { border: 1px solid var(--line); border-radius: 7px; background: #fff; padding: 12px; }
+    .pack-meta { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 8px 0 10px; color: #445066; font-size: 12px; }
+    .task-list { display: grid; gap: 8px; }
+    .task-card {
+      display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center;
+      border: 1px solid var(--soft-line); border-radius: 7px; background: #fbfcfe; padding: 9px 10px;
+    }
+    .task-card.is-copied { border-color: #add9bd; background: var(--green-soft); }
+    .task-title { display: flex; flex-wrap: wrap; gap: 7px; font-weight: 750; align-items: center; }
+    .task-subtitle { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .task-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+    .task-actions button, .compact-btn { min-height: 30px; padding: 6px 9px; font-size: 12px; }
+    .history-section { margin-top: 10px; padding: 0; }
+    .history-list { display: grid; gap: 8px; padding: 0 10px 10px; }
+    .history-item {
+      display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center;
+      border-top: 1px solid var(--soft-line); padding-top: 8px; color: var(--muted); font-size: 12px;
+    }
+    .history-item strong { display: block; color: var(--ink); font-size: 13px; }
+
+    @media (max-width: 1240px) {
+      .workspace-layout { grid-template-columns: 1fr; }
+      .inspector { position: static; max-height: none; }
+      .top-status { flex-direction: column; align-items: stretch; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="app-header">
+      <span class="brand-mark" aria-hidden="true">AI</span>
+      <div>
+        <h1>AI Project Builder</h1>
+        <p class="header-note">Turn an idea into a reviewed plan and Codex-ready tasks.</p>
+      </div>
+    </header>
+
+    <section class="top-status" aria-label="Extension connection">
+      <div class="connection-group">
+        <div class="connection-actions">
+          <span id="connectionPill" class="connection-pill" data-connected="false">
+            <span class="connection-dot" aria-hidden="true"></span>
+            <span id="connectionText">Waiting for extension</span>
+          </span>
+          <button id="connectExtensionBtn" class="secondary-btn compact-btn" type="button">Connect</button>
+          <button id="setupToolsBtn" class="secondary-btn compact-btn" type="button">Setup</button>
+        </div>
+        <span class="target-pill">Next target: <span id="nextTarget">ChatGPT</span></span>
+      </div>
+      <div class="status-group">
+        <span id="readinessText">Ready</span>
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="statusDetail">Next send is gated for ChatGPT</span>
+      </div>
+      <div id="setupToolsPanel" class="setup-tools" data-open="false" aria-label="Extension setup tools">
+        <button id="setupExtensionBtn" class="secondary-btn compact-btn" type="button">First-time setup</button>
+        <button id="copyExtensionsUrlBtn" class="secondary-btn compact-btn" type="button">Copy chrome://extensions</button>
+        <button id="copyExtensionPathBtn" class="secondary-btn compact-btn" type="button">Copy extension path</button>
+        <button id="openExtensionFolderBtn" class="secondary-btn compact-btn" type="button">Open extension folder</button>
+        <button id="refreshExtensionBtn" class="secondary-btn compact-btn" type="button">Refresh status</button>
+      </div>
+    </section>
+
+    <div id="status">Waiting for Chrome extension WebSocket connection...</div>
+    <div id="extensionSetupHint" class="setup-hint">First time setup: click First-time setup, open chrome://extensions, set Developer mode to ON, then load unpacked from this repo's apps/extension folder.</div>
+
+    <section class="workspace-layout">
+      <aside class="panel">
+        <div class="section-header">
+          <div>
+            <h2>Project Browser</h2>
+            <p class="section-note">Master Plan -> Task Roadmap -> Serial / Parallel -> Tasks</p>
+          </div>
+        </div>
+        <div class="field">
+          <label for="projectSelect">Saved project</label>
+          <select id="projectSelect"><option value="">New project / manual entry</option></select>
+        </div>
+        <div class="actions" style="margin-bottom:10px;">
+          <button id="newProjectBtn" class="secondary-btn compact-btn" type="button">New Project</button>
+          <button id="seeAllProjectsBtn" class="secondary-btn compact-btn" type="button">See all projects</button>
+          <button id="openProjectFolderBtn" class="secondary-btn compact-btn" type="button">Open Folder</button>
+        </div>
+        <div id="projectBrowserTree" aria-label="Project browser tree">
+          <div class="drawer-empty">No tasks generated yet.</div>
+        </div>
+        <div id="projectContextMenu" class="context-menu" data-open="false" role="menu" aria-label="Project browser actions">
+          <button type="button" data-context-action="copy-project-path">Copy project path</button>
+          <button type="button" data-context-action="delete-project" class="danger-item">Delete project</button>
+          <button type="button" data-context-action="copy-task">Copy task</button>
+          <button type="button" data-context-action="delete-task" class="danger-item">Delete task</button>
+        </div>
+      </aside>
+
+      <div class="main-stack">
+        <section class="panel" aria-labelledby="workspaceHeading">
+          <div class="section-header">
+            <div>
+              <h2 id="workspaceHeading">Workspace</h2>
+              <p class="section-note">Selected task opens here. Use Inspector for improve, versions, and run notes.</p>
+            </div>
+            <div class="workspace-tabs">
+              <button type="button" class="secondary-btn compact-btn workspace-tab active" data-workspace-tab="plan">Plan</button>
+              <button type="button" class="secondary-btn compact-btn workspace-tab" data-workspace-tab="tasks">Tasks</button>
+            </div>
+          </div>
+
+          <section class="workspace-panel active" data-workspace-panel="plan">
+            <div class="vault-grid">
+              <div class="field"><label for="projectName">Project name</label><input id="projectName" placeholder="Project name"></div>
+              <div class="field"><label for="projectPath">Project path</label><input id="projectPath" placeholder="C:\Projects\YourProject"></div>
+              <div class="field"><label for="defaultProjectsFolder">Default projects folder</label><input id="defaultProjectsFolder" placeholder="Projects"></div>
+              <div class="field settings-action"><label aria-hidden="true">&nbsp;</label><button id="saveVaultSettingsBtn" class="secondary-btn" type="button">Save Settings</button></div>
+              <div class="field wide"><label for="projectIdea">Project idea</label><textarea id="projectIdea" rows="5" placeholder="Describe the project and the outcome you want."></textarea></div>
+              <div class="field wide"><label for="currentText">Master Plan</label><div class="idea-editor"><textarea id="currentText" placeholder="Shape the master plan before creating the task roadmap."></textarea><span id="wordCount" class="word-count">0 words</span></div></div>
+            </div>
+            <div class="actions">
+              <button id="saveProjectBriefBtn" class="secondary-btn" type="button">Save Draft</button>
+              <button id="planPrimaryActionBtn" type="button">Create Master Plan</button>
+            </div>
+            <div style="margin-top:12px;">
+              <h3 style="margin-bottom:6px;">Project Plan</h3>
+              <div id="responseView">No plan yet.</div>
+            </div>
+          </section>
+
+          <section class="workspace-panel" data-workspace-panel="tasks">
+            <div id="workspaceTaskEmpty" class="drawer-empty">Select a task from Project Browser.</div>
+            <div id="workspaceTaskForm" style="display:none;">
+              <div class="task-workspace-meta">
+                <div class="field"><label for="workspaceTaskName">Task name</label><input id="workspaceTaskName" placeholder="Task name"></div>
+                <div class="field"><label for="workspaceTaskStatus">Status</label><select id="workspaceTaskStatus"><option value="in_progress">In Progress</option><option value="approved">Approved</option><option value="copied">Copied</option><option value="done">Done</option></select></div>
+                <div class="field"><label for="workspaceTaskContent">Task content</label><textarea id="workspaceTaskContent" rows="12"></textarea></div>
+                <div class="field"><label for="workspacePromptRunNote">What Codex did</label><textarea id="workspacePromptRunNote" rows="4" placeholder="Required before Mark Done."></textarea></div>
+              </div>
+              <div class="actions">
+                <button id="saveWorkspaceTaskBtn" type="button">Save Task</button>
+                <button id="copyWorkspaceTaskBtn" class="secondary-btn" type="button">Copy</button>
+                <button id="sendWorkspaceTaskBtn" type="button">Improve Task</button>
+                <button id="approvePromptBtn" class="secondary-btn" type="button">Approve</button>
+                <button id="copyWorkspaceLauncherBtn" class="secondary-btn" type="button">Copy to Codex</button>
+                <button id="markPromptDoneBtn" class="secondary-btn" type="button">Mark Done</button>
+              </div>
+              <div class="field" style="margin-top:10px;">
+                <label for="codexTaskSelector">Task selector for handoff (examples: 1, 1-3, 5,7)</label>
+                <input id="codexTaskSelector" placeholder="1-3">
+              </div>
+              <div class="actions">
+                <button id="copyCodexHandoffBtn" class="secondary-btn" type="button">Copy Codex Handoff</button>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section id="legacyPromptTools" class="panel" aria-labelledby="promptsHeading" style="display:none;">
+          <div class="section-header">
+            <div>
+              <h2 id="promptsHeading">Legacy prompt tools</h2>
+              <p class="section-note">Hidden compatibility controls.</p>
+            </div>
+          </div>
+          <div class="vault-grid">
+            <div class="field wide"><label for="packTitle">Prompt set title</label><input id="packTitle" placeholder="Codex prompt set title"></div>
+          </div>
+          <textarea id="chatgptPrefix">Analyze and improve this project plan. Return plain text only.</textarea>
+          <textarea id="claudePrefix">Critique this project plan. Return plain text only.</textarea>
+          <span id="currentStage">GPT Clarifier</span>
+          <span id="currentProvider">ChatGPT</span>
+          <span id="nextProvider">ChatGPT</span>
+          <button id="triggerWorkflowBtn" type="button">Send contextual AI step</button>
+          <button id="saveFinalBtn" type="button">Save text</button>
+          <div id="roundHistory"><div class="history-empty">No rounds saved yet.</div></div>
+          <details class="advanced-settings">
+            <summary>Advanced settings</summary>
+            <div class="advanced-inner">
+              <p class="field-help">Defaults work for most projects. Open this only when you need to change task splitting, branch naming, or git behavior.</p>
+              <div class="vault-grid">
+                <div class="field"><label for="chunkStrategy">Task strategy</label><select id="chunkStrategy"><option value="simple_3" selected>Task-based default</option><option value="steps_1_3">Task list order</option><option value="architecture_implementation_tests_release">Architecture / Implementation / Tests / Release</option></select></div>
+                <div class="field"><label for="chunkCount">Fallback task count</label><select id="chunkCount"><option value="3" selected>3 tasks</option><option value="4">4 tasks</option><option value="5">5 tasks</option><option value="6">6 tasks</option><option value="8">8 tasks</option></select></div>
+                <div class="field"><label for="gitRemote">Git remote</label><input id="gitRemote" value="origin"></div>
+                <div class="field"><label for="defaultBranch">Default branch</label><input id="defaultBranch" value="main"></div>
+                <div class="field"><label for="branchPrefix">Branch prefix</label><input id="branchPrefix" value="codex/"></div>
+                <div class="field"><label for="gitMode">Git mode</label><select id="gitMode"><option value="every_chunk" selected>Commit per task</option><option value="final_only">Commit only on final task</option><option value="none">No git from Codex tasks</option></select></div>
+                <div class="field"><label for="branchName">Work branch</label><input id="branchName" placeholder="codex/project-prompts"></div>
+                <div class="field wide"><label for="commitMessage">Prompt commit fallback</label><input id="commitMessage" placeholder="Optional fallback commit message"></div>
+              </div>
+            </div>
+          </details>
+          <div class="actions" style="margin-top: 12px;">
+            <button id="generatePackBtn" type="button">Create legacy prompts</button>
+            <button id="refreshVaultBtn" class="secondary-btn" type="button">Refresh Tasks</button>
+            <button id="openLatestPackBtn" class="secondary-btn" type="button">Open Latest Prompt Folder</button>
+          </div>
+          <div id="packList" class="pack-list"><div class="pack-card">No prompts created yet.</div></div>
+        </section>
+      </div>
+
+      <aside class="panel inspector" id="inspector">
+        <div class="section-header">
+          <div>
+            <h2>Inspector</h2>
+            <p class="section-note">AI Improve, versions, runs, and selected item details.</p>
+          </div>
+        </div>
+        <div class="inspector-tabs">
+          <button type="button" class="secondary-btn compact-btn inspector-tab active" data-inspector-tab="ai">AI</button>
+          <button type="button" class="secondary-btn compact-btn inspector-tab" data-inspector-tab="versions">Versions</button>
+          <button type="button" class="secondary-btn compact-btn inspector-tab" data-inspector-tab="runs">Runs</button>
+          <button type="button" class="secondary-btn compact-btn inspector-tab" data-inspector-tab="details">Details</button>
+        </div>
+        <section class="inspector-section active" data-inspector-section="ai">
+          <div id="inspectorEmptyImprove" class="drawer-empty">Select a task or use Plan actions.</div>
+          <div id="inspectorImproveForm" style="display:none;">
+            <div class="field"><label for="inspectorImprovePrompt">Improve task</label><textarea id="inspectorImprovePrompt" rows="8" readonly></textarea></div>
+            <div class="actions">
+              <button id="buildImprovePromptBtn" class="secondary-btn" type="button">Build Task</button>
+              <button id="sendImprovePromptBtn" type="button">Send to AI</button>
+              <button id="copyImprovePromptBtn" class="secondary-btn" type="button">Copy Improve Task</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="inspector-section" data-inspector-section="versions">
+          <label>Proposed versions</label>
+          <div id="inspectorVersionsList" class="list-box"><div class="muted">No versions yet.</div></div>
+        </section>
+
+        <section class="inspector-section" data-inspector-section="runs">
+          <div id="inspectorEmptyRuns" class="drawer-empty">Select a task to view run history.</div>
+          <div id="inspectorRunsForm" style="display:none;">
+            <div class="field"><label for="inspectorRunNote">What Codex did</label><textarea id="inspectorRunNote" rows="4" placeholder="Summarize what was done in this run"></textarea></div>
+            <div class="actions">
+              <button id="addRunNoteBtn" type="button">Add Run Note</button>
+            </div>
+            <div class="field" style="margin-top:10px;">
+              <label>Run history</label>
+              <div id="inspectorRunHistoryList" class="list-box"><div class="muted">No run history yet.</div></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="inspector-section" data-inspector-section="details">
+          <div id="inspectorDetails" class="drawer-empty">Select a project item to view details.</div>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

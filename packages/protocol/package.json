@@ -1,0 +1,7 @@
+{
+  "name": "@copypaste/protocol",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Shared AI Project Builder provider and workflow protocol.",
+  "main": "index.js"
+}
