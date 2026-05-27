@@ -1,5 +1,28 @@
 # Codex Progress
 
+## 2026-05-27 Real Project Workflow Repair (`codex/repair-real-project-workflow`)
+
+- Repaired end-to-end project execution flow from roadmap to task completion, focused on real usage (not shallow CI-only behavior).
+- Added safe task entrypoint `getOrCreateTaskPromptFromRoadmapItem(...)` and switched renderer flow to use it, so repeated primary-action clicks open existing task instead of failing with duplicate creation error.
+- Synchronized taskPrompt/chunk lifecycle and content:
+  - approve -> both `approved`
+  - copy handoff -> both `copied` (+ timestamps)
+  - done -> both `done` (+ run history persistence)
+  - update/apply version -> taskPrompt + chunk prompt stay aligned while stable task filename is preserved.
+- Hardened legacy DB compatibility by reconciling missing taskPrompt/chunk links during DB read/write and creating missing linked chunk where needed.
+- Reworked Project Browser behavior to show real master plan / roadmap / tasks state and actionable roadmap item selection.
+- Updated tests to cover real workflow behavior:
+  - `controller-ui.test.js`: primary action matrix, browser model assertions, stale preview guard, and open-existing-task behavior.
+  - `prompt-vault.test.js`: get-or-create flow, status sync, run note validation, roadmap eligibility with existing task prompts, and legacy mismatch reconciliation.
+  - `workflow-integration.test.js`: repeated task open flow without duplicate errors and coherent lifecycle progression.
+- Local verification commands executed successfully:
+  - `node apps/desktop/tests/controller-ui.test.js`
+  - `node apps/desktop/tests/prompt-vault.test.js`
+  - `node apps/desktop/tests/workflow-integration.test.js`
+  - `npm.cmd run extension:verify`
+  - `npm.cmd run desktop:test`
+  - `npm.cmd run verify`
+
 ## 2026-05-27 Path Drift Cleanup
 
 - Audited remaining hardcoded workstation paths after the CI portability fix.

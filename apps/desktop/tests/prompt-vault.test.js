@@ -491,12 +491,20 @@ try {
   const availableAfter = eligibleAfter.items.filter((item) => item.eligible).map((item) => item.id);
   assert.deepEqual(availableAfter, ["roadmap_2", "roadmap_3"]);
 
-  const taskPromptCreated = store.createTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_2");
+  const taskPromptCreated = store.getOrCreateTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_2");
+  assert.equal(taskPromptCreated.created, true);
+  const taskPromptExisting = store.getOrCreateTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_2");
+  assert.equal(taskPromptExisting.created, false);
+  assert.equal(taskPromptExisting.taskPrompt.id, taskPromptCreated.taskPrompt.id);
+  assert.equal(taskPromptExisting.chunk.id, taskPromptCreated.chunk.id);
   assert.equal(taskPromptCreated.taskPrompt.roadmapItemId, "roadmap_2");
   assert.equal(taskPromptCreated.taskPrompt.status, "draft");
   const stateAfterTaskPromptCreate = store.getState();
   const packAfterTaskPromptCreate = stateAfterTaskPromptCreate.promptPacks.find((pack) => pack.id === taskPromptCreated.pack.id);
   assert.ok(packAfterTaskPromptCreate.chunks.some((chunk) => chunk.id === taskPromptCreated.taskPrompt.sourceChunkId));
+  const roadmapStatusAfterTaskCreate = store.getRoadmapItemEligibility(savedBrief.project.id);
+  const roadmapItemTwo = roadmapStatusAfterTaskCreate.items.find((item) => item.id === "roadmap_2");
+  assert.equal(roadmapItemTwo.status, "task_created");
   assert.match(taskPromptCreated.taskPrompt.content, /Project name:/);
   assert.match(taskPromptCreated.taskPrompt.content, /Project path:/);
   assert.match(taskPromptCreated.taskPrompt.content, /Master plan file path:/);
@@ -507,8 +515,18 @@ try {
 
   const stableTaskFileName = taskPromptCreated.taskPrompt.taskFileName;
   store.updateTaskPromptContent(taskPromptCreated.taskPrompt.id, {
+    title: "Roadmap item two edited",
     content: "Updated prompt body"
   });
+  const afterManualUpdateState = store.getState();
+  const afterManualUpdatePrompt = afterManualUpdateState.taskPrompts.find((entry) => entry.id === taskPromptCreated.taskPrompt.id);
+  const afterManualUpdateChunk = afterManualUpdateState.promptPacks
+    .find((pack) => pack.id === taskPromptCreated.pack.id)
+    .chunks.find((chunk) => chunk.id === afterManualUpdatePrompt.sourceChunkId);
+  assert.equal(afterManualUpdatePrompt.title, "Roadmap item two edited");
+  assert.equal(afterManualUpdateChunk.title, "Roadmap item two edited");
+  assert.equal(afterManualUpdateChunk.prompt, "Updated prompt body");
+  assert.equal(afterManualUpdatePrompt.taskFileName, stableTaskFileName);
   const improvePromptPayload = store.prepareTaskImprovePrompt(taskPromptCreated.taskPrompt.id);
   assert.match(improvePromptPayload.prompt, /Return only improved prompt/);
   const proposedImproveVersion = store.saveTaskImproveResponse(taskPromptCreated.taskPrompt.id, "Improved by AI");
@@ -517,11 +535,31 @@ try {
   assert.equal(versionList.versions[0].id, proposedImproveVersion.version.id);
   const appliedVersion = store.applyTaskPromptVersion(taskPromptCreated.taskPrompt.id, proposedImproveVersion.version.id);
   assert.equal(appliedVersion.taskPrompt.content, "Improved by AI");
+  const afterAppliedVersionState = store.getState();
+  const afterAppliedChunk = afterAppliedVersionState.promptPacks
+    .find((pack) => pack.id === taskPromptCreated.pack.id)
+    .chunks.find((chunk) => chunk.id === taskPromptCreated.taskPrompt.sourceChunkId);
+  assert.equal(afterAppliedChunk.prompt, "Improved by AI");
   const approvedTaskPrompt = store.approveTaskPrompt(taskPromptCreated.taskPrompt.id);
   assert.equal(approvedTaskPrompt.taskPrompt.status, "approved");
+  const afterApproveState = store.getState();
+  const afterApproveChunk = afterApproveState.promptPacks
+    .find((pack) => pack.id === taskPromptCreated.pack.id)
+    .chunks.find((chunk) => chunk.id === taskPromptCreated.taskPrompt.sourceChunkId);
+  assert.equal(afterApproveChunk.status, "approved");
   const copiedTaskPrompt = store.copyCodexHandoff(taskPromptCreated.taskPrompt.id);
   assert.equal(copiedTaskPrompt.taskPrompt.status, "copied");
   assert.match(copiedTaskPrompt.handoffText, /Full task prompt/);
+  const afterCopyState = store.getState();
+  const afterCopyChunk = afterCopyState.promptPacks
+    .find((pack) => pack.id === taskPromptCreated.pack.id)
+    .chunks.find((chunk) => chunk.id === taskPromptCreated.taskPrompt.sourceChunkId);
+  assert.equal(afterCopyChunk.status, "copied");
+  assert.ok(afterCopyChunk.copiedAt);
+  assert.throws(
+    () => store.markTaskPromptDone(taskPromptCreated.taskPrompt.id, { note: "" }),
+    /Run history note is required/
+  );
   const completedTaskPrompt = store.markTaskPromptDone(taskPromptCreated.taskPrompt.id, {
     note: "Done roadmap item 2",
     result: "ok",
@@ -529,11 +567,74 @@ try {
     verificationSummary: "verify ok"
   });
   assert.equal(completedTaskPrompt.taskPrompt.status, "done");
+  const afterDoneState = store.getState();
+  const afterDoneChunk = afterDoneState.promptPacks
+    .find((pack) => pack.id === taskPromptCreated.pack.id)
+    .chunks.find((chunk) => chunk.id === taskPromptCreated.taskPrompt.sourceChunkId);
+  assert.equal(afterDoneChunk.status, "done");
+  const storedRuns = afterDoneState.taskRuns.filter((run) => run.taskPromptId === taskPromptCreated.taskPrompt.id);
+  assert.equal(storedRuns.length >= 1, true);
 
   const reloadedState = store.getState();
   const syncedTaskPrompt = reloadedState.taskPrompts.find((entry) => entry.id === taskPromptCreated.taskPrompt.id);
   assert.equal(syncedTaskPrompt.taskFileName, stableTaskFileName);
   assert.equal(fs.readFileSync(syncedTaskPrompt.taskFilePath, "utf8"), "Improved by AI");
+
+  const legacyMismatchDbPath = path.join(tmpRoot, "legacy-mismatch-db.json");
+  const legacyProjectPath = path.join(tmpRoot, "LegacyMismatch");
+  fs.mkdirSync(path.join(legacyProjectPath, "tasks"), { recursive: true });
+  fs.writeFileSync(path.join(legacyProjectPath, "codex.md"), "# Codex\n\n", "utf8");
+  fs.writeFileSync(path.join(legacyProjectPath, "architecture.md"), "# Architecture\n\n", "utf8");
+  fs.writeFileSync(path.join(legacyProjectPath, "masterplan.md"), "# Master Plan\n\nLegacy", "utf8");
+  fs.writeFileSync(path.join(legacyProjectPath, "plan-roadmap.md"), "# Plan Roadmap\n\n", "utf8");
+  fs.writeFileSync(legacyMismatchDbPath, JSON.stringify({
+    version: 1,
+    schemaVersion: 2,
+    projectsBasePath: tmpRoot,
+    projects: [{
+      id: "legacy_project_1",
+      name: "LegacyMismatch",
+      path: legacyProjectPath,
+      idea: "legacy idea",
+      masterPlan: "Legacy master plan",
+      activePromptPackId: "legacy_pack_1",
+      activeMasterPlanVersionId: "legacy_mp_1",
+      activeRoadmapVersionId: "legacy_roadmap_1",
+      git: { enabled: true, remote: "origin", defaultBranch: "master", branchPrefix: "codex/" },
+      defaults: { gitMode: "every_chunk", chunkStrategy: "simple_3", chunkCount: 3, commitMessage: "Legacy" }
+    }],
+    promptPacks: [{
+      id: "legacy_pack_1",
+      projectId: "legacy_project_1",
+      title: "Legacy Pack",
+      roadmap: {
+        items: [{ id: "legacy_roadmap_1", order: 1, title: "Legacy task", dependsOn: [] }]
+      },
+      chunks: []
+    }],
+    taskPrompts: [{
+      id: "legacy_task_prompt_1",
+      projectId: "legacy_project_1",
+      roadmapItemId: "legacy_roadmap_1",
+      title: "Legacy task prompt",
+      content: "Legacy prompt content",
+      status: "ready",
+      sourceChunkId: ""
+    }],
+    debateWorkflows: [],
+    masterPlanVersions: [{ id: "legacy_mp_1", projectId: "legacy_project_1", status: "applied", responseText: "Legacy master plan", appliedAt: "2024-01-01T00:00:00.000Z" }],
+    roadmapVersions: [{ id: "legacy_roadmap_1", packId: "legacy_pack_1", projectId: "legacy_project_1", status: "applied", items: [{ id: "legacy_roadmap_1", order: 1, title: "Legacy task", dependsOn: [] }], appliedAt: "2024-01-01T00:00:00.000Z" }],
+    taskPromptVersions: [],
+    taskRuns: []
+  }), "utf8");
+  const legacyStore = createVaultStore({ dbPath: legacyMismatchDbPath });
+  const legacyState = legacyStore.getState();
+  const legacyPrompt = legacyState.taskPrompts.find((item) => item.id === "legacy_task_prompt_1");
+  const legacyPack = legacyState.promptPacks.find((item) => item.id === "legacy_pack_1");
+  const legacyChunk = legacyPack.chunks.find((item) => item.id === legacyPrompt.sourceChunkId);
+  assert.ok(legacyChunk);
+  assert.equal(legacyChunk.roadmapItemId, "legacy_roadmap_1");
+  assert.equal(legacyChunk.status, "in_progress");
 
   const settingsResult = store.updateSettings({ projectsBasePath: path.join(tmpRoot, "Tasks") });
   assert.equal(settingsResult.state.projectsBasePath, path.join(tmpRoot, "Tasks"));

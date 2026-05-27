@@ -1005,12 +1005,27 @@ function createVaultStore({ dbPath }) {
     throw new Error("prompt vault dbPath is required.");
   }
 
+  function reconcileDatabaseTaskPromptLinks(database) {
+    const prompts = Array.isArray(database.taskPrompts) ? database.taskPrompts : [];
+    for (const taskPrompt of prompts) {
+      if (!taskPrompt || !taskPrompt.projectId) continue;
+      try {
+        resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
+      } catch (_error) {
+        // Keep loading resilient for legacy/incomplete datasets.
+      }
+    }
+  }
+
   function readDatabase() {
-    return sanitizeDatabase(readJsonFile(dbPath, createEmptyDatabase()));
+    const sanitized = sanitizeDatabase(readJsonFile(dbPath, createEmptyDatabase()));
+    reconcileDatabaseTaskPromptLinks(sanitized);
+    return sanitized;
   }
 
   function writeDatabase(database) {
     const sanitized = sanitizeDatabase(database);
+    reconcileDatabaseTaskPromptLinks(sanitized);
     sanitized.updatedAt = createTimestamp();
     writeJsonFile(dbPath, sanitized);
     return sanitized;
@@ -2074,6 +2089,91 @@ function createVaultStore({ dbPath }) {
     return applyRoadmapVersion(pack.id, versionId);
   }
 
+  function findTaskPromptForRoadmapItem(database, projectId, roadmapItemId) {
+    return (database.taskPrompts || []).find((prompt) => prompt.projectId === projectId && prompt.roadmapItemId === roadmapItemId) || null;
+  }
+
+  function findChunkForRoadmapItem(pack, roadmapItemId, sourceChunkId) {
+    const chunks = Array.isArray(pack && pack.chunks) ? pack.chunks : [];
+    if (sourceChunkId) {
+      const byId = chunks.find((chunk) => chunk.id === sourceChunkId);
+      if (byId) return byId;
+    }
+    return chunks.find((chunk) => chunk.roadmapItemId === roadmapItemId) || null;
+  }
+
+  function createChunkForTaskPrompt({ project, pack, taskPrompt, roadmapItem }) {
+    const maxOrder = (pack.chunks || []).reduce((max, chunk) => Math.max(max, Number(chunk.order) || 0), 0);
+    const nextOrder = Number(taskPrompt.order) || Number(roadmapItem && roadmapItem.order) || (maxOrder + 1);
+    const chunk = roadmapItem
+      ? createPromptFromRoadmapItem({ project, pack, item: roadmapItem, order: nextOrder })
+      : sanitizeChunk({
+        id: createId("chunk"),
+        order: nextOrder,
+        title: taskPrompt.title || "Task Prompt",
+        filename: `codex-${String(nextOrder).padStart(3, "0")}-${slugify(taskPrompt.title || "task-prompt")}.md`,
+        scope: "",
+        tasks: [],
+        gitAction: "none",
+        commitMessage: taskPrompt.title || "Task Prompt",
+        status: "in_progress",
+        prompt: taskPrompt.content || "",
+        launcher: "",
+        roadmapItemId: taskPrompt.roadmapItemId,
+        parallelGroup: "",
+        versions: [],
+        runHistory: [],
+        createdAt: createTimestamp()
+      });
+    chunk.prompt = String(taskPrompt.content || chunk.prompt || "");
+    chunk.title = normalizeString(taskPrompt.title) || chunk.title;
+    chunk.roadmapItemId = taskPrompt.roadmapItemId || chunk.roadmapItemId;
+    pack.chunks.push(chunk);
+    pack.updatedAt = createTimestamp();
+    return chunk;
+  }
+
+  function syncTaskPromptAndChunkStatus(taskPrompt, chunk) {
+    if (!taskPrompt || !chunk) return;
+    const taskStatus = normalizeString(taskPrompt.status);
+    if (taskStatus === "approved" || taskStatus === "copied" || taskStatus === "done") {
+      chunk.status = taskStatus;
+    } else {
+      chunk.status = "in_progress";
+    }
+    if (taskPrompt.copiedAt) chunk.copiedAt = taskPrompt.copiedAt;
+    chunk.updatedAt = createTimestamp();
+  }
+
+  function resolveTaskPromptChunkLink(database, taskPrompt, options = {}) {
+    const createIfMissing = options.createIfMissing !== false;
+    const project = getProjectById(database, taskPrompt.projectId);
+    const pack = getActivePackForProject(database, project);
+    if (!pack) {
+      return { project, pack: null, chunk: null, taskPrompt };
+    }
+
+    const roadmapItems = pack.roadmap && Array.isArray(pack.roadmap.items) ? pack.roadmap.items : [];
+    const roadmapItem = roadmapItems.find((item) => item.id === taskPrompt.roadmapItemId) || null;
+    let chunk = findChunkForRoadmapItem(pack, taskPrompt.roadmapItemId, taskPrompt.sourceChunkId);
+
+    if (!chunk && createIfMissing) {
+      chunk = createChunkForTaskPrompt({ project, pack, taskPrompt, roadmapItem });
+    }
+    if (chunk) {
+      taskPrompt.sourceChunkId = chunk.id;
+      taskPrompt.roadmapItemId = taskPrompt.roadmapItemId || chunk.roadmapItemId;
+      if (!taskPrompt.order) taskPrompt.order = Number(chunk.order) || 1;
+      chunk.title = normalizeString(taskPrompt.title) || chunk.title;
+      chunk.prompt = String(taskPrompt.content || chunk.prompt || "");
+      chunk.roadmapItemId = taskPrompt.roadmapItemId || chunk.roadmapItemId;
+      syncTaskPromptAndChunkStatus(taskPrompt, chunk);
+      pack.updatedAt = createTimestamp();
+    }
+
+    return { project, pack, chunk, taskPrompt };
+  }
+
   function listRoadmapVersions(projectId) {
     const database = readDatabase();
     const project = getProjectById(database, projectId);
@@ -2105,12 +2205,14 @@ function createVaultStore({ dbPath }) {
     if (!pack) return { items: [], project, pack: null, state: writeDatabase(database) };
     const eligibility = getRoadmapEligibility(pack.id);
     const items = (eligibility.items || []).map((item) => {
-      const taskChunk = (pack.chunks || []).find((chunk) => chunk.roadmapItemId === item.id);
-      let status = "ready";
-      if (taskChunk && taskChunk.status === "done") status = "done";
-      else if (taskChunk && taskChunk.status === "in_progress") status = "in_progress";
-      else if (!item.eligible) status = "blocked";
-      return { ...item, status };
+      if (item.done) return { ...item, status: "done" };
+      if (item.taskPrompt || item.started) {
+        if (item.taskPrompt && item.taskPrompt.status === "approved") return { ...item, status: "approved" };
+        if (item.taskPrompt && item.taskPrompt.status === "copied") return { ...item, status: "copied" };
+        return { ...item, status: "task_created" };
+      }
+      if (!item.eligible) return { ...item, status: "blocked" };
+      return { ...item, status: "ready" };
     });
     return { items, project, pack, state: writeDatabase(database) };
   }
@@ -2121,6 +2223,36 @@ function createVaultStore({ dbPath }) {
       .filter((item) => item.status === "ready")
       .sort((left, right) => Number(left.order || 0) - Number(right.order || 0))[0] || null;
     return { ...result, nextItem };
+  }
+
+  function getOrCreateTaskPromptFromRoadmapItem(projectId, roadmapItemId) {
+    const database = readDatabase();
+    const project = getProjectById(database, projectId);
+    const pack = getActivePackForProject(database, project);
+    if (!pack) throw new Error("Active roadmap pack not found.");
+    const existingTaskPrompt = findTaskPromptForRoadmapItem(database, project.id, roadmapItemId);
+    if (existingTaskPrompt) {
+      const resolved = resolveTaskPromptChunkLink(database, existingTaskPrompt, { createIfMissing: true });
+      refreshProjectProgress(project);
+      return {
+        created: false,
+        taskPrompt: existingTaskPrompt,
+        chunk: resolved.chunk,
+        project,
+        pack: resolved.pack || pack,
+        state: writeDatabase(database)
+      };
+    }
+
+    const created = createTaskPromptFromRoadmapItem(projectId, roadmapItemId);
+    return {
+      created: true,
+      taskPrompt: created.taskPrompt,
+      chunk: created.chunk,
+      project: created.project,
+      pack: created.pack,
+      state: created.state
+    };
   }
 
   function markRoadmapItemInProgress(projectId, roadmapItemId) {
@@ -2157,7 +2289,7 @@ function createVaultStore({ dbPath }) {
     const item = (eligibility.items || []).find((entry) => entry.id === roadmapItemId);
     if (!item) throw new Error("Roadmap item not found.");
     if (!item.eligible) throw new Error("Roadmap item is not ready.");
-    const existingTaskPrompt = (database.taskPrompts || []).find((prompt) => prompt.projectId === project.id && prompt.roadmapItemId === roadmapItemId);
+    const existingTaskPrompt = findTaskPromptForRoadmapItem(database, project.id, roadmapItemId);
     if (existingTaskPrompt) throw new Error("Task prompt already exists for this roadmap item.");
     const maxOrder = (pack.chunks || []).reduce((max, chunk) => Math.max(max, Number(chunk.order) || 0), 0);
     const chunk = createPromptFromRoadmapItem({
@@ -2230,14 +2362,12 @@ function createVaultStore({ dbPath }) {
     if (nextTitle) taskPrompt.title = nextTitle;
     taskPrompt.content = nextContent;
     taskPrompt.updatedAt = createTimestamp();
-    const project = getProjectById(database, taskPrompt.projectId);
-    const pack = getActivePackForProject(database, project);
-    const chunk = pack && (pack.chunks || []).find((item) => item.id === taskPrompt.sourceChunkId);
+    const { project, pack, chunk } = resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
     if (chunk) {
       if (nextTitle) chunk.title = nextTitle;
       chunk.prompt = nextContent;
       chunk.updatedAt = createTimestamp();
-      pack.updatedAt = createTimestamp();
+      if (pack) pack.updatedAt = createTimestamp();
     }
     const taskFile = writeTaskPromptFile(project.path, taskPrompt);
     taskPrompt.taskFileName = taskFile.taskFileName;
@@ -2274,13 +2404,11 @@ function createVaultStore({ dbPath }) {
     taskPrompt.content = version.content;
     taskPrompt.activeVersionId = version.id;
     taskPrompt.updatedAt = createTimestamp();
-    const project = getProjectById(database, taskPrompt.projectId);
-    const pack = getActivePackForProject(database, project);
-    const chunk = pack && (pack.chunks || []).find((item) => item.id === taskPrompt.sourceChunkId);
+    const { project, pack, chunk } = resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
     if (chunk) {
       chunk.prompt = taskPrompt.content;
       chunk.updatedAt = createTimestamp();
-      pack.updatedAt = createTimestamp();
+      if (pack) pack.updatedAt = createTimestamp();
     }
     const taskFile = writeTaskPromptFile(project.path, taskPrompt);
     taskPrompt.taskFileName = taskFile.taskFileName;
@@ -2330,6 +2458,8 @@ function createVaultStore({ dbPath }) {
     taskPrompt.status = "approved";
     taskPrompt.approvedAt = createTimestamp();
     taskPrompt.updatedAt = createTimestamp();
+    const { pack } = resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
+    if (pack) pack.updatedAt = createTimestamp();
     return { taskPrompt, state: writeDatabase(database) };
   }
 
@@ -2354,6 +2484,13 @@ function createVaultStore({ dbPath }) {
     taskPrompt.status = "copied";
     taskPrompt.copiedAt = createTimestamp();
     taskPrompt.updatedAt = createTimestamp();
+    const { pack, chunk } = resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
+    if (chunk) {
+      chunk.status = "copied";
+      chunk.copiedAt = taskPrompt.copiedAt;
+      chunk.updatedAt = createTimestamp();
+    }
+    if (pack) pack.updatedAt = createTimestamp();
     return { taskPrompt, handoffText, state: writeDatabase(database) };
   }
 
@@ -2361,6 +2498,9 @@ function createVaultStore({ dbPath }) {
     const database = readDatabase();
     const taskPrompt = (database.taskPrompts || []).find((item) => item.id === taskPromptId);
     if (!taskPrompt) throw new Error("Task prompt not found.");
+    if (!normalizeString(input && input.note)) {
+      throw new Error("Run history note is required");
+    }
     const run = sanitizeTaskRun({
       id: createId("task_run"),
       taskPromptId: taskPrompt.id,
@@ -2374,30 +2514,29 @@ function createVaultStore({ dbPath }) {
     taskPrompt.status = "done";
     taskPrompt.doneAt = createTimestamp();
     taskPrompt.updatedAt = createTimestamp();
-    const project = getProjectById(database, taskPrompt.projectId);
-    const pack = getActivePackForProject(database, project);
-    if (pack) {
-      const chunk = (pack.chunks || []).find((item) => item.id === taskPrompt.sourceChunkId || item.roadmapItemId === taskPrompt.roadmapItemId);
-      if (chunk) {
-        chunk.status = "done";
-        chunk.updatedAt = createTimestamp();
-      }
-    }
+    const { project, pack } = resolveTaskPromptChunkLink(database, taskPrompt, { createIfMissing: true });
     let nextItem = null;
     if (pack && pack.roadmap && Array.isArray(pack.roadmap.items)) {
       const doneRoadmapIds = (pack.chunks || [])
         .filter((entry) => entry.status === "done" && entry.roadmapItemId)
         .map((entry) => entry.roadmapItemId);
-      const startedRoadmapIds = (pack.chunks || [])
-        .filter((entry) => entry.roadmapItemId)
+      const taskPrompts = (database.taskPrompts || []).filter((entry) => entry.projectId === project.id);
+      const taskPromptDoneRoadmapIds = taskPrompts
+        .filter((entry) => entry.status === "done" && entry.roadmapItemId)
         .map((entry) => entry.roadmapItemId);
+      const startedRoadmapIds = [
+        ...(pack.chunks || []).filter((entry) => entry.roadmapItemId).map((entry) => entry.roadmapItemId),
+        ...taskPrompts.filter((entry) => entry.roadmapItemId).map((entry) => entry.roadmapItemId)
+      ];
+      const doneIdsSet = new Set([...doneRoadmapIds, ...taskPromptDoneRoadmapIds]);
+      const startedIdsSet = new Set(startedRoadmapIds);
       nextItem = pack.roadmap.items
         .slice()
         .sort((left, right) => Number(left.order || 0) - Number(right.order || 0))
         .find((item) => {
-          if (!item || startedRoadmapIds.includes(item.id)) return false;
+          if (!item || startedIdsSet.has(item.id)) return false;
           const blockedBy = (Array.isArray(item.dependsOn) ? item.dependsOn : [])
-            .filter((dependencyId) => !doneRoadmapIds.includes(dependencyId));
+            .filter((dependencyId) => !doneIdsSet.has(dependencyId));
           return blockedBy.length === 0;
         }) || null;
     }
@@ -2409,23 +2548,43 @@ function createVaultStore({ dbPath }) {
     const pack = getPackById(database, packId);
     const items = (pack.roadmap && Array.isArray(pack.roadmap.items) ? pack.roadmap.items : []);
     const chunks = Array.isArray(pack.chunks) ? pack.chunks : [];
-    const doneRoadmapIds = chunks
-      .filter((chunk) => chunk.status === "done" && chunk.roadmapItemId)
-      .map((chunk) => chunk.roadmapItemId);
-    const startedRoadmapIds = chunks
-      .filter((chunk) => chunk.roadmapItemId)
-      .map((chunk) => chunk.roadmapItemId);
+    const taskPrompts = (database.taskPrompts || []).filter((prompt) => prompt.projectId === pack.projectId);
+    const roadmapTaskPromptMap = new Map();
+    for (const prompt of taskPrompts) {
+      if (prompt.roadmapItemId && !roadmapTaskPromptMap.has(prompt.roadmapItemId)) {
+        roadmapTaskPromptMap.set(prompt.roadmapItemId, prompt);
+      }
+    }
+
+    const doneRoadmapIds = new Set([
+      ...chunks
+        .filter((chunk) => chunk.status === "done" && chunk.roadmapItemId)
+        .map((chunk) => chunk.roadmapItemId),
+      ...taskPrompts
+        .filter((prompt) => prompt.status === "done" && prompt.roadmapItemId)
+        .map((prompt) => prompt.roadmapItemId)
+    ]);
+    const startedRoadmapIds = new Set([
+      ...chunks
+        .filter((chunk) => chunk.roadmapItemId)
+        .map((chunk) => chunk.roadmapItemId),
+      ...taskPrompts
+        .filter((prompt) => prompt.roadmapItemId)
+        .map((prompt) => prompt.roadmapItemId)
+    ]);
 
     return {
       pack,
       items: items.map((item) => {
-        const blockedBy = (item.dependsOn || []).filter((dependencyId) => !doneRoadmapIds.includes(dependencyId));
+        const taskPrompt = roadmapTaskPromptMap.get(item.id) || null;
+        const blockedBy = (item.dependsOn || []).filter((dependencyId) => !doneRoadmapIds.has(dependencyId));
         return {
           ...item,
-          started: startedRoadmapIds.includes(item.id),
-          done: doneRoadmapIds.includes(item.id),
+          taskPrompt,
+          started: startedRoadmapIds.has(item.id),
+          done: doneRoadmapIds.has(item.id),
           blockedBy,
-          eligible: blockedBy.length === 0 && !startedRoadmapIds.includes(item.id)
+          eligible: blockedBy.length === 0 && !startedRoadmapIds.has(item.id)
         };
       })
     };
@@ -2705,6 +2864,7 @@ function createPromptFromRoadmapItem({ project, pack, item, order }) {
     markRoadmapItemDone,
     startRoadmapPrompt,
     createTaskPromptFromRoadmapItem,
+    getOrCreateTaskPromptFromRoadmapItem,
     updateTaskPromptContent,
     addTaskPromptVersion,
     applyTaskPromptVersion,

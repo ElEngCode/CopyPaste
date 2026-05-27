@@ -74,7 +74,13 @@ try {
     responseText: JSON.stringify(roadmap)
   }).version;
   store.applyRoadmapVersion(activePackId, roadmapVersion.id);
-  const taskPrompt = store.createTaskPromptFromRoadmapItem(projectId, "roadmap_1").taskPrompt;
+  const createdTask = store.getOrCreateTaskPromptFromRoadmapItem(projectId, "roadmap_1");
+  assert.equal(createdTask.created, true);
+  const reopenedTask = store.getOrCreateTaskPromptFromRoadmapItem(projectId, "roadmap_1");
+  assert.equal(reopenedTask.created, false);
+  assert.equal(reopenedTask.taskPrompt.id, createdTask.taskPrompt.id);
+  assert.equal(reopenedTask.chunk.id, createdTask.chunk.id);
+  const taskPrompt = createdTask.taskPrompt;
   const improved = store.saveTaskImproveResponse(taskPrompt.id, "Improved task prompt content.").version;
   store.applyTaskPromptVersion(taskPrompt.id, improved.id);
   store.approveTaskPrompt(taskPrompt.id);
@@ -87,6 +93,10 @@ try {
     verificationSummary: "verify ok"
   });
   assert.equal(done.taskPrompt.status, "done");
+  const stateAfterDone = store.getState();
+  const packAfterDone = stateAfterDone.promptPacks.find((pack) => pack.id === activePackId);
+  const doneChunk = packAfterDone.chunks.find((chunk) => chunk.id === taskPrompt.sourceChunkId);
+  assert.equal(doneChunk.status, "done");
   const nextEligible = store.getNextEligibleRoadmapItem(projectId);
   assert.equal(nextEligible.nextItem.id, "roadmap_2");
 

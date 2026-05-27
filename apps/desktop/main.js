@@ -53,6 +53,7 @@ const VAULT_GET_NEXT_ROADMAP_ITEM_CHANNEL = "VAULT_GET_NEXT_ROADMAP_ITEM";
 const VAULT_MARK_ROADMAP_IN_PROGRESS_CHANNEL = "VAULT_MARK_ROADMAP_IN_PROGRESS";
 const VAULT_MARK_ROADMAP_DONE_CHANNEL = "VAULT_MARK_ROADMAP_DONE";
 const VAULT_CREATE_TASK_PROMPT_CHANNEL = "VAULT_CREATE_TASK_PROMPT";
+const VAULT_GET_OR_CREATE_TASK_PROMPT_CHANNEL = "VAULT_GET_OR_CREATE_TASK_PROMPT";
 const VAULT_UPDATE_TASK_PROMPT_CHANNEL = "VAULT_UPDATE_TASK_PROMPT";
 const VAULT_ADD_TASK_PROMPT_VERSION_CHANNEL = "VAULT_ADD_TASK_PROMPT_VERSION";
 const VAULT_APPLY_TASK_PROMPT_VERSION_CHANNEL = "VAULT_APPLY_TASK_PROMPT_VERSION";
@@ -843,6 +844,20 @@ ipcMain.handle(VAULT_CREATE_TASK_PROMPT_CHANNEL, (_event, payload) => invokeSafe
   const result = getVaultStore().createTaskPromptFromRoadmapItem(String(payload && payload.projectId || ""), String(payload && payload.roadmapItemId || ""));
   sendVaultStateToRenderer(result.state);
   return { ok: true, taskPrompt: result.taskPrompt, version: result.version, project: result.project, pack: result.pack, chunk: result.chunk, state: result.state };
+}));
+
+ipcMain.handle(VAULT_GET_OR_CREATE_TASK_PROMPT_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().getOrCreateTaskPromptFromRoadmapItem(String(payload && payload.projectId || ""), String(payload && payload.roadmapItemId || ""));
+  sendVaultStateToRenderer(result.state);
+  return {
+    ok: true,
+    created: result.created,
+    taskPrompt: result.taskPrompt,
+    project: result.project,
+    pack: result.pack,
+    chunk: result.chunk,
+    state: result.state
+  };
 }));
 
 ipcMain.handle(VAULT_UPDATE_TASK_PROMPT_CHANNEL, (_event, payload) => invokeSafely(async () => {

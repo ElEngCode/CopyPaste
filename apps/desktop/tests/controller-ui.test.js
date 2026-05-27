@@ -254,6 +254,27 @@ const nextRoadmapItem = getNextEligibleRoadmapItem({
   ]
 });
 assert.equal(nextRoadmapItem.id, "roadmap_2");
+const startedRoadmapItem = getNextEligibleRoadmapItem({
+  roadmap: {
+    items: [
+      { id: "roadmap_1", order: 1, title: "Started", dependsOn: [] },
+      { id: "roadmap_2", order: 2, title: "Blocked", dependsOn: ["roadmap_1"] },
+      { id: "roadmap_3", order: 3, title: "Ready next", dependsOn: [] }
+    ]
+  },
+  chunks: []
+}, [{ roadmapItemId: "roadmap_1", status: "draft" }]);
+assert.equal(startedRoadmapItem.id, "roadmap_3");
+assert.deepEqual(getPrimaryActionState({
+  project: null,
+  pack: null
+}), {
+  id: "create_project",
+  label: "Save Project",
+  enabled: true,
+  handler: "saveProjectBrief",
+  roadmapItemId: ""
+});
 assert.deepEqual(getPlanPrimaryAction({
   project: { id: "project_1", idea: "Build a planner.", masterPlan: "# Master Plan\n\n" },
   pack: null
@@ -350,6 +371,27 @@ assert.deepEqual(getPlanPrimaryAction({
   pack: {
     roadmap: { items: [{ id: "roadmap_1", order: 1, title: "Audit workspace", dependsOn: [] }] },
     chunks: [{ roadmapItemId: "roadmap_1", status: "in_progress" }]
+  },
+  taskPrompts: [{ id: "tp_1", projectId: "project_1", roadmapItemId: "roadmap_1", status: "draft" }]
+}), {
+  id: "open_task",
+  label: "Open Task 001: Audit workspace",
+  enabled: true,
+  handler: "openTaskFromPrimary",
+  roadmapItemId: "roadmap_1",
+  taskPromptId: "tp_1",
+  chunkId: undefined
+});
+assert.deepEqual(getPlanPrimaryAction({
+  project: {
+    id: "project_1",
+    idea: "Build a planner.",
+    masterPlan: "# Master Plan\n\nReal plan",
+    activeMasterPlanVersionId: "mp_1"
+  },
+  pack: {
+    roadmap: { items: [{ id: "roadmap_2", order: 2, title: "Blocked", dependsOn: ["roadmap_1"] }] },
+    chunks: []
   }
 }), {
   id: "blocked",
@@ -358,9 +400,99 @@ assert.deepEqual(getPlanPrimaryAction({
   handler: "",
   roadmapItemId: ""
 });
+assert.deepEqual(getPlanPrimaryAction({
+  project: {
+    id: "project_1",
+    idea: "Build a planner.",
+    masterPlan: "# Master Plan\n\nReal plan",
+    activeMasterPlanVersionId: "mp_1"
+  },
+  pack: {
+    roadmap: {
+      items: [{ id: "roadmap_1", order: 1, title: "Task A", dependsOn: ["roadmap_missing"] }]
+    },
+    chunks: [{ id: "chunk_1", roadmapItemId: "roadmap_1", status: "in_progress", order: 1, title: "Task A" }]
+  },
+  taskPrompts: [{ id: "tp_1", projectId: "project_1", roadmapItemId: "roadmap_1", status: "draft", order: 1, sourceChunkId: "chunk_1" }]
+}), {
+  id: "all_created",
+  label: "All Tasks Created",
+  enabled: true,
+  handler: "openTaskFromPrimary",
+  roadmapItemId: "roadmap_1",
+  taskPromptId: "tp_1",
+  chunkId: "chunk_1"
+});
+assert.deepEqual(getPlanPrimaryAction({
+  project: {
+    id: "project_1",
+    idea: "Build a planner.",
+    masterPlan: "# Master Plan\n\nReal plan",
+    activeMasterPlanVersionId: "mp_1"
+  },
+  pack: {
+    roadmap: {
+      items: [
+        { id: "roadmap_1", order: 1, title: "Task A", dependsOn: [] },
+        { id: "roadmap_2", order: 2, title: "Task B", dependsOn: ["roadmap_1"] }
+      ]
+    },
+    chunks: [
+      { roadmapItemId: "roadmap_1", status: "done" },
+      { roadmapItemId: "roadmap_2", status: "done" }
+    ]
+  }
+}), {
+  id: "complete",
+  label: "Project Tasks Complete",
+  enabled: false,
+  handler: "",
+  roadmapItemId: ""
+});
 assert.equal(getMasterPlanActionLabel(""), "Create Master Plan");
 assert.equal(getMasterPlanActionLabel("# Master Plan\n\n"), "Create Master Plan");
 assert.equal(getMasterPlanActionLabel("# Master Plan\n\nReal plan"), "Improve Master Plan");
+assert.doesNotMatch(renderProjectPlanHtml("# Master Plan\n\nActual content"), /No plan yet/i);
+
+const roadmapTree = buildProjectBrowserTree({
+  projects: [{
+    id: "project_tree_1",
+    name: "Tree Project",
+    path: "F:\\Projects\\Tree",
+    masterPlan: "# Master Plan\n\nBody",
+    activeMasterPlanVersionId: "mp_1",
+    activePromptPackId: "pack_tree_1"
+  }],
+  taskPrompts: [{
+    id: "task_prompt_tree_1",
+    projectId: "project_tree_1",
+    roadmapItemId: "roadmap_tree_1",
+    sourceChunkId: "chunk_tree_1",
+    title: "Audit and initialize project workspace",
+    status: "approved",
+    order: 1
+  }],
+  promptPacks: [{
+    id: "pack_tree_1",
+    projectId: "project_tree_1",
+    title: "Tree Pack",
+    roadmap: {
+      items: [{ id: "roadmap_tree_1", order: 1, title: "Audit and initialize project workspace", dependsOn: [] }]
+    },
+    chunks: [{
+      id: "chunk_tree_1",
+      order: 1,
+      title: "Audit and initialize project workspace",
+      roadmapItemId: "roadmap_tree_1",
+      status: "approved"
+    }]
+  }]
+});
+assert.equal(roadmapTree[0].masterPlanState, "Applied");
+assert.equal(roadmapTree[0].roadmapState, "Applied");
+assert.equal(roadmapTree[0].roadmapItems[0].status, "approved");
+assert.equal(roadmapTree[0].tasks[0].title, "Audit and initialize project workspace");
+assert.equal(roadmapTree[0].tasks[0].status, "approved");
 
 const rootHtml = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
 const rendererJs = fs.readFileSync(path.join(__dirname, "..", "renderer.js"), "utf8");
@@ -370,8 +502,6 @@ assert.match(rootHtml, /Workspace/);
 assert.match(rootHtml, /Inspector/);
 assert.match(rootHtml, /Master Plan/);
 assert.match(rootHtml, /Task Roadmap/);
-assert.match(rootHtml, /Serial/);
-assert.match(rootHtml, /Parallel/);
 assert.match(rootHtml, /Tasks/);
 assert.match(rootHtml, /data-workspace-tab="tasks"/);
 assert.match(rootHtml, /data-workspace-tab="plan"/);
@@ -383,8 +513,10 @@ assert.match(rootHtml, /data-inspector-tab="details"/);
 assert.match(rootHtml, /Project idea/);
 assert.match(rootHtml, /Master Plan/);
 assert.doesNotMatch(rootHtml, /AI Debate/);
-assert.match(rootHtml, /Project Plan/);
+assert.match(rootHtml, /Master Plan Preview/);
 assert.doesNotMatch(rootHtml, /Codex Prompts/);
+assert.doesNotMatch(rootHtml, /Stage:\s*Idea/);
+assert.doesNotMatch(rootHtml, /Next:\s*Capture project idea/);
 assert.doesNotMatch(rootHtml, /Current stage/);
 assert.doesNotMatch(rootHtml, /Current provider/);
 assert.doesNotMatch(rootHtml, /Round history/);
@@ -393,6 +525,7 @@ assert.doesNotMatch(rootHtml, /Latest Prompt Pack/);
 assert.doesNotMatch(rootHtml, /Older Packs/);
 assert.match(rootHtml, /id="saveProjectBriefBtn"[^>]*>Save Draft<\/button>/);
 assert.match(rootHtml, /id="planPrimaryActionBtn"[^>]*>Create Master Plan<\/button>/);
+assert.match(rootHtml, /id="newProjectBtn"[^>]*>New Project<\/button>[\s\S]*id="seeAllProjectsBtn"[^>]*>See all projects<\/button>[\s\S]*id="openProjectFolderBtn"[^>]*>Open Folder<\/button>/);
 assert.doesNotMatch(rootHtml, /id="improveMasterPlanBtn"/);
 assert.doesNotMatch(rootHtml, /id="createRoadmapBtn"/);
 assert.doesNotMatch(rootHtml, /id="startNextPromptBtn"/);

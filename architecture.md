@@ -1,5 +1,26 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-27 Real Workflow Repair (PR flow usability)
+
+- `apps/desktop/prompt-vault.js`
+  - Added safe roadmap task API: `getOrCreateTaskPromptFromRoadmapItem(projectId, roadmapItemId)`.
+  - Added reconciliation for legacy/mismatched taskPrompt/chunk data on DB load/write.
+  - Unified lifecycle sync so taskPrompt operations keep linked chunk status/content aligned (`approved`, `copied`, `done`, content updates, applied versions).
+  - Roadmap eligibility now considers both `promptPacks[].chunks` and `taskPrompts` so started tasks are openable and not offered as duplicate creates.
+- `apps/desktop/main.js` + `apps/desktop/preload.js`
+  - Added IPC channel bridge for safe get-or-create task prompt flow used by renderer.
+- `apps/desktop/renderer.js` + `apps/desktop/index.html`
+  - Project Browser now drives real workflow navigation (master plan, roadmap, roadmap items, task entries) instead of static/fake sections.
+  - Primary action now opens existing eligible tasks instead of throwing duplicate-create errors.
+  - Roadmap item click opens linked task when present; otherwise opens roadmap item detail with actionable status.
+  - Master plan preview rendering now reflects actual current content and avoids stale empty-state behavior during active editing.
+  - Demoted secondary `Open Folder` action and removed misleading `Serial / Parallel` browser text from primary navigation copy.
+- Tests
+  - Expanded UI, prompt-vault, and integration coverage for real flow transitions and safe re-open behavior:
+    - `apps/desktop/tests/controller-ui.test.js`
+    - `apps/desktop/tests/prompt-vault.test.js`
+    - `apps/desktop/tests/workflow-integration.test.js`
+
 ## 2026-05-27 Path Drift Cleanup
 
 - Removed remaining machine-specific UI defaults from desktop renderer/UI:
