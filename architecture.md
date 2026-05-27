@@ -1,5 +1,92 @@
 # CopyPaste Monorepo Architecture
 
+## Active Runtime X-Ray (Current)
+
+### Electron entrypoints
+
+- Active main entrypoint: `apps/desktop/package.json` -> `main.js` -> `apps/desktop/main.js`.
+- Active window assets: `apps/desktop/index.html` + `apps/desktop/renderer.js` with preload `apps/desktop/preload.js`.
+- Legacy alternate entrypoint `apps/desktop/main/main.js` is not part of the active runtime and has been removed from source.
+- Legacy storage module `apps/desktop/main/storage.js` was tied to that removed alternate runtime and is removed.
+
+### Renderer responsibilities
+
+- Render project workflow UI (`Plan` + `Tasks` workspace and Inspector).
+- Drive prompt-vault lifecycle through `window.copypasteDesktop` IPC APIs.
+- Render extension connection state and dispatch stage prompts.
+- Keep no direct `ipcRenderer` usage in renderer runtime code.
+
+### Prompt-vault state model
+
+- Canonical local state is in desktop `prompt-vault-db.json`.
+- Main entities:
+  - `projects`
+  - `promptPacks` (compatibility shape still used by active workflows)
+  - `debateWorkflows`
+  - `masterPlanVersions`
+  - `roadmapVersions`
+  - `taskPrompts`
+  - `taskPromptVersions`
+  - `taskRuns`
+- Applied artifacts are mirrored into project folders (`masterplan.md`, `plan-roadmap.md`, `tasks/*.md`).
+
+### Extension/WebSocket runtime flow
+
+1. Desktop starts local WS server (`COPYPASTE_WS_PORT`, default `8080`).
+2. Desktop writes per-session token to extension local token file.
+3. Extension wake page starts service worker WS connect and sends `EXTENSION_SESSION_HELLO`.
+4. Desktop accepts only authenticated socket, then allows workflow dispatch.
+5. Renderer sends staged payloads via preload bridge; extension returns AI response payloads; desktop forwards to renderer.
+
+### Protocol package role
+
+- `packages/protocol` is the shared workflow contract layer.
+- It defines provider/stage order, stage helpers, and prompt builders used by desktop runtime.
+- Active desktop code imports this shared package; it is the single protocol source for current runtime paths.
+
+### Legacy/runtime classification snapshot
+
+- `apps/desktop/main.js`: `active`.
+- `apps/desktop/main/ws-session.js`: `active`.
+- `apps/desktop/main/main.js`: `dead` -> `should remove` (removed; was alternate runtime entrypoint).
+- `apps/desktop/main/storage.js`: `dead` -> `should remove` (removed; used only by alternate runtime/tests).
+- `apps/desktop/preload.js`: `active` with `compatibility-only` alias `nextstepClipboard` retained because active renderer still calls it.
+- `apps/desktop/index.html`: `active`; contains hidden legacy tools panel for non-primary controls only.
+- `apps/desktop/renderer.js`: `active`; no `AI Debate` tab surface.
+
+## 2026-05-28 Runtime Hardening X-Ray (Extension + Desktop WS)
+
+- `apps/extension/content.js` now uses explicit response completion states:
+  - `before_send` -> `submitted` -> `generation_started` -> `response_changing` -> `stable_complete` / `timeout`
+- Completion gates now require:
+  - response text present
+  - response changed after send baseline
+  - no active Stop control
+  - stable text for required polls
+- Explicit runtime failure reasons:
+  - `composer not found`
+  - `submit button not found`
+  - `response container not found`
+  - `timeout waiting for completion`
+- Selector strategy remains multi-fallback for ChatGPT/Claude composer/send/response surfaces.
+
+- `apps/desktop/main.js` runtime hardening:
+  - WebSocket server port configurable via `COPYPASTE_WS_PORT` (default `8080`)
+  - EADDRINUSE now surfaces user-facing remediation status
+  - extension wake id configurable via `COPYPASTE_EXTENSION_ID` with Chrome-id validation
+  - workflow logging redacted to metadata only (provider, stage id, text length, session id, timestamp)
+
+- `apps/desktop/renderer.js` setup fallback path is now repo-generic (no machine-specific `F:\Projects...` fallback).
+
+- Verification and guardrails:
+  - `apps/extension/content.test.js` adds regression tests for non-premature completion and stable completion behavior
+  - `apps/extension/background.test.js` validates `READ_RESPONSE` error propagation
+  - `apps/desktop/tests/electron-security.test.js` enforces no payload-object logs, EADDRINUSE remediation path, and no hardcoded extension path literals in active runtime files
+  - `apps/desktop/tests/ws-session.test.js` continues session token/handshake validation
+
+- Runtime docs updated in `README.md` for:
+  - `COPYPASTE_WS_PORT`
+  - `COPYPASTE_EXTENSION_ID`
 ## 2026-05-27 Path Drift Cleanup
 
 - Removed remaining machine-specific UI defaults from desktop renderer/UI:
@@ -306,7 +393,7 @@ The product model stays the same: Electron owns the user-facing AI Project Build
 - `apps/desktop/main.js`: Active Electron entry point, WebSocket server, IPC bridge, prompt vault handlers, and hardened BrowserWindow configuration.
 - `apps/desktop/preload.js`: Context-isolated bridge exposing the active `copypasteDesktop` workflow/vault API and `copypasteProtocol` wrappers to the renderer.
 - `apps/desktop/renderer.js`: Root renderer logic for AI Project Builder, prompt vault flows, visible status messages, and extension recovery controls; uses preload APIs at runtime rather than direct Electron IPC.
-- `apps/desktop/main/storage.js`: Desktop persistence helpers using the shared protocol.
+- `apps/desktop/main/ws-session.js`: Session token generation and WebSocket handshake gate for extension authentication.
 - `apps/desktop/tests/run-tests.js`: Desktop test runner.
 - `.github/workflows/verify.yml`: GitHub Actions workflow for Windows install plus `npm.cmd run verify` on push and pull request.
 - `apps/extension/manifest.json`: Chrome Manifest V3 definition.
@@ -396,7 +483,9 @@ The product model stays the same: Electron owns the user-facing AI Project Build
 
 ### Legacy Or Duplicate Runtime
 
-- `apps/desktop/main/main.js` and `apps/desktop/renderer/*` are an older alternate Electron architecture and are not the package entry point today. `apps/desktop/preload.js` is now shared by the active root runtime and the alternate runtime, with explicit active `copypaste*` APIs added for the root UI.
+- `apps/desktop/main/main.js` was an older alternate Electron main entrypoint and is removed.
+- `apps/desktop/renderer/*` remains as archival legacy renderer code and is not the package entrypoint today.
+- `apps/desktop/preload.js` now exposes the active `copypaste*` bridge plus one compatibility alias (`nextstepClipboard`) used by the active root renderer.
 - `apps/desktop/shared/ai-project-builder-protocol.js` is a compatibility copy; active imports use `packages/protocol`.
 - `apps/extension/popup.html` and `apps/extension/popup.js` are legacy inactive files and still reference old runtime actions (`GET_STATE`, `EXECUTE_NEXT_STEP`, `TRIGGER_SAVE`) that current `background.js` does not handle.
 - Root untracked files `2.txt` and `New Text Document.txt` are older prototype background scripts. Root untracked `codex-plans/copypaste-codex-execution-pack` is generated from the dummy source text `mesaj de test`.

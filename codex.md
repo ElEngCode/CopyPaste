@@ -1,5 +1,59 @@
 # Codex Progress
 
+## 2026-05-28 Runtime Cleanup Audit (`codex/cleanup-legacy-runtime-and-docs`)
+
+- Audited active desktop runtime entrypoint and usage paths:
+  - active: `apps/desktop/package.json` -> `apps/desktop/main.js` -> `apps/desktop/index.html` + `apps/desktop/renderer.js` with `apps/desktop/preload.js`
+  - active helper: `apps/desktop/main/ws-session.js`
+- Removed dead alternate runtime files:
+  - `apps/desktop/main/main.js`
+  - `apps/desktop/main/storage.js`
+- Removed dead legacy storage test and runner reference:
+  - `apps/desktop/tests/storage-debate.test.js`
+  - `apps/desktop/tests/run-tests.js`
+- Tightened preload exposure:
+  - kept active bridges `copypasteDesktop` and `copypasteProtocol`
+  - removed unused legacy bridges (`nextstepApp`, `nextstepStorage`, `nextstepAI`, `nextstepDebateRunner`, `nextstepBrowser`, `nextstepSelectors`)
+  - retained `nextstepClipboard` as compatibility-only because active `renderer.js` still calls it in two copy paths
+- Added runtime/source regression guard:
+  - `apps/desktop/tests/runtime-audit.test.js`
+  - validates entrypoint wiring, docs/runtime alignment, hidden `AI Debate` surface absence, machine-path guardrails for active runtime files, and preload bridge minimization
+- Updated docs:
+  - root `README.md` run/load/verify workflow and file meanings
+  - root `architecture.md` active runtime x-ray, prompt-vault model, extension/websocket flow, protocol role, and legacy classification
+- Verified locally (all passing):
+  - `npm.cmd run desktop:test`
+  - `npm.cmd run extension:verify`
+  - `npm.cmd run verify`
+
+## 2026-05-28 Extension + Desktop Runtime Hardening (`codex/harden-extension-runtime`)
+
+- Hardened extension response completion in `apps/extension/content.js` with explicit polling state machine:
+  - `before_send` -> `submitted` -> `generation_started` -> `response_changing` -> `stable_complete` / `timeout`
+  - completion now requires real post-submit response change, no active Stop control, non-empty text, and stable polls.
+- Added explicit runtime failure messages:
+  - `composer not found`
+  - `submit button not found`
+  - `response container not found`
+  - `timeout waiting for completion`
+- Extended extension tests:
+  - `apps/extension/content.test.js` for pre-start non-completion, stable-after-generation completion, and empty-response timeout.
+  - `apps/extension/background.test.js` for `READ_RESPONSE` error propagation.
+- Hardened desktop runtime in `apps/desktop/main.js`:
+  - configurable WebSocket port via `COPYPASTE_WS_PORT` (default `8080`)
+  - explicit `EADDRINUSE` renderer status and remediation guidance
+  - configurable extension wake id via `COPYPASTE_EXTENSION_ID` (validated)
+  - removed full workflow payload logging; log metadata only (provider, stage id, text length, session id, timestamp).
+- Removed machine-specific extension setup fallback in `apps/desktop/renderer.js`; fallback now points to `apps/extension folder in this repo`.
+- Updated source/runtime guards in `apps/desktop/tests/electron-security.test.js`:
+  - no payload-object log patterns
+  - EADDRINUSE remediation presence
+  - no hardcoded `F:\Projects\CopyPaste\apps\extension` in active runtime files.
+- Updated `README.md` runtime notes for `COPYPASTE_WS_PORT` and `COPYPASTE_EXTENSION_ID`.
+- Verification run and passing:
+  - `npm.cmd run extension:verify`
+  - `npm.cmd run desktop:test`
+  - `npm.cmd run verify`
 ## 2026-05-27 Path Drift Cleanup
 
 - Audited remaining hardcoded workstation paths after the CI portability fix.
