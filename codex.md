@@ -1,5 +1,19 @@
 # Codex Progress
 
+## 2026-05-27 CI Prompt Vault Path Portability Fix
+
+- Reproduced the PR CI failure from `Verify` logs: `prompt-vault.test.js` failed in GitHub Actions with `ENOENT` while creating `F:\\Projects\\CopyPaste\\Projects`.
+- Root cause: `apps/desktop/prompt-vault.js` used a machine-specific hardcoded default `projectsBasePath`.
+- Fixed default base path to repo-relative `path.resolve(__dirname, "..", "..", "Projects")`.
+- Added safe `resolveProjectsBasePath(...)` fallback so stale/invalid DB paths do not crash `getState()`/filesystem sync.
+- Updated filesystem sync and project save flow to normalize and persist a usable projects base path.
+- Re-ran:
+  - `node apps/desktop/tests/prompt-vault.test.js`
+  - `npm.cmd run desktop:test`
+  - `npm.cmd run extension:verify`
+  - `npm.cmd run verify`
+  All pass locally on branch `codex/repair-planning-workflow`.
+
 ## 2026-05-27 Repair Review Follow-up
 
 - Reproduced the roadmap task handoff bug with regression tests:

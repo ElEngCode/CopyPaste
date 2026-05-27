@@ -1,5 +1,14 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-27 CI Path Portability Hotfix
+
+- `apps/desktop/prompt-vault.js`
+  - Replaced hardcoded default projects root (`F:\\Projects\\CopyPaste\\Projects`) with repo-relative default: `path.resolve(__dirname, "..", "..", "Projects")`.
+  - Added `resolveProjectsBasePath(...)` to guarantee a creatable base path and gracefully fall back from stale machine-specific DB paths.
+  - `syncProjectsFromFilesystem()` and `saveProject()` now persist the resolved usable base path before path-dependent operations.
+- Result
+  - `getState()` no longer crashes on CI runners without `F:` drive when old DB/default values reference Windows-local absolute paths.
+
 ## 2026-05-27 Workflow Repair Notes
 
 - `apps/desktop/prompt-vault.js`

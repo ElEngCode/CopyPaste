@@ -4,7 +4,7 @@ const projectBuilderProtocol = globalThis.NextStepAiProjectBuilderProtocol || re
 
 const DB_VERSION = 1;
 const DB_SCHEMA_VERSION = 2;
-const DEFAULT_PROJECTS_BASE_PATH = "F:\\Projects\\CopyPaste\\Projects";
+const DEFAULT_PROJECTS_BASE_PATH = path.resolve(__dirname, "..", "..", "Projects");
 const DEFAULT_CHUNK_COUNT = 3;
 const DEFAULT_CHUNK_STRATEGY = "simple_3";
 const DEFAULT_GIT_MODE = "every_chunk";
@@ -113,6 +113,22 @@ function getProjectFolderName(value) {
 
 function normalizeWindowsPath(value) {
   return normalizeString(value).replace(/^"|"$/g, "");
+}
+
+function resolveProjectsBasePath(value) {
+  const normalized = normalizeWindowsPath(value);
+  const candidates = normalized ? [normalized, DEFAULT_PROJECTS_BASE_PATH] : [DEFAULT_PROJECTS_BASE_PATH];
+
+  for (const candidate of candidates) {
+    try {
+      ensureDirectory(candidate);
+      return candidate;
+    } catch (_error) {
+      // Fall back to the next candidate.
+    }
+  }
+
+  return DEFAULT_PROJECTS_BASE_PATH;
 }
 
 function getProjectPaths(projectPath) {
@@ -1065,10 +1081,15 @@ function createVaultStore({ dbPath }) {
   }
 
   function syncProjectsFromFilesystem(database) {
-    const basePath = normalizeWindowsPath(database.projectsBasePath) || DEFAULT_PROJECTS_BASE_PATH;
-    ensureDirectory(basePath);
+    const basePath = resolveProjectsBasePath(database.projectsBasePath);
+    database.projectsBasePath = basePath;
     const deletedPaths = new Set((Array.isArray(database.deletedProjectPaths) ? database.deletedProjectPaths : []).map((item) => String(item || "").toLowerCase()));
-    const entries = fs.readdirSync(basePath, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+    let entries = [];
+    try {
+      entries = fs.readdirSync(basePath, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+    } catch (_error) {
+      return;
+    }
     const byPath = new Map(database.projects.map((project) => [String(project.path || "").toLowerCase(), project]));
 
     for (const entry of entries) {
@@ -1115,7 +1136,8 @@ function createVaultStore({ dbPath }) {
     const database = readDatabase();
     const projectName = normalizeString(input && input.name);
     const requestedPath = normalizeWindowsPath(input && input.path);
-    const basePath = normalizeWindowsPath(database.projectsBasePath) || DEFAULT_PROJECTS_BASE_PATH;
+    const basePath = resolveProjectsBasePath(database.projectsBasePath);
+    database.projectsBasePath = basePath;
     const folderName = getProjectFolderName(projectName || "Project");
     const projectPath = requestedPath || path.join(basePath, folderName);
 
