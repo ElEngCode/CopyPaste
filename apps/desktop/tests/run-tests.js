@@ -1,7 +1,15 @@
 const path = require("node:path");
 
 const tests = [
-  "prompt-vault.test.js"
+  "state-debate.test.js",
+  "ai-project-builder-protocol.test.js",
+  "debate-prompts.test.js",
+  "storage-debate.test.js",
+  "prompt-vault.test.js",
+  "electron-security.test.js",
+  "ws-session.test.js",
+  "controller-ui.test.js",
+  "workflow-integration.test.js"
 ];
 
 for (const file of tests) {
