@@ -86,10 +86,10 @@ assert.deepEqual(getNewProjectDraft(), {
 assert.equal(getProjectFolderName("My Cool App"), "My Cool App");
 assert.equal(getProjectFolderName("Proiectul pulii"), "Proiectul pulii");
 assert.equal(getProjectFolderName("Bad:Project/Name"), "Bad Project Name");
-assert.equal(getProjectDraftPath("My Cool App"), "F:\\Projects\\CopyPaste\\Projects\\My Cool App");
-assert.equal(getProjectDraftPath("Proiectul pulii"), "F:\\Projects\\CopyPaste\\Projects\\Proiectul pulii");
+assert.equal(getProjectDraftPath("My Cool App"), "Projects\\My Cool App");
+assert.equal(getProjectDraftPath("Proiectul pulii"), "Projects\\Proiectul pulii");
 assert.equal(getProjectDraftPath("Proiectul pulii", "D:\\Work\\Tasks"), "D:\\Work\\Tasks\\Proiectul pulii");
-assert.equal(getProjectDraftPath(""), "F:\\Projects\\CopyPaste\\Projects\\Project");
+assert.equal(getProjectDraftPath(""), "Projects\\Project");
 assert.equal(getDraftCommitFallback("My Cool App"), "Initialize My Cool App");
 assert.equal(getDraftCommitFallback(""), "");
 
@@ -435,7 +435,7 @@ assert.match(rootHtml, /Open extension folder/);
 assert.match(rootHtml, />Connect</);
 assert.match(rootHtml, />Setup</);
 assert.match(rootHtml, /Refresh status/);
-assert.match(rootHtml, /First time setup: click First-time setup, open chrome:\/\/extensions, set Developer mode to ON, then load unpacked from F:\\Projects\\CopyPaste\\apps\\extension\./);
+assert.match(rootHtml, /First time setup: click First-time setup, open chrome:\/\/extensions, set Developer mode to ON, then load unpacked from this repo's apps\/extension folder\./);
 assert.doesNotMatch(rootHtml, /Extension Setup Checklist/);
 assert.doesNotMatch(rootHtml, /Launch Chrome with extension/);
 assert.doesNotMatch(rootHtml, /Chrome launched with CopyPaste extension flags/);

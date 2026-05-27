@@ -1,5 +1,15 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-27 Path Drift Cleanup
+
+- Removed remaining machine-specific UI defaults from desktop renderer/UI:
+  - `apps/desktop/renderer.js` now defaults draft project paths from portable base `Projects` instead of `F:\Projects\CopyPaste\Projects`.
+  - `getProjectDraftPath(...)` now joins paths using inferred separators, so custom bases like `D:\Work\Tasks` and `/home/user/projects` stay coherent.
+  - `apps/desktop/index.html` setup/help placeholders no longer hardcode workstation-local absolute paths.
+- Updated docs/tests to match runtime behavior:
+  - `apps/desktop/tests/controller-ui.test.js` default draft-path assertions now target `Projects\...`.
+  - `README.md` now documents extension location as `<repo>/apps/extension` and generated projects as `<repo>/Projects/...` by default.
+
 ## 2026-05-27 CI Path Portability Hotfix
 
 - `apps/desktop/prompt-vault.js`

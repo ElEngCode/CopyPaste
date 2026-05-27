@@ -36,7 +36,7 @@ npm.cmd run desktop
 Load the unpacked Chrome extension from:
 
 ```text
-F:\Projects\CopyPaste\apps\extension
+<repo>/apps/extension
 ```
 
 Open ChatGPT and Claude tabs in the same Chrome window, then use the Electron app to send the next workflow step.
@@ -69,7 +69,7 @@ This runs extension syntax/tests and desktop tests.
 ## Local Data Paths
 
 - Desktop DB: `%APPDATA%/next-step/prompt-vault-db.json` (Electron userData)
-- Generated project files: `F:\Projects\CopyPaste\Projects\...`
+- Generated project files: `<repo>/Projects/...` (or custom `Default projects folder` from settings)
 - Applied master plan file: `<project>/masterplan.md`
 - Applied roadmap file: `<project>/plan-roadmap.md`
 - Task prompt files: `<project>/tasks/task-###-slug.md`

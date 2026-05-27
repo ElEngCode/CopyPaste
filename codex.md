@@ -1,5 +1,14 @@
 # Codex Progress
 
+## 2026-05-27 Path Drift Cleanup
+
+- Audited remaining hardcoded workstation paths after the CI portability fix.
+- Removed renderer/UI defaults that still pinned project drafts to `F:\Projects\CopyPaste\Projects`.
+- `apps/desktop/renderer.js` now uses portable default `Projects` for draft paths and separator-aware joining for custom Windows/Linux base paths.
+- Updated `apps/desktop/index.html` setup/help and path placeholders to avoid machine-specific absolute paths.
+- Updated `apps/desktop/tests/controller-ui.test.js` draft-path assertions to align with portable defaults.
+- Updated `README.md` path docs to `<repo>/...` defaults.
+
 ## 2026-05-27 CI Prompt Vault Path Portability Fix
 
 - Reproduced the PR CI failure from `Verify` logs: `prompt-vault.test.js` failed in GitHub Actions with `ENOENT` while creating `F:\\Projects\\CopyPaste\\Projects`.

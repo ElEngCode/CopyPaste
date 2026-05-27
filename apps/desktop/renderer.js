@@ -18,7 +18,7 @@ const VAULT_COPY_LAUNCHER_CHANNEL = "VAULT_COPY_LAUNCHER";
 const VAULT_MARK_CHUNK_CHANNEL = "VAULT_MARK_CHUNK";
 const VAULT_OPEN_FOLDER_CHANNEL = "VAULT_OPEN_FOLDER";
 const VAULT_DELETE_PACK_CHANNEL = "VAULT_DELETE_PACK";
-const DEFAULT_PROJECTS_BASE_PATH = "F:\\Projects\\CopyPaste\\Projects";
+const DEFAULT_PROJECTS_BASE_PATH = "Projects";
 
 const elements = {
   chatgptPrefix: null,
@@ -200,8 +200,21 @@ function getProjectsBasePath(basePath) {
   return String(basePath || DEFAULT_PROJECTS_BASE_PATH).trim() || DEFAULT_PROJECTS_BASE_PATH;
 }
 
+function inferPathSeparator(basePath) {
+  const value = String(basePath || "");
+  if (value.includes("/")) return "/";
+  if (value.includes("\\")) return "\\";
+  return "\\";
+}
+
+function joinPath(basePath, name) {
+  const separator = inferPathSeparator(basePath);
+  const trimmedBase = String(basePath || "").replace(/[\\/]+$/, "");
+  return `${trimmedBase}${separator}${name}`;
+}
+
 function getProjectDraftPath(projectName, basePath) {
-  return `${getProjectsBasePath(basePath)}\\${getProjectFolderName(projectName)}`;
+  return joinPath(getProjectsBasePath(basePath), getProjectFolderName(projectName));
 }
 
 function getDraftCommitFallback(projectName) {
