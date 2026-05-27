@@ -1,5 +1,32 @@
 # Codex Progress
 
+## 2026-05-28 Real Workflow Regression Tightening (duplicate-safe + full-flow assertions)
+
+- Strengthened regression coverage in-place without removing any existing tests:
+  - `apps/desktop/tests/prompt-vault.test.js`
+    - added explicit duplicate-open guard for `getOrCreateTaskPromptFromRoadmapItem(projectId, "roadmap_2")`
+    - added invariant that roadmap item `roadmap_2` keeps a single `taskPrompt` record after repeated open/create calls
+    - added reusable status-sync assertion to enforce `taskPrompt.status === linked chunk.status` at each transition (`approved`, `copied`, `done`)
+  - `apps/desktop/tests/workflow-integration.test.js`
+    - added full primary-action flow assertions:
+      - before first task: primary action must target `startNextTask` on `roadmap_1`
+      - after task 001 exists: primary action must be `openTaskFromPrimary` for task 001 or advance to `startNextTask` for task 002
+    - added duplicate-safe reopen assertion (repeat `roadmap_1` open must not throw)
+    - added browser tree and workflow selection assertions for task 001 visibility and selection
+    - added task workspace continuity checks by validating persisted task prompt file content
+  - `apps/desktop/tests/ui-workflow-regression.test.js`
+    - added additional preview guard checks against stale `No plan yet` output
+    - added explicit browser-tree task status visibility check
+    - added renderer tree-block guard that `Stage/Next` content is not rendered as primary browser tree content
+  - `apps/desktop/tests/controller-ui.test.js`
+    - added roadmap-linked task/chunk identity assertions in browser-tree model
+- Commands run and passing:
+  - `node apps/desktop/tests/controller-ui.test.js`
+  - `node apps/desktop/tests/prompt-vault.test.js`
+  - `node apps/desktop/tests/workflow-integration.test.js`
+  - `npm.cmd run desktop:test`
+  - `npm.cmd run verify`
+
 ## 2026-05-28 Real Workflow Regression Test Coverage (`codex/add-real-workflow-regression-tests`)
 
 - Added dedicated regression suite: `apps/desktop/tests/ui-workflow-regression.test.js`.

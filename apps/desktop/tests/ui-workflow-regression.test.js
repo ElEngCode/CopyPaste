@@ -65,6 +65,9 @@ try {
   assert.equal(workflowModel.projects[0].tasks[0].status, "approved");
   assert.equal(workflowModel.projects[0].tasks[0].selected, true);
   assert.doesNotMatch(renderProjectPlanHtml(viewModelState.projects[0].masterPlan), /No plan yet/i);
+  const selectedProjectModel = workflowModel.projects[0];
+  assert.match(renderProjectPlanHtml(selectedProjectModel.project.masterPlan || ""), /plan-document/);
+  assert.doesNotMatch(renderProjectPlanHtml(selectedProjectModel.project.masterPlan || ""), /No plan yet/i);
 
   const dbPath = path.join(tmpRoot, "prompt-vault-db.json");
   const projectPath = path.join(tmpRoot, "FullFlowProject");
@@ -152,6 +155,7 @@ try {
   assert.ok(browserProject.tasks.length >= 1);
   assert.ok(browserProject.tasks.some((task) => task.title === "Task 001"));
   assert.ok(browserProject.tasks.some((task) => task.taskPromptId === createdTask.taskPrompt.id));
+  assert.ok(browserProject.tasks.some((task) => task.status === "draft"));
 
   const workflowAfterReopen = buildProjectWorkflowView(stateAfterReopen, {
     selectedProjectId: projectId,
@@ -170,6 +174,13 @@ try {
   assert.match(selectRoadmapBlock, /selectTreeNode\(/);
   assert.match(selectRoadmapBlock, /"task"/);
   assert.match(selectRoadmapBlock, /"roadmap_item"/);
+  const renderBrowserTreeStart = rendererSource.indexOf("function renderProjectBrowserTree()");
+  assert.ok(renderBrowserTreeStart >= 0);
+  const renderBrowserTreeBlock = rendererSource.slice(renderBrowserTreeStart, rendererSource.indexOf("function getStatusOption"));
+  assert.doesNotMatch(renderBrowserTreeBlock, /Stage:/);
+  assert.doesNotMatch(renderBrowserTreeBlock, /Next:/);
+  assert.doesNotMatch(renderBrowserTreeBlock, /project\.stage/);
+  assert.doesNotMatch(renderBrowserTreeBlock, /project\.nextAction/);
 
   const indexSource = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
   assert.doesNotMatch(indexSource, />\s*Stage:\s*/);

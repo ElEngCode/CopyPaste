@@ -1,5 +1,35 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-28 Regression Harness Hardening (Behavior-first)
+
+- Desktop regression architecture strengthened around behavior/state invariants:
+  - `apps/desktop/tests/prompt-vault.test.js`
+    - idempotent roadmap task retrieval now explicitly enforced:
+      - repeated `getOrCreateTaskPromptFromRoadmapItem(projectId, roadmap_2)` must reopen existing prompt
+      - no duplicate `taskPrompts` for same `projectId + roadmapItemId`
+    - lifecycle status lockstep invariant enforced:
+      - `approveTaskPrompt` => prompt/chunk both `approved`
+      - `copyCodexHandoff` => prompt/chunk both `copied`
+      - `markTaskPromptDone` => prompt/chunk both `done`
+  - `apps/desktop/tests/workflow-integration.test.js`
+    - full flow now validates primary-action transitions as state machine outputs:
+      - pre-task state => create `roadmap_1`
+      - post-task-create state => reopen existing `task 001` or advance to next eligible item
+    - browser projection assertions ensure created task appears in real tree/task model
+    - persisted task file content is checked to guarantee workspace-visible prompt continuity
+  - `apps/desktop/tests/ui-workflow-regression.test.js`
+    - stale preview guard reinforced (`masterPlan` content must not render `No plan yet`)
+    - browser tree guard reinforced (real task node/status must be visible)
+    - renderer browser-tree block guarded against `Stage/Next` dominance
+  - `apps/desktop/tests/controller-ui.test.js`
+    - roadmap item linkage checks enforce that task nodes map to real linked prompt/chunk identities
+- Source hygiene invariant kept active:
+  - active desktop sources remain scanned for hardcoded local path `F:\Projects\CopyPaste`:
+    - `apps/desktop/renderer.js`
+    - `apps/desktop/index.html`
+    - `apps/desktop/main.js`
+    - `apps/desktop/prompt-vault.js`
+
 ## 2026-05-28 Regression Test X-Ray (Real Workflow Guards)
 
 - Added new desktop regression test module:

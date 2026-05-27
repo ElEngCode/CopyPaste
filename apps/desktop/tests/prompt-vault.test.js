@@ -493,15 +493,26 @@ try {
 
   const taskPromptCreated = store.getOrCreateTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_2");
   assert.equal(taskPromptCreated.created, true);
-  assert.doesNotThrow(() => store.getOrCreateTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_2"));
+  assert.doesNotThrow(
+    () => store.getOrCreateTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_2"),
+    "getOrCreateTaskPromptFromRoadmapItem should reopen existing prompt instead of throwing duplicate error"
+  );
   const taskPromptExisting = store.getOrCreateTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_2");
   assert.equal(taskPromptExisting.created, false);
   assert.equal(taskPromptExisting.taskPrompt.id, taskPromptCreated.taskPrompt.id);
   assert.equal(taskPromptExisting.chunk.id, taskPromptCreated.chunk.id);
   assert.equal(taskPromptExisting.taskPrompt.roadmapItemId, taskPromptCreated.taskPrompt.roadmapItemId);
+  assert.equal(taskPromptExisting.taskPrompt.sourceChunkId, taskPromptCreated.taskPrompt.sourceChunkId);
+  const stateAfterGetOrCreateDuplicateAttempt = store.getState();
+  const promptsForRoadmapTwo = stateAfterGetOrCreateDuplicateAttempt.taskPrompts.filter((entry) =>
+    entry.projectId === savedBrief.project.id && entry.roadmapItemId === "roadmap_2"
+  );
+  assert.equal(promptsForRoadmapTwo.length, 1);
+  assert.equal(promptsForRoadmapTwo[0].id, taskPromptCreated.taskPrompt.id);
   const taskPromptFromCreate = store.createTaskPromptFromRoadmapItem(savedBrief.project.id, "roadmap_2");
   assert.equal(taskPromptFromCreate.created, false);
   assert.equal(taskPromptFromCreate.taskPrompt.id, taskPromptCreated.taskPrompt.id);
+  assert.equal(taskPromptFromCreate.taskPrompt.roadmapItemId, "roadmap_2");
   assert.equal(taskPromptCreated.taskPrompt.roadmapItemId, "roadmap_2");
   assert.equal(taskPromptCreated.taskPrompt.status, "draft");
   const stateAfterTaskPromptCreate = store.getState();
@@ -540,6 +551,15 @@ try {
   assert.equal(versionList.versions[0].id, proposedImproveVersion.version.id);
   const appliedVersion = store.applyTaskPromptVersion(taskPromptCreated.taskPrompt.id, proposedImproveVersion.version.id);
   assert.equal(appliedVersion.taskPrompt.content, "Improved by AI");
+  const assertTaskPromptAndChunkStatus = (expectedStatus) => {
+    const state = store.getState();
+    const prompt = state.taskPrompts.find((entry) => entry.id === taskPromptCreated.taskPrompt.id);
+    const chunk = state.promptPacks
+      .find((pack) => pack.id === taskPromptCreated.pack.id)
+      .chunks.find((entry) => entry.id === taskPromptCreated.taskPrompt.sourceChunkId);
+    assert.equal(prompt.status, expectedStatus);
+    assert.equal(chunk.status, expectedStatus);
+  };
   const afterAppliedVersionState = store.getState();
   const afterAppliedChunk = afterAppliedVersionState.promptPacks
     .find((pack) => pack.id === taskPromptCreated.pack.id)
@@ -547,6 +567,7 @@ try {
   assert.equal(afterAppliedChunk.prompt, "Improved by AI");
   const approvedTaskPrompt = store.approveTaskPrompt(taskPromptCreated.taskPrompt.id);
   assert.equal(approvedTaskPrompt.taskPrompt.status, "approved");
+  assertTaskPromptAndChunkStatus("approved");
   const afterApproveState = store.getState();
   const afterApprovePrompt = afterApproveState.taskPrompts.find((entry) => entry.id === taskPromptCreated.taskPrompt.id);
   const afterApproveChunk = afterApproveState.promptPacks
@@ -557,6 +578,7 @@ try {
   const copiedTaskPrompt = store.copyCodexHandoff(taskPromptCreated.taskPrompt.id);
   assert.equal(copiedTaskPrompt.taskPrompt.status, "copied");
   assert.match(copiedTaskPrompt.handoffText, /Full task prompt/);
+  assertTaskPromptAndChunkStatus("copied");
   const afterCopyState = store.getState();
   const afterCopyPrompt = afterCopyState.taskPrompts.find((entry) => entry.id === taskPromptCreated.taskPrompt.id);
   const afterCopyChunk = afterCopyState.promptPacks
@@ -576,6 +598,7 @@ try {
     verificationSummary: "verify ok"
   });
   assert.equal(completedTaskPrompt.taskPrompt.status, "done");
+  assertTaskPromptAndChunkStatus("done");
   const afterDoneState = store.getState();
   const afterDonePrompt = afterDoneState.taskPrompts.find((entry) => entry.id === taskPromptCreated.taskPrompt.id);
   const afterDoneChunk = afterDoneState.promptPacks

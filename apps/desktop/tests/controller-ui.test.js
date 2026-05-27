@@ -595,8 +595,12 @@ const roadmapTree = buildProjectBrowserTree({
 assert.equal(roadmapTree[0].masterPlanState, "Applied");
 assert.equal(roadmapTree[0].roadmapState, "Applied");
 assert.equal(roadmapTree[0].roadmapItems[0].status, "approved");
+assert.equal(roadmapTree[0].roadmapItems[0].linkedTaskPrompt.id, "task_prompt_tree_1");
+assert.equal(roadmapTree[0].roadmapItems[0].linkedChunk.id, "chunk_tree_1");
 assert.equal(roadmapTree[0].tasks[0].title, "Audit and initialize project workspace");
 assert.equal(roadmapTree[0].tasks[0].status, "approved");
+assert.equal(roadmapTree[0].tasks[0].taskPromptId, "task_prompt_tree_1");
+assert.equal(roadmapTree[0].tasks[0].chunkId, "chunk_tree_1");
 
 const openTaskPrimaryAction = getPlanPrimaryAction({
   project: {

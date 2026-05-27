@@ -76,21 +76,51 @@ try {
     responseText: JSON.stringify(roadmap)
   }).version;
   store.applyRoadmapVersion(activePackId, roadmapVersion.id);
+  const stateAfterRoadmap = store.getState();
+  const initialPrimaryAction = getPlanPrimaryAction({
+    project: stateAfterRoadmap.projects.find((project) => project.id === projectId),
+    pack: stateAfterRoadmap.promptPacks.find((pack) => pack.id === activePackId),
+    taskPrompts: stateAfterRoadmap.taskPrompts.filter((prompt) => prompt.projectId === projectId)
+  });
+  assert.equal(initialPrimaryAction.handler, "startNextTask");
+  assert.equal(initialPrimaryAction.roadmapItemId, "roadmap_1");
+
   const createdTask = store.getOrCreateTaskPromptFromRoadmapItem(projectId, "roadmap_1");
   assert.equal(createdTask.created, true);
-  assert.doesNotThrow(() => store.getOrCreateTaskPromptFromRoadmapItem(projectId, "roadmap_1"));
+  assert.doesNotThrow(
+    () => store.getOrCreateTaskPromptFromRoadmapItem(projectId, "roadmap_1"),
+    "Opening the first task again should not throw a duplicate roadmap task error"
+  );
   const reopenedTask = store.getOrCreateTaskPromptFromRoadmapItem(projectId, "roadmap_1");
   assert.equal(reopenedTask.created, false);
   assert.equal(reopenedTask.taskPrompt.id, createdTask.taskPrompt.id);
   assert.equal(reopenedTask.chunk.id, createdTask.chunk.id);
   assert.equal(reopenedTask.taskPrompt.roadmapItemId, "roadmap_1");
+  const stateAfterTaskOneCreate = store.getState();
+  const actionAfterTaskOneCreate = getPlanPrimaryAction({
+    project: stateAfterTaskOneCreate.projects.find((project) => project.id === projectId),
+    pack: stateAfterTaskOneCreate.promptPacks.find((pack) => pack.id === activePackId),
+    taskPrompts: stateAfterTaskOneCreate.taskPrompts.filter((prompt) => prompt.projectId === projectId)
+  });
+  assert.ok(actionAfterTaskOneCreate.handler === "openTaskFromPrimary" || actionAfterTaskOneCreate.handler === "startNextTask");
+  if (actionAfterTaskOneCreate.handler === "openTaskFromPrimary") {
+    assert.equal(actionAfterTaskOneCreate.roadmapItemId, "roadmap_1");
+    assert.equal(actionAfterTaskOneCreate.taskPromptId, createdTask.taskPrompt.id);
+  } else {
+    assert.equal(actionAfterTaskOneCreate.roadmapItemId, "roadmap_2");
+  }
   const taskPrompt = createdTask.taskPrompt;
   const stateAfterReopen = store.getState();
+  const roadmapOnePrompts = stateAfterReopen.taskPrompts.filter((prompt) =>
+    prompt.projectId === projectId && prompt.roadmapItemId === "roadmap_1"
+  );
+  assert.equal(roadmapOnePrompts.length, 1);
   const treeAfterReopen = buildProjectBrowserTree(stateAfterReopen);
   const projectNode = treeAfterReopen.find((node) => node.id === projectId);
   assert.ok(projectNode);
   assert.ok(projectNode.tasks.some((task) => task.taskPromptId === taskPrompt.id));
   assert.ok(projectNode.tasks.some((task) => /Task 1/.test(task.title)));
+  assert.ok(projectNode.tasks.some((task) => task.status === "draft" || task.status === "ready"));
   const workflowAfterReopen = buildProjectWorkflowView(stateAfterReopen, {
     selectedProjectId: projectId,
     selectedTaskPromptId: taskPrompt.id
@@ -98,6 +128,14 @@ try {
   const workflowProject = workflowAfterReopen.projects.find((project) => project.id === projectId);
   assert.ok(workflowProject);
   assert.equal(workflowProject.tasks.some((task) => task.selected), true);
+  const selectedTaskNode = workflowProject.tasks.find((task) => task.taskPromptId === taskPrompt.id);
+  assert.ok(selectedTaskNode);
+  assert.equal(selectedTaskNode.selected, true);
+  const stateTaskPrompt = stateAfterReopen.taskPrompts.find((prompt) => prompt.id === taskPrompt.id);
+  assert.ok(stateTaskPrompt);
+  assert.match(stateTaskPrompt.content, /Project name:/);
+  assert.ok(fs.existsSync(stateTaskPrompt.taskFilePath));
+  assert.match(fs.readFileSync(stateTaskPrompt.taskFilePath, "utf8"), /Project name:/);
   const actionAfterReopen = getPlanPrimaryAction({
     project: stateAfterReopen.projects.find((project) => project.id === projectId),
     pack: stateAfterReopen.promptPacks.find((pack) => pack.id === activePackId),
