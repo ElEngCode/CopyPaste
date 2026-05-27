@@ -10,6 +10,7 @@ const {
   createStageWorkflowPayload,
   applyDebateResponse,
   getDebateStageView,
+  buildProjectWorkflowView,
   buildProjectBrowserTree,
   getVisibleProjectBrowserNodes,
   getTaskImprovePayload,
@@ -184,6 +185,13 @@ assert.equal(tree.length, 1);
 assert.equal(tree[0].packs.length, 1);
 assert.equal(tree[0].packs[0].chunks[0].id, "chunk_1");
 
+const emptyWorkflow = buildProjectWorkflowView({
+  projects: [],
+  promptPacks: [],
+  taskPrompts: []
+});
+assert.equal(emptyWorkflow.projects.length, 0);
+
 const multiProjectTree = buildProjectBrowserTree({
   projects: [
     { id: "project_1", name: "Alpha", path: "F:\\Projects\\Alpha" },
@@ -206,6 +214,100 @@ assert.deepEqual(
     draftProject: { id: "__draft__", name: "New Project", packs: [] }
   }).map((project) => project.name),
   ["New Project"]
+);
+
+const workflowModel = buildProjectWorkflowView({
+  projects: [{
+    id: "project_model_1",
+    name: "Model Project",
+    path: "F:\\Projects\\Model",
+    idea: "Build model",
+    masterPlan: "# Master Plan\n\nBody",
+    activeMasterPlanVersionId: "master_plan_v1",
+    activePromptPackId: "pack_model_1"
+  }],
+  promptPacks: [{
+    id: "pack_model_1",
+    projectId: "project_model_1",
+    title: "Pack",
+    roadmap: {
+      items: [{ id: "roadmap_model_1", order: 1, title: "Audit workspace", dependsOn: [] }]
+    },
+    chunks: [{ id: "chunk_model_1", roadmapItemId: "roadmap_model_1", order: 1, title: "Audit workspace", status: "approved" }]
+  }],
+  taskPrompts: [{
+    id: "task_prompt_model_1",
+    projectId: "project_model_1",
+    roadmapItemId: "roadmap_model_1",
+    sourceChunkId: "chunk_model_1",
+    order: 1,
+    title: "Audit workspace",
+    status: "approved",
+    content: "Run audit"
+  }]
+}, {
+  selectedProjectId: "project_model_1",
+  selectedTaskPromptId: "task_prompt_model_1"
+});
+assert.equal(workflowModel.projects.length, 1);
+assert.equal(workflowModel.projects[0].masterPlan.status, "Applied");
+assert.equal(workflowModel.projects[0].roadmap.status, "Applied");
+assert.equal(workflowModel.projects[0].tasks.length, 1);
+assert.equal(workflowModel.projects[0].tasks[0].title, "Audit workspace");
+assert.equal(workflowModel.projects[0].tasks[0].status, "approved");
+assert.equal(workflowModel.projects[0].tasks[0].selected, true);
+
+const copiedStatusWorkflow = buildProjectWorkflowView({
+  projects: [{
+    id: "project_model_2",
+    name: "Model Project 2",
+    path: "F:\\Projects\\Model2",
+    idea: "Build model",
+    masterPlan: "# Master Plan\n\nBody",
+    activeMasterPlanVersionId: "master_plan_v1",
+    activePromptPackId: "pack_model_2"
+  }],
+  promptPacks: [{
+    id: "pack_model_2",
+    projectId: "project_model_2",
+    title: "Pack",
+    roadmap: {
+      items: [
+        { id: "roadmap_model_2", order: 1, title: "Renderer nav", dependsOn: [] },
+        { id: "roadmap_model_3", order: 2, title: "Tests", dependsOn: ["roadmap_model_2"] }
+      ]
+    },
+    chunks: [
+      { id: "chunk_model_2", roadmapItemId: "roadmap_model_2", order: 1, title: "Renderer nav", status: "copied" },
+      { id: "chunk_model_3", roadmapItemId: "roadmap_model_3", order: 2, title: "Tests", status: "done" }
+    ]
+  }],
+  taskPrompts: [
+    {
+      id: "task_prompt_model_2",
+      projectId: "project_model_2",
+      roadmapItemId: "roadmap_model_2",
+      sourceChunkId: "chunk_model_2",
+      order: 1,
+      title: "Renderer nav",
+      status: "copied",
+      content: "Build nav"
+    },
+    {
+      id: "task_prompt_model_3",
+      projectId: "project_model_2",
+      roadmapItemId: "roadmap_model_3",
+      sourceChunkId: "chunk_model_3",
+      order: 2,
+      title: "Tests",
+      status: "done",
+      content: "Write tests"
+    }
+  ]
+});
+assert.deepEqual(
+  copiedStatusWorkflow.projects[0].tasks.map((task) => task.status),
+  ["copied", "done"]
 );
 
 const improvePayload = getTaskImprovePayload(
@@ -493,6 +595,23 @@ assert.equal(roadmapTree[0].roadmapState, "Applied");
 assert.equal(roadmapTree[0].roadmapItems[0].status, "approved");
 assert.equal(roadmapTree[0].tasks[0].title, "Audit and initialize project workspace");
 assert.equal(roadmapTree[0].tasks[0].status, "approved");
+
+const openTaskPrimaryAction = getPlanPrimaryAction({
+  project: {
+    id: "project_open_1",
+    idea: "Build a planner.",
+    masterPlan: "# Master Plan\n\nReal plan",
+    activeMasterPlanVersionId: "mp_1"
+  },
+  pack: {
+    roadmap: { items: [{ id: "roadmap_open_1", order: 1, title: "Audit workspace", dependsOn: [] }] },
+    chunks: [{ id: "chunk_open_1", roadmapItemId: "roadmap_open_1", status: "approved", order: 1, title: "Audit workspace" }]
+  },
+  taskPrompts: [{ id: "tp_open_1", projectId: "project_open_1", roadmapItemId: "roadmap_open_1", status: "approved", order: 1, sourceChunkId: "chunk_open_1" }]
+});
+assert.equal(openTaskPrimaryAction.id, "open_task");
+assert.match(openTaskPrimaryAction.label, /Open Task 001: Audit workspace/);
+assert.doesNotMatch(openTaskPrimaryAction.label, /^Create Task/);
 
 const rootHtml = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
 const rendererJs = fs.readFileSync(path.join(__dirname, "..", "renderer.js"), "utf8");

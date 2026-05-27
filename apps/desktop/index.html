@@ -112,6 +112,10 @@
       white-space: normal; overflow-wrap: anywhere; line-height: 1.35;
     }
     .tree-item { margin-left: 12px; justify-content: space-between; align-items: flex-start; gap: 8px; }
+    .tree-group { margin-left: 12px; display: grid; gap: 6px; }
+    .tree-group-label { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+    .tree-pack-label { cursor: default; background: #f5f8fc; }
+    .tree-pack-label:hover { background: #f5f8fc; }
     .tree-item > span:first-child { flex: 1; min-width: 0; text-align: left; }
     .tree-item .status-pill { flex: 0 0 auto; align-self: center; }
     .tree-item.active, .tree-project.active, .tree-pack.active { background: var(--primary-soft); border-color: #bdd4fb; }
@@ -187,6 +191,7 @@
     .workspace-panel { display: none; }
     .workspace-panel.active { display: block; }
     .task-workspace-meta { display: grid; gap: 8px; margin-bottom: 8px; }
+    .roadmap-list { display: grid; gap: 8px; }
     .drawer-empty { color: var(--muted); border: 1px dashed var(--line); border-radius: 7px; padding: 10px; }
     .list-box { display: grid; gap: 8px; max-height: 180px; overflow: auto; border: 1px solid var(--soft-line); border-radius: 7px; padding: 8px; background: #fbfcfe; }
     .list-item { border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 8px; }
@@ -268,13 +273,14 @@
         <div class="section-header">
           <div>
             <h2>Project Browser</h2>
-            <p class="section-note">Master Plan -> Task Roadmap -> Tasks</p>
+            <p class="section-note">Navigate project workflow.</p>
           </div>
         </div>
         <div class="field">
           <label for="projectSelect">Saved project</label>
           <select id="projectSelect"><option value="">New project / manual entry</option></select>
         </div>
+        <p class="section-note" style="margin-bottom:6px;">Secondary actions</p>
         <div class="actions" style="margin-bottom:10px;">
           <button id="newProjectBtn" class="secondary-btn compact-btn" type="button">New Project</button>
           <button id="seeAllProjectsBtn" class="secondary-btn compact-btn" type="button">See all projects</button>
@@ -298,10 +304,11 @@
           <div class="section-header">
             <div>
               <h2 id="workspaceHeading">Workspace</h2>
-              <p class="section-note">Selected task opens here. Use Inspector for improve, versions, and run notes.</p>
+              <p class="section-note">Plan, roadmap, and task workflow.</p>
             </div>
             <div class="workspace-tabs">
               <button type="button" class="secondary-btn compact-btn workspace-tab active" data-workspace-tab="plan">Plan</button>
+              <button type="button" class="secondary-btn compact-btn workspace-tab" data-workspace-tab="roadmap">Task Roadmap</button>
               <button type="button" class="secondary-btn compact-btn workspace-tab" data-workspace-tab="tasks">Tasks</button>
             </div>
           </div>
@@ -325,12 +332,19 @@
             </div>
           </section>
 
+          <section class="workspace-panel" data-workspace-panel="roadmap">
+            <div id="workspaceRoadmapView" class="roadmap-list">
+              <div class="drawer-empty">Select a project to view roadmap items.</div>
+            </div>
+          </section>
+
           <section class="workspace-panel" data-workspace-panel="tasks">
             <div id="workspaceTaskEmpty" class="drawer-empty">Select a task from Project Browser.</div>
             <div id="workspaceTaskForm" style="display:none;">
               <div class="task-workspace-meta">
                 <div class="field"><label for="workspaceTaskName">Task name</label><input id="workspaceTaskName" placeholder="Task name"></div>
                 <div class="field"><label for="workspaceTaskStatus">Status</label><select id="workspaceTaskStatus"><option value="in_progress">In Progress</option><option value="approved">Approved</option><option value="copied">Copied</option><option value="done">Done</option></select></div>
+                <div class="field"><label for="workspaceTaskFilePath">Task file path</label><input id="workspaceTaskFilePath" placeholder="Task prompt file path" readonly></div>
                 <div class="field"><label for="workspaceTaskContent">Task content</label><textarea id="workspaceTaskContent" rows="12"></textarea></div>
                 <div class="field"><label for="workspacePromptRunNote">What Codex did</label><textarea id="workspacePromptRunNote" rows="4" placeholder="Required before Mark Done."></textarea></div>
               </div>

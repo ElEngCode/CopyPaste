@@ -1,5 +1,33 @@
 # CopyPaste Monorepo Architecture
 
+## 2026-05-27 Desktop Project Browser + Workspace X-Ray (Workflow UI Rebuild)
+
+- Core renderer architecture now uses normalized workflow projection:
+  - `apps/desktop/renderer.js` -> `buildProjectWorkflowView(state, selected)`
+  - output model drives:
+    - project browser tree rendering
+    - workspace mode routing (`plan`, `roadmap`, `tasks`)
+    - selection-aware primary action state.
+- View model contract in renderer:
+  - `projects[].masterPlan` includes `status`, `hasContent`, `activeVersionId`.
+  - `projects[].roadmap` includes `status`, `activeVersionId`, normalized `items`.
+  - `projects[].tasks` includes ordered task prompt/chunk linkage and selection state.
+- Navigation/state control:
+  - renderer drawer state expanded with `selectedTaskPromptId` and `selectedNodeType`.
+  - `selectTreeNode(...)` now maps selected node type to workspace view deterministically.
+  - roadmap item actions route through `desktopApi.getOrCreateTaskPromptFromRoadmapItem(...)` to open/create real task prompts.
+- Workspace composition (`apps/desktop/index.html` + renderer):
+  - `Plan` panel: project metadata + master plan editor + `Master Plan Preview`.
+  - `Task Roadmap` panel: active roadmap items with dependencies/status/linked task and per-item create/open action.
+  - `Tasks` panel: editable task prompt view with status and `taskFilePath`.
+- Inspector composition:
+  - master plan selection -> `project.masterPlanVersions`
+  - roadmap selection -> `pack.roadmapVersions`
+  - task selection -> `taskPromptVersions` + `taskRuns`.
+- Tests/verification:
+  - `apps/desktop/tests/controller-ui.test.js` now validates workflow view-model behavior instead of only static HTML presence.
+  - full desktop and monorepo verify commands pass.
+
 ## 2026-05-27 Prompt Vault Coherent State Model
 
 - `apps/desktop/prompt-vault.js` now enforces a single coherent workflow model:

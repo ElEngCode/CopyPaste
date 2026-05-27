@@ -73,9 +73,11 @@ const elements = {
   projectContextMenu: null,
   workspaceTaskName: null,
   workspaceTaskStatus: null,
+  workspaceTaskFilePath: null,
   workspaceTaskContent: null,
   workspaceTaskForm: null,
   workspaceTaskEmpty: null,
+  workspaceRoadmapView: null,
   saveWorkspaceTaskButton: null,
   copyWorkspaceTaskButton: null,
   sendWorkspaceTaskButton: null,
@@ -127,6 +129,8 @@ const drawerState = {
   activeRoadmapPackId: "",
   activeDebateWorkflowId: "",
   activeTaskPromptId: "",
+  selectedTaskPromptId: "",
+  selectedNodeType: "project",
   pendingDebatePrompt: null,
   showAllProjects: false
 };
@@ -652,6 +656,25 @@ function getSelectedProject() {
   return (latestVaultState.projects || []).find((item) => item.id === drawerState.selectedProjectId) || null;
 }
 
+function getProjectWorkflowView() {
+  return buildProjectWorkflowView(latestVaultState, {
+    selectedProjectId: drawerState.selectedProjectId,
+    selectedChunkId: drawerState.selectedChunkId,
+    selectedTaskPromptId: drawerState.selectedTaskPromptId
+  });
+}
+
+function getSelectedWorkflowProject() {
+  const workflow = getProjectWorkflowView();
+  const selectedProject = (workflow.projects || []).find((item) => item.selected)
+    || (!projectDraftState.isActive ? (workflow.projects || [])[0] : null)
+    || null;
+  return {
+    workflow,
+    project: selectedProject
+  };
+}
+
 function getActiveDebateWorkflowFromState(projectId) {
   const workflows = Array.isArray(latestVaultState.debateWorkflows) ? latestVaultState.debateWorkflows : [];
   return workflows
@@ -699,125 +722,171 @@ async function ensureProjectDebateWorkflow(projectId) {
   return createdResponse.workflow;
 }
 
-function buildProjectBrowserTree(state) {
+function getWorkflowMasterPlanSummary(project) {
+  const activeVersionId = String(project && project.activeMasterPlanVersionId || "");
+  const hasContent = !isEmptyMasterPlanText(project && project.masterPlan);
+  const draftVersion = getLatestMasterPlanDraftVersion(project);
+  let status = "Missing";
+
+  if (activeVersionId) {
+    status = "Applied";
+  } else if (draftVersion || hasContent) {
+    status = "Draft";
+  }
+
+  return {
+    status,
+    hasContent,
+    activeVersionId
+  };
+}
+
+function getWorkflowRoadmapSummary(pack) {
+  const roadmapItems = pack && pack.roadmap && Array.isArray(pack.roadmap.items) ? pack.roadmap.items : [];
+  const draftVersion = getLatestRoadmapDraftVersion(pack);
+  const appliedVersion = Array.isArray(pack && pack.roadmapVersions)
+    ? pack.roadmapVersions.find((version) => Boolean(version && version.appliedAt))
+    : null;
+  let status = "Missing";
+
+  if (roadmapItems.length > 0) {
+    status = "Applied";
+  } else if (draftVersion) {
+    status = "Draft";
+  }
+
+  return {
+    status,
+    activeVersionId: String((appliedVersion && appliedVersion.id) || "")
+  };
+}
+
+function getRoadmapItemView(pack, roadmapItem, projectTaskPrompts) {
+  const chunks = Array.isArray(pack && pack.chunks) ? pack.chunks : [];
+  const linkedTaskPrompt = projectTaskPrompts.find((prompt) => prompt.roadmapItemId === roadmapItem.id) || null;
+  const linkedChunk = chunks.find((chunk) => chunk.id === (linkedTaskPrompt && linkedTaskPrompt.sourceChunkId))
+    || chunks.find((chunk) => chunk.roadmapItemId === roadmapItem.id)
+    || null;
+  const doneRoadmapIds = new Set([
+    ...chunks.filter((chunk) => chunk.status === "done" && chunk.roadmapItemId).map((chunk) => chunk.roadmapItemId),
+    ...projectTaskPrompts.filter((prompt) => prompt.status === "done" && prompt.roadmapItemId).map((prompt) => prompt.roadmapItemId)
+  ]);
+  const startedRoadmapIds = new Set([
+    ...chunks.filter((chunk) => chunk.roadmapItemId).map((chunk) => chunk.roadmapItemId),
+    ...projectTaskPrompts.filter((prompt) => prompt.roadmapItemId).map((prompt) => prompt.roadmapItemId)
+  ]);
+  const blockedBy = (Array.isArray(roadmapItem.dependsOn) ? roadmapItem.dependsOn : [])
+    .filter((dependencyId) => !doneRoadmapIds.has(dependencyId));
+  const done = doneRoadmapIds.has(roadmapItem.id);
+  const started = startedRoadmapIds.has(roadmapItem.id);
+  const eligible = blockedBy.length === 0 && !done;
+
+  let status = "missing";
+  if (done) {
+    status = "done";
+  } else if (linkedTaskPrompt && linkedTaskPrompt.status) {
+    status = linkedTaskPrompt.status;
+  } else if (linkedChunk && linkedChunk.status) {
+    status = linkedChunk.status;
+  } else if (blockedBy.length) {
+    status = "blocked";
+  } else if (eligible) {
+    status = "ready";
+  }
+
+  return {
+    ...roadmapItem,
+    blockedBy,
+    started,
+    done,
+    eligible,
+    status,
+    linkedTaskPrompt,
+    linkedChunk
+  };
+}
+
+function buildProjectWorkflowView(state, selected = {}) {
   const safeState = state || { projects: [], promptPacks: [] };
   const projects = Array.isArray(safeState.projects) ? [...safeState.projects] : [];
   const packs = Array.isArray(safeState.promptPacks) ? safeState.promptPacks : [];
   const taskPrompts = Array.isArray(safeState.taskPrompts) ? safeState.taskPrompts : [];
 
-  function getMasterPlanState(project) {
-    const hasApplied = Boolean(project && project.activeMasterPlanVersionId);
-    if (hasApplied) return "Applied";
-    const hasDraft = Array.isArray(project && project.masterPlanVersions)
-      ? project.masterPlanVersions.some((version) => !version.appliedAt)
-      : false;
-    if (hasDraft) return "Draft";
-    return isEmptyMasterPlanText(project && project.masterPlan) ? "Missing" : "Draft";
-  }
+  return {
+    projects: projects
+      .sort((left, right) => String(left.name || "").localeCompare(String(right.name || "")))
+      .map((project) => {
+        const projectTaskPrompts = taskPrompts.filter((prompt) => prompt.projectId === project.id);
+        const projectPacks = packs
+          .filter((pack) => pack.projectId === project.id)
+          .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+        const activePack = projectPacks.find((pack) => pack.id === project.activePromptPackId) || projectPacks[0] || null;
+        const roadmapItems = activePack && activePack.roadmap && Array.isArray(activePack.roadmap.items)
+          ? activePack.roadmap.items.slice().sort((left, right) => Number(left.order || 0) - Number(right.order || 0))
+          : [];
+        const roadmapViewItems = roadmapItems.map((item) => getRoadmapItemView(activePack, item, projectTaskPrompts));
+        const chunkById = new Map((activePack && Array.isArray(activePack.chunks) ? activePack.chunks : []).map((chunk) => [chunk.id, chunk]));
+        const taskEntries = roadmapViewItems
+          .filter((item) => item.linkedTaskPrompt || item.linkedChunk)
+          .map((item) => {
+            const prompt = item.linkedTaskPrompt;
+            const chunk = item.linkedChunk || (prompt && chunkById.get(prompt.sourceChunkId)) || null;
+            const taskPromptId = (prompt && prompt.id) || "";
+            const chunkId = (chunk && chunk.id) || "";
+            return {
+              order: Number((prompt && prompt.order) || (chunk && chunk.order) || item.order || 0),
+              title: (prompt && prompt.title) || (chunk && chunk.title) || item.title,
+              status: (prompt && prompt.status) || (chunk && chunk.status) || item.status,
+              taskPromptId,
+              chunkId,
+              roadmapItemId: item.id,
+              selected: Boolean(
+                (selected.selectedTaskPromptId && selected.selectedTaskPromptId === taskPromptId)
+                || (selected.selectedChunkId && selected.selectedChunkId === chunkId)
+              )
+            };
+          })
+          .sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
 
-  function getRoadmapState(pack) {
-    const roadmapItems = pack && pack.roadmap && Array.isArray(pack.roadmap.items) ? pack.roadmap.items : [];
-    if (roadmapItems.length) return "Applied";
-    const hasDraft = Array.isArray(pack && pack.roadmapVersions)
-      ? pack.roadmapVersions.some((version) => !version.appliedAt && version.status !== "archived")
-      : false;
-    return hasDraft ? "Draft" : "Missing";
-  }
+        return {
+          id: project.id,
+          name: project.name,
+          path: project.path || "",
+          selected: String(selected.selectedProjectId || "") === String(project.id),
+          activePackId: activePack ? activePack.id : "",
+          project,
+          activePack,
+          masterPlan: getWorkflowMasterPlanSummary(project),
+          roadmap: {
+            ...getWorkflowRoadmapSummary(activePack),
+            items: roadmapViewItems
+          },
+          tasks: taskEntries
+        };
+      })
+  };
+}
 
-  function getRoadmapItemView(pack, roadmapItem, projectTaskPrompts) {
-    const chunks = Array.isArray(pack && pack.chunks) ? pack.chunks : [];
-    const linkedTaskPrompt = projectTaskPrompts.find((prompt) => prompt.roadmapItemId === roadmapItem.id) || null;
-    const linkedChunk = chunks.find((chunk) => chunk.id === (linkedTaskPrompt && linkedTaskPrompt.sourceChunkId))
-      || chunks.find((chunk) => chunk.roadmapItemId === roadmapItem.id)
-      || null;
-    const doneRoadmapIds = new Set([
-      ...chunks.filter((chunk) => chunk.status === "done" && chunk.roadmapItemId).map((chunk) => chunk.roadmapItemId),
-      ...projectTaskPrompts.filter((prompt) => prompt.status === "done" && prompt.roadmapItemId).map((prompt) => prompt.roadmapItemId)
-    ]);
-    const startedRoadmapIds = new Set([
-      ...chunks.filter((chunk) => chunk.roadmapItemId).map((chunk) => chunk.roadmapItemId),
-      ...projectTaskPrompts.filter((prompt) => prompt.roadmapItemId).map((prompt) => prompt.roadmapItemId)
-    ]);
-    const blockedBy = (Array.isArray(roadmapItem.dependsOn) ? roadmapItem.dependsOn : [])
-      .filter((dependencyId) => !doneRoadmapIds.has(dependencyId));
-    const done = doneRoadmapIds.has(roadmapItem.id);
-    const started = startedRoadmapIds.has(roadmapItem.id);
-    const eligible = blockedBy.length === 0 && !done;
-
-    let status = "missing";
-    if (done) {
-      status = "done";
-    } else if (linkedTaskPrompt && linkedTaskPrompt.status) {
-      status = linkedTaskPrompt.status;
-    } else if (linkedChunk && linkedChunk.status) {
-      status = linkedChunk.status;
-    } else if (blockedBy.length) {
-      status = "blocked";
-    } else if (eligible) {
-      status = "ready";
-    }
-
-    return {
-      ...roadmapItem,
-      blockedBy,
-      started,
-      done,
-      eligible,
-      status,
-      linkedTaskPrompt,
-      linkedChunk
-    };
-  }
-
-  return projects
-    .sort((left, right) => String(left.name || "").localeCompare(String(right.name || "")))
-    .map((project) => {
-      const projectTaskPrompts = taskPrompts.filter((prompt) => prompt.projectId === project.id);
-      const projectPacks = packs
-        .filter((pack) => pack.projectId === project.id)
-        .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
-      const activePack = projectPacks.find((pack) => pack.id === project.activePromptPackId) || projectPacks[0] || null;
-      const roadmapItems = activePack && activePack.roadmap && Array.isArray(activePack.roadmap.items)
-        ? activePack.roadmap.items.slice().sort((left, right) => Number(left.order || 0) - Number(right.order || 0))
-        : [];
-      const roadmapViewItems = roadmapItems.map((item) => getRoadmapItemView(activePack, item, projectTaskPrompts));
-      const chunkById = new Map((activePack && Array.isArray(activePack.chunks) ? activePack.chunks : []).map((chunk) => [chunk.id, chunk]));
-      const taskEntries = roadmapViewItems
-        .filter((item) => item.linkedTaskPrompt || item.linkedChunk)
-        .map((item) => {
-          const prompt = item.linkedTaskPrompt;
-          const chunk = item.linkedChunk || (prompt && chunkById.get(prompt.sourceChunkId)) || null;
-          return {
-            id: (prompt && prompt.id) || (chunk && chunk.id) || item.id,
-            roadmapItemId: item.id,
-            order: Number((prompt && prompt.order) || (chunk && chunk.order) || item.order || 0),
-            title: (prompt && prompt.title) || (chunk && chunk.title) || item.title,
-            status: (prompt && prompt.status) || (chunk && chunk.status) || item.status,
-            chunkId: chunk ? chunk.id : "",
-            taskPromptId: prompt ? prompt.id : ""
-          };
-        })
-        .sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
-
-      return {
-        id: project.id,
-        name: project.name,
-        stage: project.stage || "",
-        nextAction: project.nextAction || "",
-        masterPlanState: getMasterPlanState(project),
-        roadmapState: getRoadmapState(activePack),
-        activePackId: activePack ? activePack.id : "",
-        roadmapItems: roadmapViewItems,
-        tasks: taskEntries,
-        packs: projectPacks.map((pack) => ({
-          id: pack.id,
-          title: pack.title,
-          chunks: (Array.isArray(pack.chunks) ? pack.chunks : [])
-            .slice()
-            .sort((left, right) => Number(left.order || 0) - Number(right.order || 0))
-        }))
-      };
-    });
+function buildProjectBrowserTree(state) {
+  const workflow = buildProjectWorkflowView(state, {});
+  return (workflow.projects || []).map((project) => ({
+    id: project.id,
+    name: project.name,
+    stage: project.project && project.project.stage || "",
+    nextAction: project.project && project.project.nextAction || "",
+    masterPlanState: project.masterPlan.status,
+    roadmapState: project.roadmap.status,
+    activePackId: project.activePackId,
+    roadmapItems: project.roadmap.items,
+    tasks: project.tasks,
+    packs: [project.activePack].filter(Boolean).map((pack) => ({
+      id: pack.id,
+      title: pack.title,
+      chunks: (Array.isArray(pack.chunks) ? pack.chunks : [])
+        .slice()
+        .sort((left, right) => Number(left.order || 0) - Number(right.order || 0))
+    }))
+  }));
 }
 
 function getVisibleProjectBrowserNodes(nodes, options = {}) {
@@ -837,16 +906,21 @@ function getVisibleProjectBrowserNodes(nodes, options = {}) {
 }
 
 function getSelectedChunk() {
-  const packs = Array.isArray(latestVaultState.promptPacks) ? latestVaultState.promptPacks : [];
-  const pack = packs.find((item) => item.id === drawerState.selectedPackId);
-  if (!pack) {
-    return null;
+  const { project } = getSelectedWorkflowProject();
+  const pack = project && project.activePack ? project.activePack : null;
+  if (!pack) return null;
+
+  const chunks = Array.isArray(pack.chunks) ? pack.chunks : [];
+  let chunk = chunks.find((item) => item.id === drawerState.selectedChunkId) || null;
+
+  if (!chunk && drawerState.selectedTaskPromptId) {
+    const taskPrompt = getTaskPromptById(drawerState.selectedTaskPromptId);
+    chunk = taskPrompt
+      ? chunks.find((item) => item.id === taskPrompt.sourceChunkId || item.roadmapItemId === taskPrompt.roadmapItemId) || null
+      : null;
   }
-  const chunk = (Array.isArray(pack.chunks) ? pack.chunks : []).find((item) => item.id === drawerState.selectedChunkId);
-  if (!chunk) {
-    return null;
-  }
-  return { pack, chunk };
+
+  return chunk ? { pack, chunk } : null;
 }
 
 function getTaskPromptById(taskPromptId) {
@@ -863,6 +937,22 @@ function getTaskPromptForChunk(chunk) {
 }
 
 function getSelectedTaskPrompt() {
+  if (drawerState.selectedTaskPromptId) {
+    const taskPrompt = getTaskPromptById(drawerState.selectedTaskPromptId);
+    if (taskPrompt) {
+      const selected = getSelectedChunk();
+      if (selected) {
+        return { ...selected, taskPrompt };
+      }
+      const pack = (latestVaultState.promptPacks || []).find((item) => item.projectId === taskPrompt.projectId) || null;
+      const chunk = pack
+        ? (pack.chunks || []).find((item) => item.id === taskPrompt.sourceChunkId || item.roadmapItemId === taskPrompt.roadmapItemId) || null
+        : null;
+      if (pack && chunk) {
+        return { pack, chunk, taskPrompt };
+      }
+    }
+  }
   const selected = getSelectedChunk();
   if (!selected) return null;
   const taskPrompt = getTaskPromptForChunk(selected.chunk);
@@ -1173,14 +1263,11 @@ function getPlanPrimaryAction(input = {}) {
 }
 
 function getSelectedPlanProjectAndPack() {
-  const project = (latestVaultState.projects || []).find((item) => item.id === drawerState.selectedProjectId)
-    || null;
-  const pack = project
-    ? (latestVaultState.promptPacks || []).find((item) => item.id === project.activePromptPackId)
-      || (latestVaultState.promptPacks || []).find((item) => item.projectId === project.id)
-      || null
-    : null;
-  return { project, pack };
+  const { project } = getSelectedWorkflowProject();
+  return {
+    project: project ? project.project : null,
+    pack: project ? project.activePack : null
+  };
 }
 
 function updatePlanPrimaryAction() {
@@ -1208,58 +1295,97 @@ function renderProjectBrowserTree() {
     return;
   }
 
-  const allNodes = buildProjectBrowserTree(latestVaultState);
+  const workflow = getProjectWorkflowView();
   const draftName = elements.projectName ? String(elements.projectName.value || "New Project").trim() || "New Project" : "New Project";
-  const nodes = getVisibleProjectBrowserNodes(allNodes, {
+  const nodes = getVisibleProjectBrowserNodes(workflow.projects || [], {
     selectedProjectId: drawerState.selectedProjectId,
     showAllProjects: drawerState.showAllProjects,
-    draftProject: projectDraftState.isActive ? { id: "__draft__", name: draftName, packs: [], stage: "Idea", nextAction: "Save project" } : null
+    draftProject: projectDraftState.isActive
+      ? {
+        id: "__draft__",
+        name: draftName,
+        path: "",
+        selected: true,
+        activePackId: "",
+        masterPlan: { status: "Missing" },
+        roadmap: { status: "Missing", items: [] },
+        tasks: []
+      }
+      : null
   });
   if (!nodes.length) {
-    elements.projectBrowserTree.innerHTML = '<div class="drawer-empty">No tasks generated yet.</div>';
+    elements.projectBrowserTree.innerHTML = '<div class="drawer-empty">No projects yet. Click New Project.</div>';
     return;
   }
+
   function roadmapStatusLabel(item) {
     const status = String(item && item.status || "missing");
     if (status === "ready") return "Ready";
     if (status === "blocked") return "Blocked";
-    if (status === "task_created" || status === "in_progress" || status === "draft") return "Task Created";
+    if (status === "task_created" || status === "in_progress" || status === "draft") return "Draft";
     if (status === "approved") return "Approved";
     if (status === "copied") return "Copied";
     if (status === "done") return "Done";
     return "Missing";
   }
 
-  function roadmapActionLabel(item) {
-    if (!item) return "";
-    if (item.status === "done") return "Done";
-    if (item.status === "blocked") return "Blocked";
-    if (item.linkedTaskPrompt || item.linkedChunk) return "Open Task";
-    if (item.eligible) return "Create Task";
-    return "Missing";
+  function renderRoadmapItems(project, packId) {
+    const items = project && project.roadmap && Array.isArray(project.roadmap.items) ? project.roadmap.items : [];
+    if (!items.length) return "";
+    const grouped = [];
+    const serialItems = [];
+    const groups = new Map();
+
+    items.forEach((item) => {
+      const groupId = String(item && item.parallelGroup || "").trim();
+      if (!groupId) {
+        serialItems.push(item);
+        return;
+      }
+      if (!groups.has(groupId)) groups.set(groupId, []);
+      groups.get(groupId).push(item);
+    });
+
+    serialItems.forEach((item) => grouped.push({ type: "item", item }));
+    groups.forEach((groupItems, groupId) => {
+      grouped.push({ type: "group", groupId, items: groupItems.sort((a, b) => Number(a.order || 0) - Number(b.order || 0)) });
+    });
+
+    return grouped.map((entry) => {
+      if (entry.type === "group") {
+        const groupRows = entry.items.map((item) => {
+          const active = drawerState.selectedRoadmapItemId === item.id && !drawerState.selectedChunkId ? " active" : "";
+          return `<button type="button" class="tree-item${active}" data-action="select-roadmap-item" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(packId)}" data-roadmap-item-id="${escapeHtml(item.id)}"><span>${String(item.order || 0).padStart(3, "0")} ${escapeHtml(item.title || "Roadmap item")}</span><span class="status-pill ${escapeHtml(String(item.status || ""))}">${escapeHtml(roadmapStatusLabel(item))}</span></button>`;
+        }).join("");
+        return `<div class="tree-group"><div class="tree-group-label">Parallel: ${escapeHtml(entry.groupId)}</div>${groupRows}</div>`;
+      }
+      const item = entry.item;
+      const active = drawerState.selectedRoadmapItemId === item.id && !drawerState.selectedChunkId ? " active" : "";
+      return `<button type="button" class="tree-item${active}" data-action="select-roadmap-item" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(packId)}" data-roadmap-item-id="${escapeHtml(item.id)}"><span>${String(item.order || 0).padStart(3, "0")} ${escapeHtml(item.title || "Roadmap item")}</span><span class="status-pill ${escapeHtml(String(item.status || ""))}">${escapeHtml(roadmapStatusLabel(item))}</span></button>`;
+    }).join("");
   }
 
   elements.projectBrowserTree.innerHTML = nodes.map((project) => {
-    const projectActive = drawerState.selectedProjectId === project.id ? " active" : "";
+    const projectActive = drawerState.selectedProjectId === project.id && drawerState.selectedNodeType === "project" ? " active" : "";
     const draftAttr = project.id === "__draft__" ? " data-draft-project=\"true\"" : "";
     const projectPackId = project.activePackId || "";
-    const masterPlanNode = `<button type="button" class="tree-pack" data-action="select-master-plan" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(projectPackId)}"${draftAttr}><span>Master Plan</span><span class="status-pill">${escapeHtml(project.masterPlanState || "Missing")}</span></button>`;
-    const roadmapNode = `<button type="button" class="tree-pack" data-action="select-tree-pack" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(projectPackId)}"${draftAttr}><span>Task Roadmap</span><span class="status-pill">${escapeHtml(project.roadmapState || "Missing")}</span></button>`;
-    const roadmapItemsHtml = (project.roadmapItems || []).map((item) => {
-      const active = drawerState.selectedRoadmapItemId === item.id && !drawerState.selectedChunkId ? " active" : "";
-      return `<button type="button" class="tree-item${active}" data-action="select-roadmap-item" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(projectPackId)}" data-roadmap-item-id="${escapeHtml(item.id)}"><span>${String(item.order).padStart(3, "0")} ${escapeHtml(item.title)}</span><span class="status-pill">${escapeHtml(`${roadmapStatusLabel(item)} - ${roadmapActionLabel(item)}`)}</span></button>`;
-    }).join("");
-    const tasksHeader = `<button type="button" class="tree-pack" data-action="select-tree-pack" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(projectPackId)}"${draftAttr}>Tasks</button>`;
+    const isMasterPlanSelected = drawerState.selectedProjectId === project.id && drawerState.selectedNodeType === "master_plan";
+    const isRoadmapSelected = drawerState.selectedProjectId === project.id && drawerState.selectedNodeType === "roadmap";
+
+    const masterPlanNode = `<button type="button" class="tree-pack${isMasterPlanSelected ? " active" : ""}" data-action="select-master-plan" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(projectPackId)}"${draftAttr}><span>Master Plan</span><span class="status-pill">${escapeHtml((project.masterPlan && project.masterPlan.status) || "Missing")}</span></button>`;
+    const roadmapNode = `<button type="button" class="tree-pack${isRoadmapSelected ? " active" : ""}" data-action="select-tree-pack" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(projectPackId)}"${draftAttr}><span>Task Roadmap</span><span class="status-pill">${escapeHtml((project.roadmap && project.roadmap.status) || "Missing")}</span></button>`;
+    const roadmapItemsHtml = renderRoadmapItems(project, projectPackId);
+    const tasksHeader = `<div class="tree-pack tree-pack-label"><span>Tasks</span></div>`;
     const tasksHtml = (project.tasks || []).map((task) => {
       const status = String(task.status || "draft");
       const statusLabel = getTaskStatusLabel(status);
-      const isActive = drawerState.selectedChunkId === task.chunkId ? " active" : "";
-      return `<button type="button" class="tree-item${isActive}" data-action="select-tree-chunk" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(projectPackId)}" data-chunk-id="${escapeHtml(task.chunkId)}" data-roadmap-item-id="${escapeHtml(task.roadmapItemId || "")}">
+      const isActive = Boolean(task.selected) && drawerState.selectedNodeType === "task" ? " active" : "";
+      return `<button type="button" class="tree-item${isActive}" data-action="select-tree-task" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(projectPackId)}" data-chunk-id="${escapeHtml(task.chunkId || "")}" data-roadmap-item-id="${escapeHtml(task.roadmapItemId || "")}" data-task-prompt-id="${escapeHtml(task.taskPromptId || "")}">
           <span>${String(task.order || 0).padStart(3, "0")} ${escapeHtml(task.title || "Task")}</span>
           <span class="status-pill ${escapeHtml(status)}">${escapeHtml(statusLabel)}</span>
         </button>`;
     }).join("");
-    return `<button type="button" class="tree-project${projectActive}" data-action="select-tree-project" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(projectPackId)}"${draftAttr}>${escapeHtml(project.name)}</button>${masterPlanNode}${roadmapNode}${roadmapItemsHtml}${tasksHeader}${tasksHtml}`;
+    return `<button type="button" class="tree-project${projectActive}" data-action="select-tree-project" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(projectPackId)}"${draftAttr}>${escapeHtml(project.name || "New Project")}</button>${masterPlanNode}${roadmapNode}${roadmapItemsHtml}${tasksHeader}${tasksHtml}`;
   }).join("");
 }
 
@@ -1272,36 +1398,23 @@ function getStatusOption(status) {
 }
 
 function getSelectedRoadmapItemContext() {
-  const project = (latestVaultState.projects || []).find((item) => item.id === drawerState.selectedProjectId) || null;
-  if (!project) return null;
-  const pack = (latestVaultState.promptPacks || []).find((item) => item.id === drawerState.selectedPackId)
-    || (latestVaultState.promptPacks || []).find((item) => item.id === project.activePromptPackId)
-    || (latestVaultState.promptPacks || []).find((item) => item.projectId === project.id)
-    || null;
-  if (!pack || !drawerState.selectedRoadmapItemId) return null;
-  const roadmapItems = pack.roadmap && Array.isArray(pack.roadmap.items) ? pack.roadmap.items : [];
-  const roadmapItem = roadmapItems.find((item) => item.id === drawerState.selectedRoadmapItemId) || null;
+  const { project } = getSelectedWorkflowProject();
+  if (!project || !drawerState.selectedRoadmapItemId) return null;
+  const roadmapItem = (project.roadmap && Array.isArray(project.roadmap.items) ? project.roadmap.items : [])
+    .find((item) => item.id === drawerState.selectedRoadmapItemId) || null;
   if (!roadmapItem) return null;
-  const taskPrompts = (latestVaultState.taskPrompts || []).filter((item) => item.projectId === project.id);
-  const taskPrompt = taskPrompts.find((item) => item.roadmapItemId === roadmapItem.id) || null;
-  const chunk = (pack.chunks || []).find((item) => item.id === (taskPrompt && taskPrompt.sourceChunkId))
-    || (pack.chunks || []).find((item) => item.roadmapItemId === roadmapItem.id)
-    || null;
-  const doneRoadmapIds = new Set([
-    ...(pack.chunks || []).filter((item) => item.status === "done" && item.roadmapItemId).map((item) => item.roadmapItemId),
-    ...taskPrompts.filter((item) => item.status === "done" && item.roadmapItemId).map((item) => item.roadmapItemId)
-  ]);
-  const blockedBy = (Array.isArray(roadmapItem.dependsOn) ? roadmapItem.dependsOn : []).filter((dependencyId) => !doneRoadmapIds.has(dependencyId));
-  const done = doneRoadmapIds.has(roadmapItem.id);
-  const hasTask = Boolean(taskPrompt || chunk);
-  const eligible = blockedBy.length === 0 && !done;
-  let status = "missing";
-  if (done) status = "done";
-  else if (taskPrompt && taskPrompt.status) status = taskPrompt.status;
-  else if (chunk && chunk.status) status = chunk.status;
-  else if (blockedBy.length) status = "blocked";
-  else if (eligible) status = "ready";
-  return { project, pack, roadmapItem, taskPrompt, chunk, blockedBy, done, hasTask, eligible, status };
+  return {
+    project: project.project,
+    pack: project.activePack,
+    roadmapItem,
+    taskPrompt: roadmapItem.linkedTaskPrompt || null,
+    chunk: roadmapItem.linkedChunk || null,
+    blockedBy: roadmapItem.blockedBy || [],
+    done: Boolean(roadmapItem.done),
+    hasTask: Boolean(roadmapItem.linkedTaskPrompt || roadmapItem.linkedChunk),
+    eligible: Boolean(roadmapItem.eligible),
+    status: roadmapItem.status || "missing"
+  };
 }
 
 function renderRoadmapItemWorkspace(context) {
@@ -1324,14 +1437,55 @@ function renderRoadmapItemWorkspace(context) {
   ].filter(Boolean).join("");
 }
 
-function renderWorkspace() {
-  const selected = getSelectedChunk();
-  const hasSelection = Boolean(selected);
-  const project = (latestVaultState.projects || []).find((item) => item.id === drawerState.selectedProjectId)
-    || (projectDraftState.isActive ? null : (latestVaultState.projects || [])[0]);
+function getRoadmapItemActionLabel(item) {
+  if (!item) return "No Action";
+  if (item.done) return "Done";
+  if (item.blockedBy && item.blockedBy.length) return "Blocked";
+  if (item.linkedTaskPrompt || item.linkedChunk) return "Open Task";
+  if (item.eligible) return "Create Task";
+  return "No Action";
+}
 
-  if (elements.workspaceTaskForm) elements.workspaceTaskForm.style.display = hasSelection ? "block" : "none";
-  if (elements.workspaceTaskEmpty) elements.workspaceTaskEmpty.style.display = hasSelection ? "none" : "block";
+function renderRoadmapWorkspace(projectWorkflow) {
+  const items = projectWorkflow && projectWorkflow.roadmap && Array.isArray(projectWorkflow.roadmap.items)
+    ? projectWorkflow.roadmap.items
+    : [];
+  if (!items.length) {
+    return '<div class="drawer-empty">No roadmap items yet. Create and apply a task roadmap first.</div>';
+  }
+  return [
+    '<div class="roadmap-list">',
+    ...items.map((item) => {
+      const linkedTask = item.linkedTaskPrompt
+        ? `${item.linkedTaskPrompt.title || item.linkedTaskPrompt.id}`
+        : "None";
+      const dependencyText = Array.isArray(item.dependsOn) && item.dependsOn.length
+        ? item.dependsOn.join(", ")
+        : "none";
+      return `<article class="list-item roadmap-item">
+        <div><strong>${String(item.order || 0).padStart(3, "0")} ${escapeHtml(item.title || "Roadmap item")}</strong></div>
+        <div class="field-help">Status: ${escapeHtml(getTaskStatusLabel(item.status || "draft"))}</div>
+        <div class="field-help">Depends on: ${escapeHtml(dependencyText)}</div>
+        <div class="field-help">Linked task prompt: ${escapeHtml(linkedTask)}</div>
+        <div class="actions" style="margin-top:8px;">
+          <button type="button" class="secondary-btn compact-btn" data-action="open-roadmap-item-task" data-project-id="${escapeHtml(projectWorkflow.id)}" data-roadmap-item-id="${escapeHtml(item.id)}">${escapeHtml(getRoadmapItemActionLabel(item))}</button>
+        </div>
+      </article>`;
+    }),
+    "</div>"
+  ].join("");
+}
+
+function renderWorkspace() {
+  const { project: workflowProject } = getSelectedWorkflowProject();
+  const project = workflowProject ? workflowProject.project : null;
+  const selectedTask = getSelectedTaskPrompt();
+  const hasTaskSelection = Boolean(selectedTask);
+  const selectedRoadmapContext = getSelectedRoadmapItemContext();
+
+  if (elements.workspaceTaskForm) elements.workspaceTaskForm.style.display = hasTaskSelection ? "block" : "none";
+  if (elements.workspaceTaskEmpty) elements.workspaceTaskEmpty.style.display = hasTaskSelection ? "none" : "block";
+
   if (project) {
     projectDraftState.isActive = false;
     if (elements.projectName) elements.projectName.value = project.name || "";
@@ -1346,12 +1500,21 @@ function renderWorkspace() {
   }
 
   if (elements.responseView) {
-    const selectedRoadmapContext = !selected ? getSelectedRoadmapItemContext() : null;
-    if (selectedRoadmapContext) {
-      elements.responseView.innerHTML = renderRoadmapItemWorkspace(selectedRoadmapContext);
+    const editorText = String((elements.currentText && elements.currentText.value) || "").trim();
+    const storedText = String((project && project.masterPlan) || "").trim();
+    const effectiveMasterPlan = editorText || storedText;
+    elements.responseView.innerHTML = effectiveMasterPlan
+      ? renderProjectPlanHtml(effectiveMasterPlan)
+      : '<article class="plan-document plan-document-empty"><p>No plan yet.</p></article>';
+  }
+
+  if (elements.workspaceRoadmapView) {
+    if (!workflowProject) {
+      elements.workspaceRoadmapView.innerHTML = '<div class="drawer-empty">Select a project to see roadmap items.</div>';
+    } else if (drawerState.selectedNodeType === "roadmap_item" && selectedRoadmapContext) {
+      elements.workspaceRoadmapView.innerHTML = renderRoadmapItemWorkspace(selectedRoadmapContext);
     } else {
-      const effectiveMasterPlan = String((elements.currentText && elements.currentText.value) || (project && project.masterPlan) || "");
-      elements.responseView.innerHTML = renderProjectPlanHtml(effectiveMasterPlan);
+      elements.workspaceRoadmapView.innerHTML = renderRoadmapWorkspace(workflowProject);
     }
   }
 
@@ -1362,7 +1525,8 @@ function renderWorkspace() {
     node.classList.toggle("active", node.getAttribute("data-workspace-tab") === drawerState.workspaceMode);
   });
 
-  if (!selected) {
+  if (!selectedTask) {
+    if (elements.workspaceTaskFilePath) elements.workspaceTaskFilePath.value = "";
     if (elements.saveWorkspaceTaskButton) elements.saveWorkspaceTaskButton.disabled = true;
     if (elements.sendWorkspaceTaskButton) elements.sendWorkspaceTaskButton.disabled = true;
     if (elements.approvePromptButton) elements.approvePromptButton.disabled = true;
@@ -1372,10 +1536,11 @@ function renderWorkspace() {
     return;
   }
 
-  const chunk = selected.chunk;
-  const taskPrompt = getTaskPromptForChunk(chunk);
+  const chunk = selectedTask.chunk;
+  const taskPrompt = selectedTask.taskPrompt || getTaskPromptForChunk(chunk);
   const taskStatus = String((taskPrompt && taskPrompt.status) || chunk.status || "draft");
   if (elements.workspaceTaskName) elements.workspaceTaskName.value = String((taskPrompt && taskPrompt.title) || chunk.title || "");
+  if (elements.workspaceTaskFilePath) elements.workspaceTaskFilePath.value = String((taskPrompt && taskPrompt.taskFilePath) || "");
   if (elements.workspaceTaskContent) elements.workspaceTaskContent.value = String((taskPrompt && taskPrompt.content) || chunk.prompt || "");
   if (elements.workspaceTaskStatus) elements.workspaceTaskStatus.value = getStatusOption(taskStatus);
 
@@ -1394,14 +1559,20 @@ function renderWorkspace() {
 }
 
 function renderInspector() {
-  const selected = getSelectedChunk();
-  const hasSelection = Boolean(selected);
+  const selectedTask = getSelectedTaskPrompt();
+  const selectedRoadmap = getSelectedRoadmapItemContext();
+  const { project: workflowProject } = getSelectedWorkflowProject();
+  const project = workflowProject ? workflowProject.project : null;
+  const pack = workflowProject ? workflowProject.activePack : null;
+  const nodeType = drawerState.selectedNodeType;
+  const taskContext = selectedTask || null;
+  const showTaskForms = Boolean(taskContext);
   const sectionName = drawerState.inspectorTab;
 
-  if (elements.inspectorImproveForm) elements.inspectorImproveForm.style.display = hasSelection ? "block" : "none";
-  if (elements.inspectorRunsForm) elements.inspectorRunsForm.style.display = hasSelection ? "block" : "none";
-  if (elements.inspectorEmptyImprove) elements.inspectorEmptyImprove.style.display = hasSelection ? "none" : "block";
-  if (elements.inspectorEmptyRuns) elements.inspectorEmptyRuns.style.display = hasSelection ? "none" : "block";
+  if (elements.inspectorImproveForm) elements.inspectorImproveForm.style.display = showTaskForms ? "block" : "none";
+  if (elements.inspectorRunsForm) elements.inspectorRunsForm.style.display = showTaskForms ? "block" : "none";
+  if (elements.inspectorEmptyImprove) elements.inspectorEmptyImprove.style.display = showTaskForms ? "none" : "block";
+  if (elements.inspectorEmptyRuns) elements.inspectorEmptyRuns.style.display = showTaskForms ? "none" : "block";
 
   document.querySelectorAll("[data-inspector-section]").forEach((node) => {
     node.classList.toggle("active", node.getAttribute("data-inspector-section") === sectionName);
@@ -1410,45 +1581,64 @@ function renderInspector() {
     node.classList.toggle("active", node.getAttribute("data-inspector-tab") === sectionName);
   });
 
-  if (!selected) {
-    if (elements.inspectorVersionsList) elements.inspectorVersionsList.innerHTML = '<div class="muted">No versions yet.</div>';
-    if (elements.inspectorRunHistoryList) elements.inspectorRunHistoryList.innerHTML = '<div class="muted">No run history yet.</div>';
-    if (elements.inspectorDetails) elements.inspectorDetails.innerHTML = "Select a project item to view details.";
-    return;
-  }
-
-  const chunk = selected.chunk;
-  const taskPrompt = getTaskPromptForChunk(chunk);
   if (elements.inspectorImprovePrompt) elements.inspectorImprovePrompt.value = drawerState.lastImprovePrompt || "";
 
-  const versions = taskPrompt
+  const taskVersions = taskContext
     ? (Array.isArray(latestVaultState.taskPromptVersions) ? latestVaultState.taskPromptVersions : [])
-      .filter((version) => version.taskPromptId === taskPrompt.id)
-    : (Array.isArray(chunk.versions) ? chunk.versions : []);
-  if (elements.inspectorVersionsList) {
-    elements.inspectorVersionsList.innerHTML = versions.length
-      ? versions.map((version) => `<div class="list-item">
+      .filter((version) => version.taskPromptId === taskContext.taskPrompt.id)
+    : [];
+  const masterPlanVersions = Array.isArray(project && project.masterPlanVersions) ? project.masterPlanVersions : [];
+  const roadmapVersions = Array.isArray(pack && pack.roadmapVersions) ? pack.roadmapVersions : [];
+
+  let versionsHtml = '<div class="muted">Select a project item to view versions.</div>';
+  if (nodeType === "master_plan") {
+    versionsHtml = masterPlanVersions.length
+      ? masterPlanVersions.map((version) => `<div class="list-item"><strong>${escapeHtml(version.source || "master_plan")}</strong><div class="field-help">${escapeHtml(version.createdAt || "")}</div><div class="field-help">${escapeHtml(String(version.responseText || "").slice(0, 160))}</div></div>`).join("")
+      : '<div class="muted">No master plan versions yet.</div>';
+  } else if (nodeType === "roadmap" || nodeType === "roadmap_item") {
+    versionsHtml = roadmapVersions.length
+      ? roadmapVersions.map((version) => `<div class="list-item"><strong>${escapeHtml(version.source || "task_roadmap")}</strong><div class="field-help">${escapeHtml(version.createdAt || "")}</div><div class="field-help">${escapeHtml(version.appliedAt ? "Applied" : "Draft")}</div></div>`).join("")
+      : '<div class="muted">No roadmap versions yet.</div>';
+  } else if (taskContext) {
+    versionsHtml = taskVersions.length
+      ? taskVersions.map((version) => `<div class="list-item">
           <div><strong>${escapeHtml(version.source || "ai_improve")}</strong> | ${escapeHtml(version.createdAt || "")}</div>
           <div class="field-help">${escapeHtml(String(version.content || version.responseText || "").slice(0, 160))}</div>
           <div class="actions" style="margin-top:6px;">
-            <button type="button" class="secondary-btn compact-btn" data-action="${taskPrompt ? "apply-task-prompt-version" : "apply-version"}" data-pack-id="${escapeHtml(selected.pack.id)}" data-chunk-id="${escapeHtml(chunk.id)}" data-task-prompt-id="${escapeHtml(taskPrompt ? taskPrompt.id : "")}" data-version-id="${escapeHtml(version.id)}">Apply</button>
+            <button type="button" class="secondary-btn compact-btn" data-action="apply-task-prompt-version" data-pack-id="${escapeHtml(taskContext.pack.id)}" data-chunk-id="${escapeHtml(taskContext.chunk.id)}" data-task-prompt-id="${escapeHtml(taskContext.taskPrompt.id)}" data-version-id="${escapeHtml(version.id)}">Apply</button>
           </div>
         </div>`).join("")
-      : '<div class="muted">No versions yet.</div>';
+      : '<div class="muted">No task prompt versions yet.</div>';
   }
 
-  const runHistory = taskPrompt
+  if (elements.inspectorVersionsList) {
+    elements.inspectorVersionsList.innerHTML = versionsHtml;
+  }
+
+  const runHistory = taskContext
     ? (Array.isArray(latestVaultState.taskRuns) ? latestVaultState.taskRuns : [])
-      .filter((item) => item.taskPromptId === taskPrompt.id)
-    : (Array.isArray(chunk.runHistory) ? chunk.runHistory : []);
+      .filter((item) => item.taskPromptId === taskContext.taskPrompt.id)
+    : [];
   if (elements.inspectorRunHistoryList) {
-    elements.inspectorRunHistoryList.innerHTML = runHistory.length
-      ? runHistory.map((item) => `<div class="list-item"><strong>${escapeHtml(item.createdAt || "")}</strong><div>${escapeHtml(item.note || "")}</div></div>`).join("")
-      : '<div class="muted">No run history yet.</div>';
+    elements.inspectorRunHistoryList.innerHTML = taskContext
+      ? (runHistory.length
+        ? runHistory.map((item) => `<div class="list-item"><strong>${escapeHtml(item.createdAt || "")}</strong><div>${escapeHtml(item.note || "")}</div></div>`).join("")
+        : '<div class="muted">No run history yet.</div>')
+      : '<div class="muted">Run history appears for selected tasks.</div>';
   }
 
   if (elements.inspectorDetails) {
-    elements.inspectorDetails.innerHTML = `<strong>${escapeHtml((taskPrompt && taskPrompt.title) || chunk.title || "")}</strong><br>${escapeHtml(getTaskStatusLabel((taskPrompt && taskPrompt.status) || chunk.status || "ready"))}<br>${escapeHtml(selected.pack.title || "")}`;
+    if (taskContext) {
+      elements.inspectorDetails.innerHTML = `<strong>${escapeHtml((taskContext.taskPrompt && taskContext.taskPrompt.title) || taskContext.chunk.title || "")}</strong><br>${escapeHtml(getTaskStatusLabel((taskContext.taskPrompt && taskContext.taskPrompt.status) || taskContext.chunk.status || "ready"))}<br>${escapeHtml(taskContext.pack.title || "")}`;
+    } else if (nodeType === "roadmap_item" && selectedRoadmap) {
+      elements.inspectorDetails.innerHTML = `<strong>${escapeHtml(selectedRoadmap.roadmapItem.title || "Roadmap item")}</strong><br>${escapeHtml(getTaskStatusLabel(selectedRoadmap.status))}<br>${escapeHtml((selectedRoadmap.roadmapItem.dependsOn || []).join(", ") || "No dependencies")}`;
+    } else if (nodeType === "master_plan" && project) {
+      elements.inspectorDetails.innerHTML = `<strong>${escapeHtml(project.name || "Project")}</strong><br>Master Plan ${escapeHtml((workflowProject.masterPlan && workflowProject.masterPlan.status) || "Missing")}`;
+    } else if ((nodeType === "roadmap" || nodeType === "project") && project) {
+      elements.inspectorDetails.innerHTML = `<strong>${escapeHtml(project.name || "Project")}</strong><br>Roadmap ${escapeHtml((workflowProject.roadmap && workflowProject.roadmap.status) || "Missing")}`;
+    } else {
+      elements.inspectorDetails.innerHTML = "Select a project item to view details.";
+    }
   }
 }
 
@@ -1928,6 +2118,8 @@ function applyProject(projectId) {
     drawerState.selectedPackId = "";
     drawerState.selectedChunkId = "";
     drawerState.selectedRoadmapItemId = "";
+    drawerState.selectedTaskPromptId = "";
+    drawerState.selectedNodeType = "project";
     renderProjectBrowserTree();
     renderWorkspace();
     renderInspector();
@@ -1947,6 +2139,8 @@ function applyProject(projectId) {
   drawerState.selectedPackId = "";
   drawerState.selectedChunkId = "";
   drawerState.selectedRoadmapItemId = "";
+  drawerState.selectedTaskPromptId = "";
+  drawerState.selectedNodeType = "project";
   projectDraftState.isActive = false;
   projectDraftState.pathManuallyEdited = false;
   projectDraftState.previousAutoPath = "";
@@ -2372,7 +2566,7 @@ async function handlePackListClick(event) {
   }
 }
 
-function selectTreeNode(projectId, packId, chunkId, roadmapItemId) {
+function selectTreeNode(projectId, packId, chunkId, roadmapItemId, taskPromptId, nodeType) {
   if (String(projectId || "") === "__draft__") {
     startNewProjectDraft();
     return;
@@ -2382,17 +2576,25 @@ function selectTreeNode(projectId, packId, chunkId, roadmapItemId) {
   drawerState.selectedPackId = String(packId || "");
   drawerState.selectedChunkId = String(chunkId || "");
   drawerState.selectedRoadmapItemId = String(roadmapItemId || "");
+  drawerState.selectedTaskPromptId = String(taskPromptId || "");
+  drawerState.selectedNodeType = String(nodeType || (drawerState.selectedChunkId ? "task" : "project"));
   if (elements.projectSelect && drawerState.selectedProjectId) {
     elements.projectSelect.value = drawerState.selectedProjectId;
   }
-  drawerState.workspaceMode = drawerState.selectedChunkId ? "tasks" : "plan";
+  if (drawerState.selectedNodeType === "task") {
+    drawerState.workspaceMode = "tasks";
+  } else if (drawerState.selectedNodeType === "roadmap" || drawerState.selectedNodeType === "roadmap_item") {
+    drawerState.workspaceMode = "roadmap";
+  } else {
+    drawerState.workspaceMode = "plan";
+  }
   renderProjectBrowserTree();
   renderWorkspace();
   renderInspector();
 }
 
 function setInspectorTab(tabName) {
-  drawerState.inspectorTab = String(tabName || "improve");
+  drawerState.inspectorTab = String(tabName || "ai");
   renderInspector();
 }
 
@@ -2407,48 +2609,73 @@ async function handleProjectBrowserClick(event) {
 
   const action = actionEl.dataset.action;
   if (action === "select-master-plan") {
-    selectTreeNode(actionEl.dataset.projectId, actionEl.dataset.packId || "", "", "");
-    setWorkspaceMode("plan");
+    selectTreeNode(actionEl.dataset.projectId, actionEl.dataset.packId || "", "", "", "", "master_plan");
     return;
   }
   if (action === "select-tree-project") {
-    selectTreeNode(actionEl.dataset.projectId, actionEl.dataset.packId || "", "", "");
-    setWorkspaceMode("plan");
+    selectTreeNode(actionEl.dataset.projectId, actionEl.dataset.packId || "", "", "", "", "project");
     return;
   }
   if (action === "select-tree-pack") {
-    selectTreeNode(actionEl.dataset.projectId, actionEl.dataset.packId, "", "");
-    setWorkspaceMode("plan");
+    selectTreeNode(actionEl.dataset.projectId, actionEl.dataset.packId, "", "", "", "", "roadmap");
     return;
   }
-  if (action === "select-tree-chunk") {
-    selectTreeNode(actionEl.dataset.projectId, actionEl.dataset.packId, actionEl.dataset.chunkId, actionEl.dataset.roadmapItemId || "");
+  if (action === "select-tree-task" || action === "select-tree-chunk") {
+    selectTreeNode(
+      actionEl.dataset.projectId,
+      actionEl.dataset.packId,
+      actionEl.dataset.chunkId,
+      actionEl.dataset.roadmapItemId || "",
+      actionEl.dataset.taskPromptId || "",
+      "task"
+    );
     return;
   }
   if (action === "select-roadmap-item") {
-    const selectedPack = (latestVaultState.promptPacks || []).find((item) => item.id === actionEl.dataset.packId);
-    const selectedProjectId = actionEl.dataset.projectId;
-    const roadmapItemId = actionEl.dataset.roadmapItemId;
-    const linkedChunk = selectedPack && (selectedPack.chunks || []).find((chunk) => chunk.roadmapItemId === roadmapItemId);
-    if (linkedChunk) {
-      selectTreeNode(selectedProjectId, actionEl.dataset.packId, linkedChunk.id, roadmapItemId || "");
-      setWorkspaceMode("tasks");
-    } else {
-      const linkedTaskPrompt = (latestVaultState.taskPrompts || []).find((prompt) => prompt.projectId === selectedProjectId && prompt.roadmapItemId === roadmapItemId);
-      if (linkedTaskPrompt && desktopApi && typeof desktopApi.getOrCreateTaskPromptFromRoadmapItem === "function") {
-        const response = await desktopApi.getOrCreateTaskPromptFromRoadmapItem({
-          projectId: selectedProjectId,
-          roadmapItemId
-        });
-        if (response && response.ok !== false && response.chunk) {
-          selectTreeNode(selectedProjectId, response.pack.id, response.chunk.id, roadmapItemId || "");
-          setWorkspaceMode("tasks");
-          return;
-        }
-      }
-      selectTreeNode(selectedProjectId, actionEl.dataset.packId, "", roadmapItemId || "");
-      setWorkspaceMode("plan");
+    const selectedProjectId = actionEl.dataset.projectId || "";
+    const roadmapItemId = actionEl.dataset.roadmapItemId || "";
+    const workflow = getProjectWorkflowView();
+    const selectedProject = (workflow.projects || []).find((item) => item.id === selectedProjectId) || null;
+    const roadmapItem = selectedProject
+      ? (selectedProject.roadmap.items || []).find((item) => item.id === roadmapItemId) || null
+      : null;
+    if (roadmapItem && (roadmapItem.linkedTaskPrompt || roadmapItem.linkedChunk)) {
+      selectTreeNode(
+        selectedProjectId,
+        selectedProject && selectedProject.activePackId ? selectedProject.activePackId : actionEl.dataset.packId,
+        roadmapItem.linkedChunk ? roadmapItem.linkedChunk.id : "",
+        roadmapItemId,
+        roadmapItem.linkedTaskPrompt ? roadmapItem.linkedTaskPrompt.id : "",
+        "task"
+      );
+      return;
     }
+    selectTreeNode(
+      selectedProjectId,
+      selectedProject && selectedProject.activePackId ? selectedProject.activePackId : actionEl.dataset.packId,
+      "",
+      roadmapItemId,
+      "",
+      "roadmap_item"
+    );
+    return;
+  }
+  if (action === "open-roadmap-item-task") {
+    const selectedProjectId = actionEl.dataset.projectId || drawerState.selectedProjectId;
+    const roadmapItemId = actionEl.dataset.roadmapItemId || drawerState.selectedRoadmapItemId;
+    if (!selectedProjectId || !roadmapItemId) {
+      setStatus("Select a roadmap item first.", "error");
+      return;
+    }
+    const response = await desktopApi.getOrCreateTaskPromptFromRoadmapItem({
+      projectId: selectedProjectId,
+      roadmapItemId
+    });
+    if (!response || response.ok === false || !response.chunk) {
+      throw new Error(response && response.error ? response.error : "Could not open roadmap task.");
+    }
+    selectTreeNode(selectedProjectId, response.pack.id, response.chunk.id, roadmapItemId, response.taskPrompt ? response.taskPrompt.id : "", "task");
+    setStatus(response.created ? "Task created from roadmap item." : "Task opened from roadmap item.", "success");
     return;
   }
   if (action === "apply-version") {
@@ -2509,7 +2736,7 @@ function setContextMenuItems(type) {
 }
 
 function openProjectContextMenu(event) {
-  const taskNode = event.target.closest("[data-action='select-tree-chunk']");
+  const taskNode = event.target.closest("[data-action='select-tree-task'], [data-action='select-tree-chunk']");
   const projectNode = event.target.closest("[data-action='select-tree-project']");
   const node = taskNode || projectNode;
   if (!node || node.dataset.draftProject === "true") return;
@@ -2537,6 +2764,8 @@ async function deleteSelectedProjectFromContext() {
   drawerState.selectedPackId = "";
   drawerState.selectedChunkId = "";
   drawerState.selectedRoadmapItemId = "";
+  drawerState.selectedTaskPromptId = "";
+  drawerState.selectedNodeType = "project";
   drawerState.showAllProjects = true;
   renderVaultState(response.state);
   setStatus(`Project removed from browser: ${project.name}`, "success");
@@ -2555,6 +2784,8 @@ async function deleteSelectedTaskFromContext() {
   const response = await desktopApi.deleteTask(selected);
   if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not delete task.");
   drawerState.selectedChunkId = "";
+  drawerState.selectedTaskPromptId = "";
+  drawerState.selectedNodeType = "roadmap";
   renderVaultState(response.state);
   setStatus(`Task deleted: ${chunk.title}`, "success");
 }
@@ -2585,13 +2816,18 @@ async function handleProjectContextMenuClick(event) {
 }
 
 function handleProjectBrowserDoubleClick(event) {
-  const actionEl = event.target.closest("[data-action='select-tree-chunk']");
+  const actionEl = event.target.closest("[data-action='select-tree-task'], [data-action='select-tree-chunk']");
   if (!actionEl) {
     return;
   }
-  selectTreeNode(actionEl.dataset.projectId, actionEl.dataset.packId, actionEl.dataset.chunkId);
-  drawerState.workspaceMode = "tasks";
-  renderWorkspace();
+  selectTreeNode(
+    actionEl.dataset.projectId,
+    actionEl.dataset.packId,
+    actionEl.dataset.chunkId,
+    actionEl.dataset.roadmapItemId || "",
+    actionEl.dataset.taskPromptId || "",
+    "task"
+  );
   if (elements.workspaceTaskName) {
     elements.workspaceTaskName.focus();
   }
@@ -2755,6 +2991,8 @@ async function startNextTask() {
   drawerState.selectedPackId = response.pack.id;
   drawerState.selectedChunkId = response.chunk ? response.chunk.id : "";
   drawerState.selectedRoadmapItemId = nextItem.id;
+  drawerState.selectedTaskPromptId = response.taskPrompt ? response.taskPrompt.id : "";
+  drawerState.selectedNodeType = "task";
   drawerState.workspaceMode = "tasks";
   renderVaultState(response.state);
   setStatus(response.created ? "Next task created from roadmap." : "Existing roadmap task opened.", "success");
@@ -2785,6 +3023,8 @@ function openTaskFromPrimaryAction(action, selected) {
       drawerState.selectedPackId = response.pack.id;
       drawerState.selectedChunkId = response.chunk.id;
       drawerState.selectedRoadmapItemId = action.roadmapItemId || response.chunk.roadmapItemId || "";
+      drawerState.selectedTaskPromptId = response.taskPrompt ? response.taskPrompt.id : "";
+      drawerState.selectedNodeType = "task";
       drawerState.workspaceMode = "tasks";
       renderVaultState(response.state);
       setStatus("Task opened.", "success");
@@ -2799,6 +3039,8 @@ function openTaskFromPrimaryAction(action, selected) {
   drawerState.selectedPackId = pack.id;
   drawerState.selectedChunkId = chunk.id;
   drawerState.selectedRoadmapItemId = action.roadmapItemId || chunk.roadmapItemId || "";
+  drawerState.selectedTaskPromptId = taskPrompt ? taskPrompt.id : "";
+  drawerState.selectedNodeType = "task";
   drawerState.workspaceMode = "tasks";
   renderProjectBrowserTree();
   renderWorkspace();
@@ -2982,6 +3224,8 @@ function startNewProjectDraft() {
   drawerState.selectedPackId = "";
   drawerState.selectedChunkId = "";
   drawerState.selectedRoadmapItemId = "";
+  drawerState.selectedTaskPromptId = "";
+  drawerState.selectedNodeType = "project";
   drawerState.workspaceMode = "plan";
   projectDraftState.isActive = true;
   projectDraftState.pathManuallyEdited = false;
@@ -3017,6 +3261,8 @@ function showAllProjects() {
   drawerState.selectedPackId = "";
   drawerState.selectedChunkId = "";
   drawerState.selectedRoadmapItemId = "";
+  drawerState.selectedTaskPromptId = "";
+  drawerState.selectedNodeType = "project";
   if (elements.projectSelect) elements.projectSelect.value = "__all__";
   renderProjectBrowserTree();
   renderWorkspace();
@@ -3146,9 +3392,11 @@ function installDomReferences() {
   elements.projectContextMenu = byId("projectContextMenu");
   elements.workspaceTaskName = byId("workspaceTaskName");
   elements.workspaceTaskStatus = byId("workspaceTaskStatus");
+  elements.workspaceTaskFilePath = byId("workspaceTaskFilePath");
   elements.workspaceTaskContent = byId("workspaceTaskContent");
   elements.workspaceTaskForm = byId("workspaceTaskForm");
   elements.workspaceTaskEmpty = byId("workspaceTaskEmpty");
+  elements.workspaceRoadmapView = byId("workspaceRoadmapView");
   elements.saveWorkspaceTaskButton = byId("saveWorkspaceTaskBtn");
   elements.copyWorkspaceTaskButton = byId("copyWorkspaceTaskBtn");
   elements.sendWorkspaceTaskButton = byId("sendWorkspaceTaskBtn");
@@ -3280,6 +3528,11 @@ function installEventListeners() {
     elements.projectBrowserTree.addEventListener("contextmenu", openProjectContextMenu);
     elements.projectBrowserTree.addEventListener("dblclick", handleProjectBrowserDoubleClick);
   }
+  if (elements.workspaceRoadmapView) {
+    elements.workspaceRoadmapView.addEventListener("click", (event) => {
+      handleProjectBrowserClick(event).catch((error) => setStatus(error.message, "error"));
+    });
+  }
   if (elements.projectContextMenu) {
     elements.projectContextMenu.addEventListener("click", (event) => {
       handleProjectContextMenuClick(event).catch((error) => setStatus(error.message, "error"));
@@ -3404,6 +3657,7 @@ if (typeof module !== "undefined") {
     createStageWorkflowPayload,
     applyDebateResponse,
     getDebateStageView,
+    buildProjectWorkflowView,
     buildProjectBrowserTree,
     getTaskImprovePayload,
     getMasterPlanImprovePayload,

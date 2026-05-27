@@ -1,5 +1,45 @@
 # Codex Progress
 
+## 2026-05-27 Project Browser Workflow UI Rebuild (`codex/rebuild-project-browser-ui`)
+
+- Rebuilt desktop workflow navigation around a normalized UI model in `apps/desktop/renderer.js`:
+  - added `buildProjectWorkflowView(state, selected)` as source of truth for project tree/workspace behavior.
+  - model now exposes:
+    - project selection metadata
+    - master plan state (`Applied|Draft|Missing`, content, active version id)
+    - roadmap state (`Applied|Draft|Missing`, active version id, normalized roadmap items)
+    - concrete task list (order/title/status/taskPromptId/chunkId/roadmapItemId/selected).
+- Refactored tree/workspace/inspector flow to remove static/fake labels:
+  - left sidebar now renders real nodes: project, master plan, task roadmap, roadmap items, and tasks.
+  - roadmap parallel groups are rendered only when real `parallelGroup` values exist.
+  - task selection now tracks `selectedTaskPromptId` + `selectedNodeType` for correct panel behavior.
+- Implemented required click behavior:
+  - project -> plan view
+  - master plan -> plan view + preview
+  - task roadmap -> roadmap view
+  - roadmap item -> opens linked task if present, else roadmap detail
+  - task -> task view
+- Workspace updates:
+  - added dedicated `Task Roadmap` panel in `apps/desktop/index.html`.
+  - plan preview no longer shows stale `No plan yet` when editor/project has master plan content.
+  - task panel now shows `Task file path` (`taskPrompt.taskFilePath`) and task lifecycle actions.
+- Inspector behavior now reflects selected item type:
+  - master plan selection -> master plan versions
+  - roadmap selection -> roadmap versions
+  - task selection -> task prompt versions + run history
+  - avoids misleading empty task-specific placeholders for non-task selections.
+- Updated tests in `apps/desktop/tests/controller-ui.test.js` to validate workflow model and behavior, including:
+  - empty model state
+  - applied master plan/roadmap states
+  - visible task nodes from task prompts
+  - task status mapping (`approved`, `copied`, `done`)
+  - primary action preferring `Open Task` when task exists
+  - preview guard against stale empty plan rendering.
+- Verification commands run successfully:
+  - `node apps/desktop/tests/controller-ui.test.js`
+  - `npm.cmd run desktop:test`
+  - `npm.cmd run verify`
+
 ## 2026-05-27 Prompt Vault State Model Hardening (`codex/harden-prompt-vault-state-model`)
 
 - Hardened Prompt Vault into a coherent source-of-truth model:
