@@ -79,6 +79,7 @@ function createEmptyDatabase() {
     taskPrompts: [],
     taskPromptVersions: [],
     taskRuns: [],
+    planningSessions: {},
     promptPacks: [],
     deletedProjectPaths: [],
     createdAt: timestamp,
@@ -88,6 +89,74 @@ function createEmptyDatabase() {
 
 function normalizeString(value) {
   return String(value || "").trim();
+}
+
+function createDefaultPlanningSession(projectId) {
+  return {
+    schemaVersion: 1,
+    projectId: normalizeString(projectId),
+    phase: "idea",
+    activeContext: "",
+    activeRequestId: "",
+    busyState: false,
+    cancelledRequestIds: [],
+    masterPlanDraftVersionId: "",
+    roadmapDraftVersionId: "",
+    latestClaudeRoundId: "",
+    masterPlanSaved: false,
+    roadmapSaved: false,
+    debateRound: 0,
+    lastProvider: "",
+    lastError: "",
+    errorLog: [],
+    updatedAt: createTimestamp()
+  };
+}
+
+function sanitizePlanningSession(session, projectId) {
+  const source = session && typeof session === "object" ? session : {};
+  const fallback = createDefaultPlanningSession(projectId || source.projectId);
+  const phase = ["idea", "master_draft", "roadmap_draft", "tasks"].includes(source.phase) ? source.phase : fallback.phase;
+  return {
+    ...fallback,
+    projectId: normalizeString(source.projectId) || fallback.projectId,
+    phase,
+    activeContext: normalizeString(source.activeContext),
+    activeRequestId: normalizeString(source.activeRequestId),
+    busyState: Boolean(source.busyState),
+    cancelledRequestIds: (Array.isArray(source.cancelledRequestIds) ? source.cancelledRequestIds : []).map(normalizeString).filter(Boolean).slice(-20),
+    masterPlanDraftVersionId: normalizeString(source.masterPlanDraftVersionId),
+    roadmapDraftVersionId: normalizeString(source.roadmapDraftVersionId),
+    latestClaudeRoundId: normalizeString(source.latestClaudeRoundId),
+    masterPlanSaved: Boolean(source.masterPlanSaved),
+    roadmapSaved: Boolean(source.roadmapSaved),
+    debateRound: Number.isFinite(Number(source.debateRound)) ? Math.max(0, Number(source.debateRound)) : 0,
+    lastProvider: normalizeString(source.lastProvider),
+    lastError: String(source.lastError || ""),
+    errorLog: (Array.isArray(source.errorLog) ? source.errorLog : []).map((entry) => ({
+      timestamp: normalizeString(entry && entry.timestamp) || createTimestamp(),
+      error: String(entry && entry.error || ""),
+      context: normalizeString(entry && entry.context),
+      requestId: entry && entry.requestId ? normalizeString(entry.requestId) : null
+    })).slice(-100),
+    updatedAt: normalizeString(source.updatedAt) || createTimestamp()
+  };
+}
+
+function migrateDb(db) {
+  const database = db && typeof db === "object" ? db : createEmptyDatabase();
+  if (!database.planningSessions || typeof database.planningSessions !== "object" || Array.isArray(database.planningSessions)) {
+    database.planningSessions = {};
+  }
+  for (const project of Array.isArray(database.projects) ? database.projects : []) {
+    const projectId = normalizeString(project && project.id);
+    if (!projectId) continue;
+    database.planningSessions[projectId] = sanitizePlanningSession(database.planningSessions[projectId], projectId);
+  }
+  for (const [projectId, session] of Object.entries(database.planningSessions)) {
+    database.planningSessions[projectId] = sanitizePlanningSession(session, projectId);
+  }
+  return database;
 }
 
 function slugify(value) {
@@ -480,9 +549,11 @@ function sanitizeDatabase(rawDatabase) {
     taskPrompts: Array.isArray(source.taskPrompts) ? source.taskPrompts.map(sanitizeTaskPrompt) : [],
     taskPromptVersions: Array.isArray(source.taskPromptVersions) ? source.taskPromptVersions.map(sanitizeTaskPromptVersion) : [],
     taskRuns: Array.isArray(source.taskRuns) ? source.taskRuns.map(sanitizeTaskRun) : [],
+    planningSessions: source.planningSessions && typeof source.planningSessions === "object" && !Array.isArray(source.planningSessions) ? source.planningSessions : {},
     createdAt: normalizeString(source.createdAt) || fallback.createdAt,
     updatedAt: normalizeString(source.updatedAt) || fallback.updatedAt
   };
+  return migrateDb(sanitized);
 }
 
 function sanitizeChunk(chunk) {
@@ -1016,6 +1087,35 @@ function createVaultStore({ dbPath }) {
     return sanitized;
   }
 
+  function getOrInitPlanningSession(projectId) {
+    const database = readDatabase();
+    const safeProjectId = normalizeString(projectId);
+    if (!safeProjectId) throw new Error("Project id is required.");
+    database.planningSessions[safeProjectId] = sanitizePlanningSession(database.planningSessions[safeProjectId], safeProjectId);
+    return {
+      session: database.planningSessions[safeProjectId],
+      state: writeDatabase(database)
+    };
+  }
+
+  function writePlanningSession(projectId, sessionPatch = {}) {
+    const database = readDatabase();
+    const safeProjectId = normalizeString(projectId);
+    if (!safeProjectId) throw new Error("Project id is required.");
+    const current = sanitizePlanningSession(database.planningSessions[safeProjectId], safeProjectId);
+    const patch = sessionPatch && typeof sessionPatch === "object" ? sessionPatch : {};
+    database.planningSessions[safeProjectId] = sanitizePlanningSession({
+      ...current,
+      ...patch,
+      projectId: safeProjectId,
+      updatedAt: createTimestamp()
+    }, safeProjectId);
+    return {
+      session: database.planningSessions[safeProjectId],
+      state: writeDatabase(database)
+    };
+  }
+
   function refreshProjectProgress(project) {
     if (!project || !project.path) {
       return project;
@@ -1101,7 +1201,7 @@ function createVaultStore({ dbPath }) {
       const stageInfo = getProjectStage(projectPath);
       const found = byPath.get(projectPath.toLowerCase());
       if (!found) {
-        database.projects.push({
+        const project = {
           id: createId("project"),
           name: entry.name,
           path: projectPath,
@@ -1117,7 +1217,9 @@ function createVaultStore({ dbPath }) {
           updatedAt: createTimestamp(),
           stage: stageInfo.stage,
           nextAction: stageInfo.nextAction
-        });
+        };
+        database.projects.push(project);
+        database.planningSessions[project.id] = sanitizePlanningSession(null, project.id);
       } else {
         found.stage = stageInfo.stage;
         found.nextAction = stageInfo.nextAction;
@@ -2515,6 +2617,131 @@ function createPromptFromRoadmapItem({ project, pack, item, order }) {
     return { taskFileName, taskFilePath };
   }
 
+  function isCompleteTaskPromptFile(filePath) {
+    const content = readTextIfExists(filePath);
+    if (!content.trim()) return false;
+    return /^#\s+\S/m.test(content)
+      && content.includes("Project path")
+      && content.includes("Goal")
+      && content.includes("Acceptance Criteria")
+      && content.includes("Verification Commands");
+  }
+
+  function findTaskPromptForItem(database, projectId, roadmapItemId) {
+    return (database.taskPrompts || []).find((prompt) => prompt.projectId === projectId && prompt.roadmapItemId === roadmapItemId) || null;
+  }
+
+  function createTaskPromptRecord(database, project, pack, item, order, contentOverride = "") {
+    const chunk = createPromptFromRoadmapItem({ project, pack, item, order });
+    if (!Array.isArray(pack.chunks)) pack.chunks = [];
+    const existingChunk = pack.chunks.find((entry) => entry.roadmapItemId === item.id);
+    const finalChunk = existingChunk || chunk;
+    if (!existingChunk) pack.chunks.push(finalChunk);
+    finalChunk.prompt = contentOverride || finalChunk.prompt || chunk.prompt;
+    finalChunk.status = normalizeChunkStatus(finalChunk.status || "in_progress");
+    pack.activePromptId = finalChunk.id;
+    pack.updatedAt = createTimestamp();
+    const taskPrompt = sanitizeTaskPrompt({
+      id: createId("task_prompt"),
+      projectId: project.id,
+      roadmapItemId: item.id,
+      title: finalChunk.title,
+      content: contentOverride || finalChunk.prompt,
+      status: "draft",
+      taskFileName: `task-${String(order).padStart(3, "0")}-${slugify(finalChunk.title)}.md`,
+      order,
+      sourceChunkId: finalChunk.id,
+      createdAt: createTimestamp(),
+      updatedAt: createTimestamp()
+    });
+    const version = sanitizeTaskPromptVersion({
+      id: createId("task_prompt_version"),
+      taskPromptId: taskPrompt.id,
+      source: "generated",
+      content: taskPrompt.content,
+      status: "applied",
+      createdAt: createTimestamp(),
+      updatedAt: createTimestamp(),
+      appliedAt: createTimestamp()
+    });
+    taskPrompt.activeVersionId = version.id;
+    database.taskPrompts.unshift(taskPrompt);
+    database.taskPromptVersions.unshift(version);
+    const taskFile = writeTaskPromptFile(project.path, taskPrompt);
+    taskPrompt.taskFileName = taskFile.taskFileName;
+    taskPrompt.taskFilePath = taskFile.taskFilePath;
+    return { taskPrompt, version, chunk: finalChunk };
+  }
+
+  function createAllTaskPromptsFromRoadmap(projectId, options = {}) {
+    const force = Boolean(options && options.force);
+    const database = readDatabase();
+    const project = getProjectById(database, projectId);
+    const pack = getActivePackForProject(database, project);
+    if (!pack || !pack.roadmap || !Array.isArray(pack.roadmap.items) || !pack.roadmap.items.length) {
+      throw new Error("Active roadmap is required.");
+    }
+    const created = [];
+    const skipped = [];
+    const failed = [];
+    const errors = [];
+    const items = pack.roadmap.items.slice().sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+    for (const item of items) {
+      try {
+        const order = Number(item.order) || items.indexOf(item) + 1;
+        let taskPrompt = findTaskPromptForItem(database, project.id, item.id);
+        const expectedFilePath = taskPrompt && taskPrompt.taskFilePath
+          ? taskPrompt.taskFilePath
+          : path.join(getProjectPaths(project.path).tasksDir, `task-${String(order).padStart(3, "0")}-${slugify(item.title)}.md`);
+        const fileExists = fs.existsSync(expectedFilePath);
+        const fileComplete = fileExists && isCompleteTaskPromptFile(expectedFilePath);
+        if (!force && taskPrompt && fileComplete) {
+          skipped.push({ roadmapItemId: item.id, reason: "complete" });
+          continue;
+        }
+        if (!force && taskPrompt && !fileComplete) {
+          const taskFile = writeTaskPromptFile(project.path, taskPrompt);
+          taskPrompt.taskFileName = taskFile.taskFileName;
+          taskPrompt.taskFilePath = taskFile.taskFilePath;
+          taskPrompt.updatedAt = createTimestamp();
+          created.push({ roadmapItemId: item.id, taskPromptId: taskPrompt.id, filePath: taskPrompt.taskFilePath });
+          continue;
+        }
+        if (!force && !taskPrompt && fileComplete) {
+          const fileContent = readTextIfExists(expectedFilePath);
+          const record = createTaskPromptRecord(database, project, pack, item, order, fileContent);
+          record.taskPrompt.taskFilePath = expectedFilePath;
+          record.taskPrompt.taskFileName = path.basename(expectedFilePath);
+          created.push({ roadmapItemId: item.id, taskPromptId: record.taskPrompt.id, filePath: expectedFilePath });
+          continue;
+        }
+        if (force && taskPrompt) {
+          database.taskPrompts = database.taskPrompts.filter((prompt) => prompt.id !== taskPrompt.id);
+          database.taskPromptVersions = database.taskPromptVersions.filter((version) => version.taskPromptId !== taskPrompt.id);
+          taskPrompt = null;
+        }
+        const record = createTaskPromptRecord(database, project, pack, item, order);
+        created.push({ roadmapItemId: item.id, taskPromptId: record.taskPrompt.id, filePath: record.taskPrompt.taskFilePath });
+      } catch (error) {
+        const message = error.message || "Could not create task prompt.";
+        failed.push({ roadmapItemId: normalizeString(item && item.id), title: normalizeString(item && item.title), error: message });
+        errors.push(`${normalizeString(item && item.id) || "unknown"}: ${message}`);
+      }
+    }
+    refreshProjectProgress(project);
+    const state = writeDatabase(database);
+    return {
+      created,
+      skipped,
+      failed,
+      errors,
+      createdCount: created.length,
+      skippedCount: skipped.length,
+      failedCount: failed.length,
+      state
+    };
+  }
+
   function startRoadmapPrompt(packId, roadmapItemId) {
     const database = readDatabase();
     const pack = getPackById(database, packId);
@@ -2664,6 +2891,8 @@ function createPromptFromRoadmapItem({ project, pack, item, order }) {
 
   return {
     getState,
+    getOrInitPlanningSession,
+    writePlanningSession,
     updateSettings,
     saveProject,
     saveProjectBrief,
@@ -2705,6 +2934,7 @@ function createPromptFromRoadmapItem({ project, pack, item, order }) {
     markRoadmapItemDone,
     startRoadmapPrompt,
     createTaskPromptFromRoadmapItem,
+    createAllTaskPromptsFromRoadmap,
     updateTaskPromptContent,
     addTaskPromptVersion,
     applyTaskPromptVersion,
@@ -2725,6 +2955,8 @@ module.exports = {
   createVaultStore,
   createEmptyDatabase,
   sanitizeDatabase,
+  migrateDb,
+  createDefaultPlanningSession,
   slugify,
   getProjectFolderName,
   extractFinalPlanTasks,

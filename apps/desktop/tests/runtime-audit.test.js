@@ -46,7 +46,9 @@ for (const source of [mainSource, preloadSource, rendererSource, htmlSource]) {
 
 assert.match(readmeSource, /npm\.cmd run desktop/);
 assert.match(readmeSource, /apps\/extension/);
-assert.match(readmeSource, /New Project -> Master Plan -> Roadmap -> Task -> Codex/);
+assert.match(readmeSource, /Project Idea -> Master Plan Draft -> Task Roadmap Draft -> Tasks -> Codex/);
+assert.match(readmeSource, /Generate Master Plan/);
+assert.match(readmeSource, /Create All Tasks/);
 assert.match(architectureSource, /apps\/desktop\/main\.js/);
 assert.match(architectureSource, /apps\/desktop\/main\/main\.js/);
 assert.match(architectureSource, /not part of the active runtime/i);

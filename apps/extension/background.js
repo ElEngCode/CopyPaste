@@ -264,6 +264,9 @@ async function runManualStep(command) {
 
   try {
     const payload = command && typeof command === "object" ? command : {};
+    const requestId = String(payload.requestId || "");
+    const projectId = String(payload.projectId || "");
+    const activeContext = String(payload.activeContext || "");
 
     await readStoredNextTarget();
 
@@ -314,7 +317,11 @@ async function runManualStep(command) {
 
     const resultPayload = {
       ok: true,
+      requestId,
+      projectId,
+      activeContext,
       target,
+      provider: target,
       nextTarget: next,
       text: capturedResult
     };
@@ -398,6 +405,10 @@ function connectToElectron() {
       console.error("[CopyPaste][Background] Manual workflow step failed:", error);
       safeSocketSend({
         ok: false,
+        requestId: command && command.requestId || "",
+        projectId: command && command.projectId || "",
+        activeContext: command && command.activeContext || "",
+        provider: command && (command.targetProvider || command.target) || "",
         error: error.message || "Manual workflow step failed."
       });
     });

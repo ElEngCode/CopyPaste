@@ -14,6 +14,10 @@ const WS_PORT = 8080;
 const EXTENSION_MESSAGE_CHANNEL = "AI_RESPONSE_RECEIVED";
 const STATUS_CHANNEL = "WORKFLOW_STATUS";
 const TRIGGER_WORKFLOW_CHANNEL = "TRIGGER_AI_WORKFLOW";
+const SESSION_READ_CHANNEL = "session:read";
+const SESSION_WRITE_CHANNEL = "session:write";
+const VAULT_CREATE_ALL_TASKS_CHANNEL = "vault:createAllTasks";
+const FEATURE_FLAGS_CHANNEL = "feature-flags:get";
 const VAULT_STATE_CHANNEL = "VAULT_STATE_UPDATED";
 const VAULT_GET_STATE_CHANNEL = "VAULT_GET_STATE";
 const VAULT_GENERATE_PACK_CHANNEL = "VAULT_GENERATE_PACK";
@@ -83,6 +87,10 @@ const EXTENSION_STATE = Object.freeze({
   DISCONNECTED: "disconnected",
   ERROR: "error"
 });
+const ENABLE_LEGACY_DEBATE = process.env.ENABLE_LEGACY_DEBATE === "true";
+if (ENABLE_LEGACY_DEBATE) {
+  console.warn("Legacy 7-stage debate is deprecated. Not part of default planning workflow. Scheduled for removal: next minor release.");
+}
 
 let mainWindow = null;
 let extensionSocket = null;
@@ -456,6 +464,9 @@ async function connectInstalledExtension() {
 ipcMain.handle(TRIGGER_WORKFLOW_CHANNEL, (_event, payload) => invokeSafely(async () => {
   const safePayload = payload && typeof payload === "object" ? payload : {};
   return sendWorkflowToExtension({
+    requestId: String(safePayload.requestId || ""),
+    projectId: String(safePayload.projectId || ""),
+    activeContext: String(safePayload.activeContext || ""),
     chatgptPrefix: String(safePayload.chatgptPrefix || ""),
     claudePrefix: String(safePayload.claudePrefix || ""),
     text: String(safePayload.text || ""),
@@ -464,6 +475,24 @@ ipcMain.handle(TRIGGER_WORKFLOW_CHANNEL, (_event, payload) => invokeSafely(async
     currentStageLabel: String(safePayload.currentStageLabel || ""),
     currentRole: String(safePayload.currentRole || "")
   });
+}));
+
+ipcMain.handle(FEATURE_FLAGS_CHANNEL, () => invokeSafely(async () => ({
+  legacyDebateEnabled: ENABLE_LEGACY_DEBATE
+})));
+
+ipcMain.handle(SESSION_READ_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().getOrInitPlanningSession(String(payload && payload.projectId || ""));
+  return { ok: true, session: result.session, state: result.state };
+}));
+
+ipcMain.handle(SESSION_WRITE_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().writePlanningSession(
+    String(payload && payload.projectId || ""),
+    payload && payload.sessionPatch || {}
+  );
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, session: result.session, state: result.state };
 }));
 
 ipcMain.handle(VAULT_GET_STATE_CHANNEL, () => invokeSafely(async () => ({
@@ -845,6 +874,15 @@ ipcMain.handle(VAULT_CREATE_TASK_PROMPT_CHANNEL, (_event, payload) => invokeSafe
   return { ok: true, taskPrompt: result.taskPrompt, version: result.version, project: result.project, pack: result.pack, chunk: result.chunk, state: result.state };
 }));
 
+ipcMain.handle(VAULT_CREATE_ALL_TASKS_CHANNEL, (_event, payload) => invokeSafely(async () => {
+  const result = getVaultStore().createAllTaskPromptsFromRoadmap(
+    String(payload && payload.projectId || ""),
+    { force: Boolean(payload && payload.force) }
+  );
+  sendVaultStateToRenderer(result.state);
+  return { ok: true, ...result };
+}));
+
 ipcMain.handle(VAULT_UPDATE_TASK_PROMPT_CHANNEL, (_event, payload) => invokeSafely(async () => {
   const result = getVaultStore().updateTaskPromptContent(String(payload && payload.taskPromptId || ""), payload || {});
   sendVaultStateToRenderer(result.state);
@@ -1035,13 +1073,28 @@ wss.on("connection", (ws, request) => {
         ? parsedData.error
         : "Extension reported a workflow error.";
       logServer("Extension reported an error.", parsedData);
+      sendToRenderer(EXTENSION_MESSAGE_CHANNEL, {
+        requestId: parsedData.requestId || "",
+        projectId: parsedData.projectId || "",
+        activeContext: parsedData.activeContext || "",
+        text: "",
+        provider: parsedData.provider || parsedData.target || "",
+        error: errorMessage
+      });
       sendStatusToRenderer(errorMessage, "error");
       return;
     }
 
     logServer("Received AI response from extension.", parsedData);
-    if (typeof parsedData.text === "string" && parsedData.text.trim()) {
-      sendToRenderer(EXTENSION_MESSAGE_CHANNEL, parsedData.text);
+    if (typeof parsedData.text === "string") {
+      sendToRenderer(EXTENSION_MESSAGE_CHANNEL, {
+        requestId: parsedData.requestId || "",
+        projectId: parsedData.projectId || "",
+        activeContext: parsedData.activeContext || "",
+        text: parsedData.text,
+        provider: parsedData.provider || parsedData.target || "",
+        error: null
+      });
       return;
     }
 

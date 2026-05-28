@@ -18,6 +18,7 @@ const {
   getNextEligibleRoadmapItem,
   getPlanPrimaryAction,
   getPrimaryActionState,
+  getNextRecommendedAction,
   getMasterPlanActionLabel,
   renderProjectPlanHtml,
   getRoundPreview,
@@ -259,9 +260,9 @@ assert.deepEqual(getPlanPrimaryAction({
   pack: null
 }), {
   id: "master_plan",
-  label: "Create Master Plan",
+  label: "Generate Master Plan",
   enabled: true,
-  handler: "improveMasterPlan",
+  handler: "sendGenerateMasterPlan",
   roadmapItemId: ""
 });
 assert.deepEqual(getPrimaryActionState({
@@ -282,10 +283,10 @@ assert.deepEqual(getPlanPrimaryAction({
   project: { id: "project_1", idea: "Build a planner.", masterPlan: "# Master Plan\n\nReal plan" },
   pack: { roadmap: { items: [] }, chunks: [] }
 }), {
-  id: "master_plan_required",
-  label: "Apply Master Plan",
-  enabled: false,
-  handler: "",
+  id: "save_master_plan",
+  label: "Save Master Plan & Create Task Roadmap",
+  enabled: true,
+  handler: "saveMasterPlanAndCreateRoadmap",
   roadmapItemId: ""
 });
 assert.deepEqual(getPlanPrimaryAction({
@@ -316,10 +317,10 @@ assert.deepEqual(getPlanPrimaryAction({
     chunks: []
   }
 }), {
-  id: "apply_roadmap",
-  label: "Apply Roadmap",
+  id: "save_roadmap",
+  label: "Save Roadmap",
   enabled: true,
-  handler: "applyRoadmapDraft",
+  handler: "saveRoadmap",
   roadmapItemId: ""
 });
 assert.deepEqual(getPlanPrimaryAction({
@@ -392,15 +393,26 @@ assert.doesNotMatch(rootHtml, /Generate Codex Prompts/);
 assert.doesNotMatch(rootHtml, /Latest Prompt Pack/);
 assert.doesNotMatch(rootHtml, /Older Packs/);
 assert.match(rootHtml, /id="saveProjectBriefBtn"[^>]*>Save Draft<\/button>/);
-assert.match(rootHtml, /id="planPrimaryActionBtn"[^>]*>Create Master Plan<\/button>/);
-assert.doesNotMatch(rootHtml, /id="improveMasterPlanBtn"/);
-assert.doesNotMatch(rootHtml, /id="createRoadmapBtn"/);
-assert.doesNotMatch(rootHtml, /id="startNextPromptBtn"/);
-assert.doesNotMatch(rootHtml, />Improve Master Plan<\/button>/);
-assert.doesNotMatch(rootHtml, /Start Next Task/);
-assert.doesNotMatch(rendererJs, /Start Next Task/);
-assert.match(rendererJs, /planPrimaryActionButton\.addEventListener\("click"/);
-assert.match(rendererJs, /async function improveMasterPlan/);
+assert.match(rootHtml, /id="generateMasterPlanBtn"[^>]*>Generate Master Plan<\/button>/);
+assert.match(rootHtml, /id="improveMasterPlanClaudeBtn"[^>]*>Improve with Claude<\/button>/);
+assert.match(rootHtml, /id="reviseMasterPlanGptBtn"[^>]*>Revise with GPT<\/button>/);
+assert.match(rootHtml, /id="saveMasterPlanCreateRoadmapBtn"[^>]*>Save Master Plan &amp; Create Task Roadmap<\/button>/);
+assert.match(rootHtml, /id="retryCreateRoadmapBtn"[^>]*>Retry Create Roadmap<\/button>/);
+assert.match(rootHtml, /id="improveRoadmapClaudeBtn"[^>]*>Improve Roadmap with Claude<\/button>/);
+assert.match(rootHtml, /id="saveRoadmapBtn"[^>]*>Save Roadmap<\/button>/);
+assert.match(rootHtml, /id="createNextTaskBtn"[^>]*>Create Next Task<\/button>/);
+assert.match(rootHtml, /id="createAllTasksBtn"[^>]*>Create All Tasks<\/button>/);
+assert.match(rootHtml, /id="cancelPlanningBtn"[^>]*>Cancel<\/button>/);
+assert.doesNotMatch(rootHtml, />Apply Master Plan<\/button>/);
+assert.doesNotMatch(rootHtml, />Apply Roadmap<\/button>/);
+assert.match(rootHtml, /Planning Status/);
+assert.match(rendererJs, /async function sendGenerateMasterPlan/);
+assert.match(rendererJs, /async function sendClaudeMasterPlanImprove/);
+assert.match(rendererJs, /async function sendGptMasterPlanRevision/);
+assert.match(rendererJs, /async function saveMasterPlanAndCreateRoadmap/);
+assert.match(rendererJs, /async function createAllTasks/);
+assert.match(rendererJs, /requestId = crypto\.randomUUID/);
+assert.doesNotMatch(rendererJs, /await triggerWorkflowStep\(\);/);
 assert.match(rootHtml, /Default projects folder/);
 assert.match(rootHtml, /See all projects/);
 assert.match(rootHtml, /id="projectContextMenu"/);

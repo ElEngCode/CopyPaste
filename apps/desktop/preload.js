@@ -2,6 +2,10 @@ const { contextBridge, ipcRenderer } = require("electron");
 const projectBuilderProtocol = require("../../packages/protocol");
 
 const TRIGGER_WORKFLOW_CHANNEL = "TRIGGER_AI_WORKFLOW";
+const SESSION_READ_CHANNEL = "session:read";
+const SESSION_WRITE_CHANNEL = "session:write";
+const VAULT_CREATE_ALL_TASKS_CHANNEL = "vault:createAllTasks";
+const FEATURE_FLAGS_CHANNEL = "feature-flags:get";
 const RESPONSE_CHANNEL = "AI_RESPONSE_RECEIVED";
 const STATUS_CHANNEL = "WORKFLOW_STATUS";
 const VAULT_STATE_CHANNEL = "VAULT_STATE_UPDATED";
@@ -77,6 +81,11 @@ function onChannel(channel, callback) {
 
 contextBridge.exposeInMainWorld("copypasteDesktop", {
   sendWorkflow: (payload) => ipcRenderer.invoke(TRIGGER_WORKFLOW_CHANNEL, payload),
+  readPlanningSession: (payload) => ipcRenderer.invoke(SESSION_READ_CHANNEL, payload),
+  writePlanningSession: (payload) => ipcRenderer.invoke(SESSION_WRITE_CHANNEL, payload),
+  createAllTaskPromptsFromRoadmap: (payload) => ipcRenderer.invoke(VAULT_CREATE_ALL_TASKS_CHANNEL, payload),
+  createTaskPromptForItem: (payload) => ipcRenderer.invoke(VAULT_CREATE_TASK_PROMPT_CHANNEL, payload),
+  getFeatureFlags: () => ipcRenderer.invoke(FEATURE_FLAGS_CHANNEL),
   getVaultState: () => ipcRenderer.invoke(VAULT_GET_STATE_CHANNEL),
   updateVaultSettings: (payload) => ipcRenderer.invoke(VAULT_UPDATE_SETTINGS_CHANNEL, payload),
   generatePromptPack: (payload) => ipcRenderer.invoke(VAULT_GENERATE_PACK_CHANNEL, payload),
@@ -148,7 +157,14 @@ contextBridge.exposeInMainWorld("copypasteProtocol", {
   getNextPlanningDebateStage: (stageId) => projectBuilderProtocol.getNextPlanningDebateStage(stageId),
   createProjectBuilderDebate: (input) => projectBuilderProtocol.createProjectBuilderDebate(input),
   buildPlanningDebatePrompt: (workflow, project, priorRounds) => projectBuilderProtocol.buildPlanningDebatePrompt(workflow, project, priorRounds),
+  buildMasterPlanGeneratePrompt: (project, prefixes) => projectBuilderProtocol.buildMasterPlanGeneratePrompt(project, prefixes),
+  buildMasterPlanClaudeImprovePrompt: (project, currentDraft, userFeedback) => projectBuilderProtocol.buildMasterPlanClaudeImprovePrompt(project, currentDraft, userFeedback),
+  buildMasterPlanGptRevisionPrompt: (project, currentDraft, claudeResponseOrNull, userFeedback) => projectBuilderProtocol.buildMasterPlanGptRevisionPrompt(project, currentDraft, claudeResponseOrNull, userFeedback),
+  buildRoadmapGeneratePrompt: (project, appliedMasterPlan) => projectBuilderProtocol.buildRoadmapGeneratePrompt(project, appliedMasterPlan),
+  buildRoadmapClaudeImprovePrompt: (project, appliedMasterPlan, currentRoadmapDraft, userFeedback) => projectBuilderProtocol.buildRoadmapClaudeImprovePrompt(project, appliedMasterPlan, currentRoadmapDraft, userFeedback),
   buildRoadmapPrompt: (project, activeMasterPlan) => projectBuilderProtocol.buildRoadmapPrompt(project, activeMasterPlan),
+  parseRoadmapResponse: (text) => projectBuilderProtocol.parseRoadmapResponse(text),
+  validateRoadmap: (roadmap) => projectBuilderProtocol.validateRoadmap(roadmap),
   buildTaskImprovePrompt: (project, taskPrompt, activeMasterPlan, runHistory) => projectBuilderProtocol.buildTaskImprovePrompt(project, taskPrompt, activeMasterPlan, runHistory),
   createNextDebatePrompt: (debate) => projectBuilderProtocol.createNextDebatePrompt(debate),
   saveDebateRound: (debate, input) => projectBuilderProtocol.saveDebateRound(debate, input),

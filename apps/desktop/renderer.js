@@ -83,6 +83,25 @@ const elements = {
   workspacePromptRunNote: null,
   saveProjectBriefButton: null,
   planPrimaryActionButton: null,
+  planningNotes: null,
+  generateMasterPlanButton: null,
+  improveMasterPlanClaudeButton: null,
+  reviseMasterPlanGptButton: null,
+  saveMasterPlanCreateRoadmapButton: null,
+  retryCreateRoadmapButton: null,
+  improveRoadmapClaudeButton: null,
+  saveRoadmapButton: null,
+  createNextTaskButton: null,
+  createAllTasksButton: null,
+  cancelPlanningButton: null,
+  planningPhase: null,
+  planningLastProvider: null,
+  planningMasterDraftStatus: null,
+  planningRoadmapDraftStatus: null,
+  planningDebateRound: null,
+  planningNextAction: null,
+  planningLastError: null,
+  planningErrorLog: null,
   approvePromptButton: null,
   markPromptDoneButton: null,
   copyCodexHandoffButton: null,
@@ -127,6 +146,8 @@ const drawerState = {
   activeDebateWorkflowId: "",
   activeTaskPromptId: "",
   pendingDebatePrompt: null,
+  currentPlanningSession: null,
+  lastCreateAllResult: null,
   showAllProjects: false
 };
 const projectDraftState = {
@@ -929,10 +950,10 @@ function getPrimaryActionState(input = {}) {
 
   if (draftMasterPlan) {
     return {
-      id: "apply_master_plan",
-      label: "Apply Master Plan",
+      id: "save_master_plan",
+      label: "Save Master Plan & Create Task Roadmap",
       enabled: true,
-      handler: "applyMasterPlanDraft",
+      handler: "saveMasterPlanAndCreateRoadmap",
       roadmapItemId: ""
     };
   }
@@ -940,9 +961,9 @@ function getPrimaryActionState(input = {}) {
   if (isEmptyMasterPlanText(masterPlan)) {
     return {
       id: "master_plan",
-      label: "Create Master Plan",
+      label: "Generate Master Plan",
       enabled: Boolean(projectIdea),
-      handler: "improveMasterPlan",
+      handler: "sendGenerateMasterPlan",
       roadmapItemId: ""
     };
   }
@@ -950,20 +971,20 @@ function getPrimaryActionState(input = {}) {
   const roadmapItems = pack && pack.roadmap && Array.isArray(pack.roadmap.items) ? pack.roadmap.items : [];
   if (!hasAppliedMasterPlan) {
     return {
-      id: "master_plan_required",
-      label: "Apply Master Plan",
-      enabled: false,
-      handler: "",
+      id: "save_master_plan",
+      label: "Save Master Plan & Create Task Roadmap",
+      enabled: true,
+      handler: "saveMasterPlanAndCreateRoadmap",
       roadmapItemId: ""
     };
   }
   const draftRoadmap = getLatestRoadmapDraftVersion(pack);
   if (!roadmapItems.length && draftRoadmap) {
     return {
-      id: "apply_roadmap",
-      label: "Apply Roadmap",
+      id: "save_roadmap",
+      label: "Save Roadmap",
       enabled: true,
-      handler: "applyRoadmapDraft",
+      handler: "saveRoadmap",
       roadmapItemId: ""
     };
   }
@@ -1001,6 +1022,192 @@ function getPrimaryActionState(input = {}) {
 
 function getPlanPrimaryAction(input = {}) {
   return getPrimaryActionState(input);
+}
+
+function getPlanningSession(projectId) {
+  const sessions = latestVaultState && latestVaultState.planningSessions && typeof latestVaultState.planningSessions === "object"
+    ? latestVaultState.planningSessions
+    : {};
+  const session = projectId ? sessions[projectId] : null;
+  return session || {
+    schemaVersion: 1,
+    projectId: projectId || "",
+    phase: "idea",
+    activeContext: "",
+    activeRequestId: "",
+    busyState: false,
+    cancelledRequestIds: [],
+    masterPlanDraftVersionId: "",
+    roadmapDraftVersionId: "",
+    latestClaudeRoundId: "",
+    masterPlanSaved: false,
+    roadmapSaved: false,
+    debateRound: 0,
+    lastProvider: "",
+    lastError: "",
+    errorLog: [],
+    updatedAt: ""
+  };
+}
+
+function getVersionNumber(versions, versionId) {
+  const ordered = (Array.isArray(versions) ? versions : []).slice().reverse();
+  const index = ordered.findIndex((item) => item.id === versionId);
+  return index >= 0 ? index + 1 : 0;
+}
+
+function getMasterDraftVersion(project, session) {
+  const versions = Array.isArray(project && project.masterPlanVersions) ? project.masterPlanVersions : [];
+  return versions.find((item) => item.id === (session && session.masterPlanDraftVersionId)) || getLatestMasterPlanDraftVersion(project);
+}
+
+function getRoadmapDraftVersion(pack, session) {
+  const versions = Array.isArray(pack && pack.roadmapVersions) ? pack.roadmapVersions : [];
+  return versions.find((item) => item.id === (session && session.roadmapDraftVersionId)) || getLatestRoadmapDraftVersion(pack);
+}
+
+function getNextRecommendedAction(session, project) {
+  const safeSession = session || getPlanningSession(project && project.id);
+  let action = "";
+  if (!project || !String(project.idea || "").trim()) {
+    action = "Save Project Idea";
+  } else if (safeSession.phase === "idea") {
+    action = "Generate Master Plan";
+  } else if (safeSession.phase === "master_draft" && !safeSession.masterPlanSaved) {
+    action = "Improve with Claude, Revise with GPT, or Save Master Plan";
+  } else if (safeSession.masterPlanSaved && !safeSession.roadmapSaved && !safeSession.roadmapDraftVersionId) {
+    action = "Retry Create Roadmap";
+  } else if (safeSession.phase === "roadmap_draft" && !safeSession.roadmapSaved) {
+    action = "Improve or Save Roadmap";
+  } else if (safeSession.phase === "tasks") {
+    action = "Create Next Task or Create All Tasks";
+  } else {
+    action = "Generate Master Plan";
+  }
+  return safeSession.lastError ? `Fix error or retry: ${action}` : action;
+}
+
+async function readPlanningSession(projectId) {
+  const response = await desktopApi.readPlanningSession({ projectId });
+  if (!response || response.ok === false) {
+    throw new Error(response && response.error ? response.error : "Could not read planning session.");
+  }
+  drawerState.currentPlanningSession = response.session;
+  if (response.state) latestVaultState = response.state;
+  return response.session;
+}
+
+async function writePlanningSession(projectId, sessionPatch) {
+  const response = await desktopApi.writePlanningSession({ projectId, sessionPatch });
+  if (!response || response.ok === false) {
+    throw new Error(response && response.error ? response.error : "Could not write planning session.");
+  }
+  drawerState.currentPlanningSession = response.session;
+  if (response.state) renderVaultState(response.state);
+  return response.session;
+}
+
+async function appendToErrorLog(projectId, error, requestId = null, context = "") {
+  const session = await readPlanningSession(projectId);
+  const entry = {
+    timestamp: new Date().toISOString(),
+    error: error && error.message ? error.message : String(error || "Unknown error"),
+    context: context || session.activeContext || "",
+    requestId
+  };
+  return writePlanningSession(projectId, {
+    lastError: entry.error,
+    errorLog: [...(Array.isArray(session.errorLog) ? session.errorLog : []), entry].slice(-100)
+  });
+}
+
+async function clearBusyState(projectId) {
+  return writePlanningSession(projectId, {
+    activeRequestId: "",
+    activeContext: "",
+    busyState: false
+  });
+}
+
+function getCurrentProjectOrThrow() {
+  const project = getSelectedProject();
+  if (!project) throw new Error("Select and save a project first.");
+  return project;
+}
+
+function getCurrentPack(project) {
+  return (latestVaultState.promptPacks || []).find((item) => item.id === project.activePromptPackId)
+    || (latestVaultState.promptPacks || []).find((item) => item.projectId === project.id)
+    || null;
+}
+
+async function snapshotManualMasterPlanDraftIfNeeded(project, session) {
+  const currentText = String(elements.currentText ? elements.currentText.value : "").trim();
+  const activeDraft = getMasterDraftVersion(project, session);
+  const activeText = String(activeDraft && (activeDraft.responseText || activeDraft.content) || "").trim();
+  if (!currentText || currentText === activeText) return { session, draft: activeDraft, content: activeText };
+  const response = await desktopApi.addMasterPlanVersion({
+    projectId: project.id,
+    source: "manual_edit",
+    promptSnapshot: activeText,
+    responseText: currentText
+  });
+  if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not snapshot manual master plan edit.");
+  renderVaultState(response.state);
+  const updatedSession = await writePlanningSession(project.id, {
+    masterPlanDraftVersionId: response.version.id,
+    phase: "master_draft"
+  });
+  return { session: updatedSession, draft: response.version, content: currentText };
+}
+
+async function snapshotManualRoadmapDraftIfNeeded(project, pack, session) {
+  const currentText = String(elements.currentText ? elements.currentText.value : "").trim();
+  const activeDraft = getRoadmapDraftVersion(pack, session);
+  const activeText = String(activeDraft && activeDraft.responseText || "").trim();
+  if (!currentText || currentText === activeText) return { session, draft: activeDraft, content: activeText };
+  projectBuilderProtocol.parseRoadmapResponse(currentText);
+  const response = await desktopApi.addRoadmapVersion({
+    packId: pack.id,
+    source: "manual_edit",
+    promptSnapshot: activeText,
+    responseText: currentText
+  });
+  if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not snapshot manual roadmap edit.");
+  renderVaultState(response.state);
+  const updatedSession = await writePlanningSession(project.id, {
+    roadmapDraftVersionId: response.version.id,
+    phase: "roadmap_draft"
+  });
+  return { session: updatedSession, draft: response.version, content: currentText };
+}
+
+async function sendPlanningRequest({ project, activeContext, targetProvider, text, stageLabel, role }) {
+  const requestId = crypto.randomUUID();
+  const session = await writePlanningSession(project.id, {
+    activeRequestId: requestId,
+    activeContext,
+    busyState: true,
+    lastError: "",
+    lastProvider: providerLabel(targetProvider)
+  });
+  const payload = {
+    requestId,
+    projectId: project.id,
+    activeContext,
+    targetProvider,
+    currentStageId: activeContext,
+    currentStageLabel: stageLabel || activeContext,
+    currentRole: role || "planner",
+    text
+  };
+  const response = await desktopApi.sendWorkflow(payload);
+  if (!response || response.ok === false) {
+    await clearBusyState(project.id);
+    throw new Error(response && response.error ? response.error : "Could not send workflow request.");
+  }
+  setStatus(`Sent ${stageLabel || activeContext} to ${providerLabel(targetProvider)}.`, "busy");
+  return { requestId, session };
 }
 
 function getSelectedPlanProjectAndPack() {
@@ -1091,6 +1298,57 @@ function getStatusOption(status) {
   return "in_progress";
 }
 
+function renderPlanningStatus() {
+  const project = getSelectedProject();
+  const session = getPlanningSession(project && project.id);
+  const pack = project ? getCurrentPack(project) : null;
+  const masterDraftNumber = project && session.masterPlanDraftVersionId
+    ? getVersionNumber(project.masterPlanVersions, session.masterPlanDraftVersionId)
+    : 0;
+  const roadmapDraftNumber = pack && session.roadmapDraftVersionId
+    ? getVersionNumber(pack.roadmapVersions, session.roadmapDraftVersionId)
+    : 0;
+  if (elements.planningPhase) elements.planningPhase.textContent = session.phase || "idea";
+  if (elements.planningLastProvider) elements.planningLastProvider.textContent = session.lastProvider || "none";
+  if (elements.planningMasterDraftStatus) elements.planningMasterDraftStatus.textContent = session.masterPlanSaved ? "saved" : masterDraftNumber ? `draft_v${masterDraftNumber}` : "none";
+  if (elements.planningRoadmapDraftStatus) elements.planningRoadmapDraftStatus.textContent = session.roadmapSaved ? "saved" : roadmapDraftNumber ? `draft_v${roadmapDraftNumber}` : "none";
+  if (elements.planningDebateRound) elements.planningDebateRound.textContent = String(session.debateRound || 0);
+  if (elements.planningNextAction) elements.planningNextAction.textContent = getNextRecommendedAction(session, project);
+  if (elements.planningLastError) elements.planningLastError.textContent = session.lastError || "none";
+  if (elements.planningErrorLog) {
+    const sessionErrors = (Array.isArray(session.errorLog) ? session.errorLog : []).slice(-5).map((entry) => (
+      `<div>${escapeHtml(entry.context || "planning")}: ${escapeHtml(entry.error || "")}</div>`
+    ));
+    const taskFailures = drawerState.lastCreateAllResult && Array.isArray(drawerState.lastCreateAllResult.failed)
+      ? drawerState.lastCreateAllResult.failed.map((item) => `<div>${escapeHtml(item.roadmapItemId)}: ${escapeHtml(item.error)} <button class="secondary-btn compact-btn" type="button" data-action="retry-task-item" data-roadmap-item-id="${escapeHtml(item.roadmapItemId)}">Retry</button></div>`)
+      : [];
+    elements.planningErrorLog.innerHTML = [...sessionErrors, ...taskFailures].join("") || "";
+  }
+  const busy = Boolean(session.busyState);
+  const controls = [
+    elements.generateMasterPlanButton,
+    elements.improveMasterPlanClaudeButton,
+    elements.reviseMasterPlanGptButton,
+    elements.saveMasterPlanCreateRoadmapButton,
+    elements.retryCreateRoadmapButton,
+    elements.improveRoadmapClaudeButton,
+    elements.saveRoadmapButton,
+    elements.createNextTaskButton,
+    elements.createAllTasksButton
+  ].filter(Boolean);
+  controls.forEach((button) => { button.disabled = busy; });
+  if (elements.cancelPlanningButton) {
+    elements.cancelPlanningButton.style.display = busy ? "inline-flex" : "none";
+    elements.cancelPlanningButton.disabled = !busy;
+  }
+  if (elements.retryCreateRoadmapButton) {
+    elements.retryCreateRoadmapButton.style.display = session.masterPlanSaved && !session.roadmapSaved && !session.roadmapDraftVersionId ? "inline-flex" : "none";
+  }
+  if (elements.createAllTasksButton) {
+    elements.createAllTasksButton.textContent = drawerState.lastCreateAllResult && drawerState.lastCreateAllResult.failedCount > 0 ? "Retry Failed Tasks" : "Create All Tasks";
+  }
+}
+
 function renderWorkspace() {
   const selected = getSelectedChunk();
   const hasSelection = Boolean(selected);
@@ -1120,6 +1378,7 @@ function renderWorkspace() {
   });
 
   if (!selected) {
+    renderPlanningStatus();
     return;
   }
 
@@ -1128,6 +1387,7 @@ function renderWorkspace() {
   if (elements.workspaceTaskName) elements.workspaceTaskName.value = String((taskPrompt && taskPrompt.title) || chunk.title || "");
   if (elements.workspaceTaskContent) elements.workspaceTaskContent.value = String((taskPrompt && taskPrompt.content) || chunk.prompt || "");
   if (elements.workspaceTaskStatus) elements.workspaceTaskStatus.value = getStatusOption((taskPrompt && taskPrompt.status) || chunk.status);
+  renderPlanningStatus();
 }
 
 function renderInspector() {
@@ -1459,6 +1719,92 @@ function saveFinalText() {
 }
 
 async function renderResponse(text) {
+  if (text && typeof text === "object" && Object.prototype.hasOwnProperty.call(text, "requestId")) {
+    const response = text;
+    const projectId = String(response.projectId || drawerState.selectedProjectId || "");
+    const session = await readPlanningSession(projectId);
+    if ((session.cancelledRequestIds || []).includes(response.requestId)) {
+      await appendToErrorLog(projectId, new Error(`Ignored cancelled late response ${response.requestId}.`), response.requestId, response.activeContext);
+      return;
+    }
+    if (response.requestId !== session.activeRequestId) {
+      await appendToErrorLog(projectId, new Error(`Ignored stale response ${response.requestId || "(missing requestId)"}.`), response.requestId, response.activeContext);
+      return;
+    }
+    if (response.error) throw new Error(response.error);
+    const responseText = String(response.text || "").trim();
+    if (!responseText) throw new Error("AI response was empty.");
+    const project = (latestVaultState.projects || []).find((item) => item.id === projectId);
+    if (!project) throw new Error("Project not found for AI response.");
+    const pack = getCurrentPack(project);
+    if (response.activeContext === "master_generate" || response.activeContext === "master_gpt_revision") {
+      const versionResponse = await desktopApi.addMasterPlanVersion({
+        projectId,
+        source: response.activeContext,
+        promptSnapshot: drawerState.lastImprovePrompt,
+        responseText
+      });
+      if (!versionResponse || versionResponse.ok === false) throw new Error(versionResponse && versionResponse.error ? versionResponse.error : "Could not save master plan draft.");
+      if (elements.currentText) elements.currentText.value = responseText;
+      renderVaultState(versionResponse.state);
+      await writePlanningSession(projectId, {
+        phase: "master_draft",
+        masterPlanDraftVersionId: versionResponse.version.id,
+        debateRound: Number(session.debateRound || 0) + (response.activeContext === "master_gpt_revision" ? 1 : 0)
+      });
+      updateWordCount();
+      setStatus("Master plan draft saved.", "success");
+      return;
+    }
+    if (response.activeContext === "master_claude_improve") {
+      const workflowResponse = await desktopApi.createDebateWorkflow({ projectId });
+      const workflowId = workflowResponse && workflowResponse.workflow ? workflowResponse.workflow.id : "";
+      const roundResponse = workflowId ? await desktopApi.saveDebateRound({
+        workflowId,
+        stageId: "master_claude_improve",
+        provider: "claude",
+        role: "critic",
+        promptText: drawerState.lastImprovePrompt,
+        responseText
+      }) : null;
+      if (elements.currentText) elements.currentText.value = responseText;
+      if (roundResponse && roundResponse.state) renderVaultState(roundResponse.state);
+      await writePlanningSession(projectId, {
+        phase: "master_draft",
+        latestClaudeRoundId: roundResponse && roundResponse.round ? roundResponse.round.id : "",
+        debateRound: Number(session.debateRound || 0) + 1
+      });
+      updateWordCount();
+      setStatus("Claude improvement round saved.", "success");
+      return;
+    }
+    if (response.activeContext === "roadmap_generate" || response.activeContext === "roadmap_claude_improve") {
+      const roadmap = projectBuilderProtocol.parseRoadmapResponse(responseText);
+      projectBuilderProtocol.validateRoadmap(roadmap);
+      if (!pack) throw new Error("Active project pack not found.");
+      const versionResponse = await desktopApi.addRoadmapVersion({
+        packId: pack.id,
+        source: response.activeContext,
+        promptSnapshot: drawerState.lastImprovePrompt,
+        responseText: JSON.stringify(roadmap, null, 2)
+      });
+      if (!versionResponse || versionResponse.ok === false) throw new Error(versionResponse && versionResponse.error ? versionResponse.error : "Could not save roadmap draft.");
+      if (elements.currentText) elements.currentText.value = JSON.stringify(roadmap, null, 2);
+      renderVaultState(versionResponse.state);
+      await writePlanningSession(projectId, {
+        phase: "roadmap_draft",
+        roadmapDraftVersionId: versionResponse.version.id
+      });
+      updateWordCount();
+      setStatus("Roadmap draft saved.", "success");
+      return;
+    }
+    if (response.activeContext === "task_improve") {
+      // Keep legacy task improve behavior below for selected task prompt responses.
+    } else {
+      throw new Error(`Unknown planning response context: ${response.activeContext}`);
+    }
+  }
   if (drawerState.activeWorkflowContext === "master_plan") {
     const normalizedText = String(text || "").trim();
     if (normalizedText) {
@@ -1518,7 +1864,7 @@ async function renderResponse(text) {
     drawerState.lastImprovePrompt = "";
     renderVaultState(versionResponse.state);
     setBusy(false);
-    setStatus("Roadmap draft saved. Use Apply Roadmap to make it active.", "success");
+    setStatus("Roadmap draft saved. Use Save Roadmap when ready.", "success");
     return;
   }
 
@@ -1599,7 +1945,7 @@ async function renderResponse(text) {
   renderDebateState();
   renderWorkflowStatus();
   if (createdMasterPlanFromDebate) {
-    setStatus("Master plan draft ready. Click Apply Master Plan to persist it.", "success");
+    setStatus("Master plan draft ready. Use Save Master Plan & Create Task Roadmap when ready.", "success");
   } else {
     setStatus("AI response received. Review it, then send the next gated step or generate Codex tasks.", "success");
   }
@@ -1697,8 +2043,9 @@ function applyProject(projectId) {
   renderInspector();
   updateWordCount();
   updatePlanPrimaryAction();
-  ensureProjectDebateWorkflow(project.id)
+  readPlanningSession(project.id)
     .then(() => {
+      renderPlanningStatus();
       renderDebateState();
     })
     .catch((error) => setStatus(error.message, "error"));
@@ -1724,6 +2071,7 @@ function renderVaultState(state) {
   renderProjectBrowserTree();
   renderWorkspace();
   renderInspector();
+  renderPlanningStatus();
   updateMasterPlanActionLabel();
   setVaultBusy(false);
 
@@ -2352,31 +2700,218 @@ async function saveWorkspaceTask() {
   setStatus("Task content saved.", "success");
 }
 
-async function improveMasterPlan() {
-  const idea = elements.projectIdea ? elements.projectIdea.value : "";
-  const currentPlan = elements.currentText ? elements.currentText.value : "";
-  if (!String(idea || "").trim() && isEmptyMasterPlanText(currentPlan)) {
-    setStatus("Add a project idea first, then click Improve Master Plan.", "error");
-    return;
-  }
-
+async function ensureProjectSavedForPlanning() {
   const saved = await desktopApi.saveProjectBrief({
     projectId: drawerState.selectedProjectId,
     projectName: elements.projectName.value,
     projectPath: elements.projectPath.value,
-    idea,
-    masterPlan: currentPlan
+    idea: elements.projectIdea ? elements.projectIdea.value : "",
+    masterPlan: ""
   });
-  if (!saved || saved.ok === false) {
-    throw new Error(saved && saved.error ? saved.error : "Could not save project before improving master plan.");
-  }
+  if (!saved || saved.ok === false) throw new Error(saved && saved.error ? saved.error : "Could not save project.");
   drawerState.selectedProjectId = saved.project.id;
   renderVaultState(saved.state);
   if (elements.projectSelect) elements.projectSelect.value = saved.project.id;
+  await readPlanningSession(saved.project.id);
+  return saved.project;
+}
 
-  drawerState.activeWorkflowContext = "debate_plan";
-  setStatus("Sending current planning stage. Use Continue current debate for each next stage.", "busy");
-  await triggerWorkflowStep();
+async function sendGenerateMasterPlan() {
+  const project = await ensureProjectSavedForPlanning();
+  const prompt = projectBuilderProtocol.buildMasterPlanGeneratePrompt({
+    ...project,
+    idea: elements.projectIdea ? elements.projectIdea.value : project.idea
+  }, { chatgptPrefix: elements.chatgptPrefix ? elements.chatgptPrefix.value : "" });
+  drawerState.lastImprovePrompt = prompt;
+  await sendPlanningRequest({
+    project,
+    activeContext: "master_generate",
+    targetProvider: "chatgpt",
+    text: prompt,
+    stageLabel: "Generate Master Plan",
+    role: "planner"
+  });
+}
+
+async function sendClaudeMasterPlanImprove() {
+  const project = getCurrentProjectOrThrow();
+  let session = await readPlanningSession(project.id);
+  const snap = await snapshotManualMasterPlanDraftIfNeeded(project, session);
+  session = snap.session;
+  const currentDraft = snap.content || String(elements.currentText ? elements.currentText.value : "");
+  const prompt = projectBuilderProtocol.buildMasterPlanClaudeImprovePrompt(project, currentDraft, elements.planningNotes ? elements.planningNotes.value : "");
+  drawerState.lastImprovePrompt = prompt;
+  await sendPlanningRequest({
+    project,
+    activeContext: "master_claude_improve",
+    targetProvider: "claude",
+    text: prompt,
+    stageLabel: "Improve with Claude",
+    role: "critic"
+  });
+}
+
+function getDebateRoundResponseById(roundId) {
+  const id = String(roundId || "");
+  if (!id) return null;
+  for (const workflow of Array.isArray(latestVaultState.debateWorkflows) ? latestVaultState.debateWorkflows : []) {
+    const round = (workflow.rounds || []).find((entry) => entry.id === id);
+    if (round && String(round.responseText || "").trim()) return String(round.responseText || "");
+  }
+  if (elements.planningErrorLog) {
+    elements.planningErrorLog.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-action='retry-task-item']");
+      if (!button) return;
+      const project = getSelectedProject();
+      const roadmapItemId = button.getAttribute("data-roadmap-item-id");
+      if (!project || !roadmapItemId) return;
+      desktopApi.createTaskPromptForItem({ projectId: project.id, roadmapItemId })
+        .then((response) => {
+          if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Retry failed.");
+          drawerState.lastCreateAllResult = null;
+          renderVaultState(response.state);
+          setStatus("Task retry succeeded.", "success");
+        })
+        .catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  return null;
+}
+
+async function sendGptMasterPlanRevision() {
+  const project = getCurrentProjectOrThrow();
+  let session = await readPlanningSession(project.id);
+  const snap = await snapshotManualMasterPlanDraftIfNeeded(project, session);
+  session = snap.session;
+  const claudeResponse = getDebateRoundResponseById(session.latestClaudeRoundId);
+  const prompt = projectBuilderProtocol.buildMasterPlanGptRevisionPrompt(
+    project,
+    snap.content || String(elements.currentText ? elements.currentText.value : ""),
+    claudeResponse,
+    elements.planningNotes ? elements.planningNotes.value : ""
+  );
+  drawerState.lastImprovePrompt = prompt;
+  await sendPlanningRequest({
+    project,
+    activeContext: "master_gpt_revision",
+    targetProvider: "chatgpt",
+    text: prompt,
+    stageLabel: "Revise with GPT",
+    role: "planner"
+  });
+}
+
+async function saveMasterPlanAndCreateRoadmap() {
+  const project = getCurrentProjectOrThrow();
+  let session = await readPlanningSession(project.id);
+  const snap = await snapshotManualMasterPlanDraftIfNeeded(project, session);
+  session = snap.session;
+  const draftId = session.masterPlanDraftVersionId || (snap.draft && snap.draft.id);
+  if (!draftId) throw new Error("No master plan draft is ready to save.");
+  const applied = await desktopApi.applyMasterPlanVersion({ projectId: project.id, versionId: draftId });
+  if (!applied || applied.ok === false) throw new Error(applied && applied.error ? applied.error : "Could not save master plan.");
+  renderVaultState(applied.state);
+  await writePlanningSession(project.id, { masterPlanSaved: true, phase: "master_draft", cancelledRequestIds: [] });
+  const prompt = projectBuilderProtocol.buildRoadmapGeneratePrompt(applied.project, applied.project.masterPlan);
+  drawerState.lastImprovePrompt = prompt;
+  try {
+    await sendPlanningRequest({
+      project: applied.project,
+      activeContext: "roadmap_generate",
+      targetProvider: "chatgpt",
+      text: prompt,
+      stageLabel: "Create Task Roadmap",
+      role: "planner"
+    });
+  } catch (error) {
+    await writePlanningSession(project.id, { masterPlanSaved: true, roadmapSaved: false, roadmapDraftVersionId: "" });
+    throw error;
+  }
+}
+
+async function retryCreateRoadmap() {
+  const project = getCurrentProjectOrThrow();
+  const prep = await desktopApi.prepareRoadmapGeneration({ projectId: project.id });
+  if (!prep || prep.ok === false) throw new Error(prep && prep.error ? prep.error : "Applied master plan is required before retrying roadmap.");
+  const prompt = projectBuilderProtocol.buildRoadmapGeneratePrompt(prep.project, prep.activeMasterPlan);
+  drawerState.lastImprovePrompt = prompt;
+  await sendPlanningRequest({
+    project: prep.project,
+    activeContext: "roadmap_generate",
+    targetProvider: "chatgpt",
+    text: prompt,
+    stageLabel: "Retry Create Roadmap",
+    role: "planner"
+  });
+}
+
+async function sendClaudeRoadmapImprove() {
+  const project = getCurrentProjectOrThrow();
+  const pack = getCurrentPack(project);
+  if (!pack) throw new Error("Active roadmap pack not found.");
+  let session = await readPlanningSession(project.id);
+  const snap = await snapshotManualRoadmapDraftIfNeeded(project, pack, session);
+  const prompt = projectBuilderProtocol.buildRoadmapClaudeImprovePrompt(project, project.masterPlan, snap.content, elements.planningNotes ? elements.planningNotes.value : "");
+  drawerState.lastImprovePrompt = prompt;
+  await sendPlanningRequest({
+    project,
+    activeContext: "roadmap_claude_improve",
+    targetProvider: "claude",
+    text: prompt,
+    stageLabel: "Improve Roadmap with Claude",
+    role: "critic"
+  });
+}
+
+async function saveRoadmap() {
+  const project = getCurrentProjectOrThrow();
+  const pack = getCurrentPack(project);
+  if (!pack) throw new Error("Active roadmap pack not found.");
+  let session = await readPlanningSession(project.id);
+  const snap = await snapshotManualRoadmapDraftIfNeeded(project, pack, session);
+  session = snap.session;
+  const versionId = session.roadmapDraftVersionId || (snap.draft && snap.draft.id);
+  if (!versionId) throw new Error("No valid roadmap draft is ready to save.");
+  const applied = await desktopApi.applyRoadmapVersion({ packId: pack.id, versionId });
+  if (!applied || applied.ok === false) throw new Error(applied && applied.error ? applied.error : "Could not save roadmap.");
+  renderVaultState(applied.state);
+  await writePlanningSession(project.id, { roadmapSaved: true, phase: "tasks", cancelledRequestIds: [] });
+  setStatus("Roadmap saved. Task creation is ready.", "success");
+}
+
+async function createNextTask() {
+  return startNextTask();
+}
+
+async function createAllTasks() {
+  const project = getCurrentProjectOrThrow();
+  const response = await desktopApi.createAllTaskPromptsFromRoadmap({ projectId: project.id, force: false });
+  if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not create all task prompts.");
+  drawerState.lastCreateAllResult = response;
+  renderVaultState(response.state);
+  if (response.failedCount > 0) {
+    await appendToErrorLog(project.id, new Error(response.errors.join("; ") || "Some task prompts failed."), null, "create_all_tasks");
+    setStatus("Some task prompts failed. Retry failed tasks after reviewing the error log.", "error");
+  } else {
+    setStatus(`Created ${response.createdCount} tasks; skipped ${response.skippedCount} complete tasks.`, "success");
+  }
+}
+
+async function cancelActivePlanningRequest() {
+  const project = getCurrentProjectOrThrow();
+  const session = await readPlanningSession(project.id);
+  const activeRequestId = String(session.activeRequestId || "");
+  if (!activeRequestId) return;
+  await writePlanningSession(project.id, {
+    cancelledRequestIds: [...(session.cancelledRequestIds || []), activeRequestId].slice(-20),
+    activeRequestId: "",
+    busyState: false
+  });
+  setStatus("Request cancelled. Late response will be ignored.", "neutral");
+}
+
+async function improveMasterPlan() {
+  return sendGenerateMasterPlan();
 }
 
 async function createTaskRoadmap() {
@@ -2525,8 +3060,12 @@ async function runPlanPrimaryAction() {
     return;
   }
 
-  if (action.handler === "improveMasterPlan") {
-    await improveMasterPlan();
+  if (action.handler === "sendGenerateMasterPlan") {
+    await sendGenerateMasterPlan();
+  } else if (action.handler === "saveMasterPlanAndCreateRoadmap") {
+    await saveMasterPlanAndCreateRoadmap();
+  } else if (action.handler === "saveRoadmap") {
+    await saveRoadmap();
   } else if (action.handler === "saveProjectBrief") {
     await saveProjectBriefFromWorkspace();
   } else if (action.handler === "applyMasterPlanDraft") {
@@ -2805,6 +3344,25 @@ function installDomReferences() {
   elements.workspacePromptRunNote = byId("workspacePromptRunNote");
   elements.saveProjectBriefButton = byId("saveProjectBriefBtn");
   elements.planPrimaryActionButton = byId("planPrimaryActionBtn");
+  elements.planningNotes = byId("planningNotes");
+  elements.generateMasterPlanButton = byId("generateMasterPlanBtn");
+  elements.improveMasterPlanClaudeButton = byId("improveMasterPlanClaudeBtn");
+  elements.reviseMasterPlanGptButton = byId("reviseMasterPlanGptBtn");
+  elements.saveMasterPlanCreateRoadmapButton = byId("saveMasterPlanCreateRoadmapBtn");
+  elements.retryCreateRoadmapButton = byId("retryCreateRoadmapBtn");
+  elements.improveRoadmapClaudeButton = byId("improveRoadmapClaudeBtn");
+  elements.saveRoadmapButton = byId("saveRoadmapBtn");
+  elements.createNextTaskButton = byId("createNextTaskBtn");
+  elements.createAllTasksButton = byId("createAllTasksBtn");
+  elements.cancelPlanningButton = byId("cancelPlanningBtn");
+  elements.planningPhase = byId("planningPhase");
+  elements.planningLastProvider = byId("planningLastProvider");
+  elements.planningMasterDraftStatus = byId("planningMasterDraftStatus");
+  elements.planningRoadmapDraftStatus = byId("planningRoadmapDraftStatus");
+  elements.planningDebateRound = byId("planningDebateRound");
+  elements.planningNextAction = byId("planningNextAction");
+  elements.planningLastError = byId("planningLastError");
+  elements.planningErrorLog = byId("planningErrorLog");
   elements.approvePromptButton = byId("approvePromptBtn");
   elements.markPromptDoneButton = byId("markPromptDoneBtn");
   elements.copyCodexHandoffButton = byId("copyCodexHandoffBtn");
@@ -2864,6 +3422,37 @@ function installEventListeners() {
       runPlanPrimaryAction().catch((error) => setStatus(error.message, "error"));
     });
   }
+  const planningHandlers = [
+    [elements.generateMasterPlanButton, sendGenerateMasterPlan],
+    [elements.improveMasterPlanClaudeButton, sendClaudeMasterPlanImprove],
+    [elements.reviseMasterPlanGptButton, sendGptMasterPlanRevision],
+    [elements.saveMasterPlanCreateRoadmapButton, saveMasterPlanAndCreateRoadmap],
+    [elements.retryCreateRoadmapButton, retryCreateRoadmap],
+    [elements.improveRoadmapClaudeButton, sendClaudeRoadmapImprove],
+    [elements.saveRoadmapButton, saveRoadmap],
+    [elements.createNextTaskButton, createNextTask],
+    [elements.createAllTasksButton, createAllTasks],
+    [elements.cancelPlanningButton, cancelActivePlanningRequest]
+  ];
+  planningHandlers.forEach(([button, handler]) => {
+    if (button) {
+      button.addEventListener("click", () => {
+        handler().catch(async (error) => {
+          const project = getSelectedProject();
+          if (project) {
+            try {
+              await appendToErrorLog(project.id, error);
+              await clearBusyState(project.id);
+            } catch (_logError) {
+              // Best effort UI recovery.
+            }
+          }
+          setStatus(error.message, "error");
+          renderPlanningStatus();
+        });
+      });
+    }
+  });
   elements.generatePackButton.addEventListener("click", generatePromptPack);
   elements.refreshVaultButton.addEventListener("click", () => {
     refreshVaultState().catch((error) => setStatus(error.message, "error"));
@@ -3005,12 +3594,24 @@ function installEventListeners() {
     });
   }
 
-  desktopApi.onResponse((text) => {
-    renderResponse(text).catch((error) => {
+  desktopApi.onResponse((response) => {
+    const projectId = response && typeof response === "object" ? response.projectId : drawerState.selectedProjectId;
+    renderResponse(response).catch(async (error) => {
       drawerState.activeWorkflowContext = "debate_plan";
       drawerState.activeRoadmapPackId = "";
+      if (projectId) {
+        await appendToErrorLog(projectId, error, response && response.requestId ? response.requestId : null).catch(() => {});
+      }
       setBusy(false);
       setStatus(error.message || "Could not process AI response.", "error");
+    }).finally(async () => {
+      if (projectId) {
+        const session = await readPlanningSession(projectId).catch(() => null);
+        if (session && response && response.requestId && session.activeRequestId === response.requestId) {
+          await clearBusyState(projectId).catch(() => {});
+        }
+      }
+      renderPlanningStatus();
     });
   });
 
@@ -3057,6 +3658,19 @@ if (typeof module !== "undefined") {
     getNextEligibleRoadmapItem,
     getPrimaryActionState,
     getPlanPrimaryAction,
+    getNextRecommendedAction,
+    sendGenerateMasterPlan,
+    sendClaudeMasterPlanImprove,
+    sendGptMasterPlanRevision,
+    saveMasterPlanAndCreateRoadmap,
+    retryCreateRoadmap,
+    sendClaudeRoadmapImprove,
+    saveRoadmap,
+    createNextTask,
+    createAllTasks,
+    cancelActivePlanningRequest,
+    snapshotManualMasterPlanDraftIfNeeded,
+    snapshotManualRoadmapDraftIfNeeded,
     getMasterPlanActionLabel,
     renderProjectPlanHtml,
     getRoundPreview,

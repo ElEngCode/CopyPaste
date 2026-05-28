@@ -34,15 +34,16 @@ npm.cmd run verify
 
 ## Workflow
 
-`New Project -> Master Plan -> Roadmap -> Task -> Codex`
+`Project Idea -> Master Plan Draft -> Task Roadmap Draft -> Tasks -> Codex`
 
 Operational flow:
 1. Create/select project.
-2. Save project idea and build/apply master plan.
-3. Build/apply roadmap.
-4. Start one eligible task.
-5. Improve/approve/copy Codex handoff.
-6. Mark task done to unblock dependencies.
+2. Write the project idea, then click **Generate Master Plan**.
+3. Optionally click **Improve with Claude** and **Revise with GPT** as manual debate rounds.
+4. Click **Save Master Plan & Create Task Roadmap**.
+5. Optionally click **Improve Roadmap with Claude**, then click **Save Roadmap**.
+6. Use **Create Next Task** for dependency-gated task creation or **Create All Tasks** for local idempotent bulk task files.
+7. Improve/approve/copy Codex handoff, then mark tasks done to unblock dependency-gated next-task work.
 
 ## Where project files are saved
 

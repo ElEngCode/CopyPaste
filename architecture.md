@@ -537,3 +537,15 @@ The product model stays the same: Electron owns the user-facing AI Project Build
 - Chrome is launched by absolute executable path only. The desktop app checks standard Windows install locations and environment-derived locations, and no longer falls back to spawning bare `chrome.exe`.
 - Status messages are now made visible by the renderer whenever `setStatus()` is called.
 - The active BrowserWindow explicitly uses `sandbox: false` because `apps/desktop/preload.js` requires `../../packages/protocol`; `contextIsolation` remains enabled and renderer Node integration remains disabled.
+
+## 2026-05-28 Explicit Planning Workflow Repair
+
+- The default Plan UI is now artifact-driven and human-gated: `Generate Master Plan`, `Improve with Claude`, `Revise with GPT`, `Save Master Plan & Create Task Roadmap`, `Improve Roadmap with Claude`, `Save Roadmap`, `Create Next Task`, `Create All Tasks`, and `Cancel` are explicit user clicks.
+- `Apply Master Plan` and `Apply Roadmap` are no longer part of the main user-facing Plan workflow. Applying versions remains an internal save operation inside `saveMasterPlanAndCreateRoadmap()` and `saveRoadmap()`.
+- Prompt Vault DB is the planning session source of truth. `database.planningSessions[projectId]` stores phase, active request/context, per-project busy state, cancellation ids, draft ids, saved flags, debate round count, last provider, and capped error history. `migrateDb(db)` runs through database sanitize/read/write paths and initializes sessions for existing projects.
+- Every AI send now carries `{ requestId, projectId, activeContext, targetProvider, currentStageId, currentStageLabel, currentRole, text }`. The extension echoes request metadata back to Electron, and the renderer ignores stale or cancelled responses before saving drafts or advancing UI state.
+- Master plan generation uses `buildMasterPlanGeneratePrompt()` and targets ChatGPT directly. It does not call `triggerWorkflowStep()` and cannot enter the old `gpt_clarifier` staged debate.
+- Claude/GPT master plan improvement is manual and loopable. Claude rounds are stored as Prompt Vault debate rounds, and GPT revision reads the latest Claude response from DB by `session.latestClaudeRoundId`.
+- Roadmap generation/improvement saves only valid draft versions. `parseRoadmapResponse()` parses, while `validateRoadmap()` performs strict validation for non-empty items, ids, titles, clean positive orders, duplicate ids/orders, missing dependencies, and cycles.
+- `Create All Tasks` is a local-only Prompt Vault operation exposed as `vault:createAllTasks`; it does not use the AI send pipeline. It is idempotent by `projectId + roadmapItemId`, preserves roadmap order, recreates missing/empty/corrupt files, and reports structured created/skipped/failed results.
+- Legacy seven-stage debate is gated by the main-process `ENABLE_LEGACY_DEBATE=true` feature flag and hidden by default. The renderer reads feature flags through preload rather than `process.env`.

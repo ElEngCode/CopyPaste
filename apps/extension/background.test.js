@@ -119,7 +119,11 @@ test("runManualStep sends a ChatGPT step, reads output, and toggles to Claude", 
 
   assert.deepEqual(result, {
     ok: true,
+    requestId: "",
+    projectId: "",
+    activeContext: "",
     target: "chatgpt",
+    provider: "chatgpt",
     nextTarget: "claude",
     text: "chatgpt answer"
   });
@@ -175,7 +179,11 @@ test("runManualStep uses the Claude prefix when persistent target is Claude", as
 
   assert.deepEqual(result, {
     ok: true,
+    requestId: "",
+    projectId: "",
+    activeContext: "",
     target: "claude",
+    provider: "claude",
     nextTarget: "chatgpt",
     text: "claude answer"
   });
@@ -215,7 +223,11 @@ test("runManualStep honors explicit targetProvider without modifying stored next
 
   assert.deepEqual(result, {
     ok: true,
+    requestId: "",
+    projectId: "",
+    activeContext: "",
     target: "chatgpt",
+    provider: "chatgpt",
     nextTarget: "claude",
     text: "gpt planner answer"
   });
@@ -237,6 +249,28 @@ test("runManualStep honors explicit targetProvider without modifying stored next
     },
     {}
   ]);
+});
+
+test("runManualStep echoes request correlation metadata", async () => {
+  const { chromeMock } = createChromeMock({
+    storedNextTarget: "chatgpt",
+    readText: "roadmap json"
+  });
+  const { runManualStep } = loadBackgroundWithChromeMock(chromeMock);
+
+  const result = await runManualStep({
+    requestId: "req_123",
+    projectId: "project_1",
+    activeContext: "roadmap_generate",
+    targetProvider: "chatgpt",
+    text: "Generate roadmap"
+  });
+
+  assert.equal(result.requestId, "req_123");
+  assert.equal(result.projectId, "project_1");
+  assert.equal(result.activeContext, "roadmap_generate");
+  assert.equal(result.provider, "chatgpt");
+  assert.equal(result.text, "roadmap json");
 });
 
 test("loadSessionToken reads the extension session token resource", async () => {

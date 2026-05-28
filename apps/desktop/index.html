@@ -104,6 +104,9 @@
     .progress-btn { border-color: #f0c98a; background: #fff7e8; color: #7a3f02; }
     .done-btn { border-color: #add9bd; background: #ecfdf3; color: #14532d; }
     .actions, .workflow-buttons { display: flex; flex-wrap: wrap; gap: 9px; }
+    .planning-status { margin-top: 12px; border: 1px solid var(--soft-line); border-radius: 7px; background: #fbfcfe; padding: 10px; display: grid; gap: 6px; }
+    .planning-status-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; }
+    .planning-error-log { display: grid; gap: 6px; color: var(--danger); font-size: 12px; }
 
     #projectBrowserTree { display: grid; gap: 6px; max-height: calc(100vh - 320px); overflow: auto; }
     .tree-project, .tree-pack, .tree-item {
@@ -311,11 +314,31 @@
               <div class="field"><label for="defaultProjectsFolder">Default projects folder</label><input id="defaultProjectsFolder" placeholder="Projects"></div>
               <div class="field settings-action"><label aria-hidden="true">&nbsp;</label><button id="saveVaultSettingsBtn" class="secondary-btn" type="button">Save Settings</button></div>
               <div class="field wide"><label for="projectIdea">Project idea</label><textarea id="projectIdea" rows="5" placeholder="Describe the project and the outcome you want."></textarea></div>
-              <div class="field wide"><label for="currentText">Master Plan</label><div class="idea-editor"><textarea id="currentText" placeholder="Shape the master plan before creating the task roadmap."></textarea><span id="wordCount" class="word-count">0 words</span></div></div>
+              <div class="field wide"><label for="currentText">Master Plan / Roadmap Draft</label><div class="idea-editor"><textarea id="currentText" placeholder="Shape the master plan before creating the task roadmap."></textarea><span id="wordCount" class="word-count">0 words</span></div></div>
+              <div class="field wide"><label for="planningNotes">Improvement notes (leave blank for default)</label><textarea id="planningNotes" rows="3" placeholder="Optional notes for Claude/GPT improvement."></textarea></div>
             </div>
             <div class="actions">
               <button id="saveProjectBriefBtn" class="secondary-btn" type="button">Save Draft</button>
-              <button id="planPrimaryActionBtn" type="button">Create Master Plan</button>
+              <button id="generateMasterPlanBtn" type="button">Generate Master Plan</button>
+              <button id="improveMasterPlanClaudeBtn" type="button">Improve with Claude</button>
+              <button id="reviseMasterPlanGptBtn" type="button">Revise with GPT</button>
+              <button id="saveMasterPlanCreateRoadmapBtn" type="button">Save Master Plan &amp; Create Task Roadmap</button>
+              <button id="retryCreateRoadmapBtn" type="button">Retry Create Roadmap</button>
+              <button id="improveRoadmapClaudeBtn" type="button">Improve Roadmap with Claude</button>
+              <button id="saveRoadmapBtn" type="button">Save Roadmap</button>
+              <button id="createNextTaskBtn" type="button">Create Next Task</button>
+              <button id="createAllTasksBtn" type="button">Create All Tasks</button>
+              <button id="cancelPlanningBtn" class="danger-btn" type="button" style="display:none;">Cancel</button>
+            </div>
+            <div id="planningStatusPanel" class="planning-status" aria-label="Planning Status">
+              <div class="planning-status-row"><strong>Phase</strong><span id="planningPhase">idea</span></div>
+              <div class="planning-status-row"><strong>Last provider</strong><span id="planningLastProvider">none</span></div>
+              <div class="planning-status-row"><strong>Master draft</strong><span id="planningMasterDraftStatus">none</span></div>
+              <div class="planning-status-row"><strong>Roadmap draft</strong><span id="planningRoadmapDraftStatus">none</span></div>
+              <div class="planning-status-row"><strong>Debate rounds</strong><span id="planningDebateRound">0</span></div>
+              <div class="planning-status-row"><strong>Next</strong><span id="planningNextAction">Save Project Idea</span></div>
+              <div class="planning-status-row"><strong>Last error</strong><span id="planningLastError">none</span></div>
+              <div id="planningErrorLog" class="planning-error-log"></div>
             </div>
             <div style="margin-top:12px;">
               <h3 style="margin-bottom:6px;">Project Plan</h3>

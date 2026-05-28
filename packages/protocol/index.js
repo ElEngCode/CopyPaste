@@ -519,6 +519,118 @@
     ].filter(Boolean).join("\n");
   }
 
+  function buildMasterPlanGeneratePrompt(project = {}, prefixes = {}) {
+    const projectName = asText(project.name) || "Untitled Project";
+    const projectPath = asText(project.path);
+    const projectIdea = asText(project.idea);
+    const prefix = asText(prefixes.chatgptPrefix || prefixes.prefix);
+    if (!projectIdea) throw new Error("Project idea is required.");
+    return [
+      prefix,
+      "Create a complete practical master plan for this project idea.",
+      "",
+      `Project name: ${projectName}`,
+      projectPath ? `Project path: ${projectPath}` : "",
+      "",
+      "Project idea:",
+      projectIdea,
+      "",
+      "Output requirements:",
+      "- Return the master plan only.",
+      "- Include scope, architecture, implementation phases, risks, test strategy, and acceptance criteria.",
+      "- Infer practical defaults when details are missing.",
+      "- Do not include commentary outside the plan."
+    ].filter(Boolean).join("\n");
+  }
+
+  function buildMasterPlanClaudeImprovePrompt(project = {}, currentDraft = "", userFeedback = "") {
+    const feedback = asText(userFeedback)
+      || "Review this master plan for structural gaps, missing edge cases, and underspecified components. Return a revised version with inline commentary on every change.";
+    const draft = asText(currentDraft);
+    if (!draft) throw new Error("Current master plan draft is required.");
+    return [
+      "Improve this master plan draft.",
+      "",
+      `Project name: ${asText(project.name) || "Untitled Project"}`,
+      asText(project.path) ? `Project path: ${asText(project.path)}` : "",
+      "",
+      "Original project idea:",
+      asText(project.idea) || "(No project idea provided.)",
+      "",
+      "Current master plan draft:",
+      draft,
+      "",
+      "User feedback or default review instruction:",
+      feedback,
+      "",
+      "Return a revised/improved master plan response. Do not ask the user for missing context unless it is essential."
+    ].filter(Boolean).join("\n");
+  }
+
+  function buildMasterPlanGptRevisionPrompt(project = {}, currentDraft = "", claudeResponseOrNull = null, userFeedback = "") {
+    const draft = asText(currentDraft);
+    if (!draft) throw new Error("Current master plan draft is required.");
+    const lines = [
+      "Revise this master plan draft into a complete updated master plan.",
+      "",
+      `Project name: ${asText(project.name) || "Untitled Project"}`,
+      asText(project.path) ? `Project path: ${asText(project.path)}` : "",
+      "",
+      "Original project idea:",
+      asText(project.idea) || "(No project idea provided.)",
+      "",
+      "Current master plan draft (primary context):",
+      draft,
+      ""
+    ];
+    const claudeText = asText(claudeResponseOrNull);
+    if (claudeText) {
+      lines.push("Claude critique / improvement response:");
+      lines.push(claudeText);
+      lines.push("");
+    }
+    const feedback = asText(userFeedback);
+    if (feedback) {
+      lines.push("User revision notes:");
+      lines.push(feedback);
+      lines.push("");
+    }
+    lines.push("Return the complete revised master plan only. Do not include commentary outside the plan.");
+    return lines.filter((line) => line !== "").join("\n");
+  }
+
+  function buildRoadmapGeneratePrompt(project = {}, appliedMasterPlan = "") {
+    return buildRoadmapPrompt(project, appliedMasterPlan).replace(
+      "{\"items\":[{\"id\":\"roadmap_1\",\"order\":1,\"title\":\"Task title\",\"goal\":\"Goal\",\"why\":\"Why this exists\",\"targetFiles\":[\"path\"],\"researchNeeded\":[],\"acceptanceCriteria\":[],\"verificationCommands\":[\"npm.cmd run verify\"],\"dependsOn\":[],\"parallelGroup\":\"\"}]}",
+      "{\"items\":[{\"id\":\"roadmap_1\",\"order\":1,\"title\":\"Task title\",\"goal\":\"Goal\",\"whyThisExists\":\"Why this exists\",\"targetFiles\":[\"path\"],\"researchNeeded\":[],\"acceptanceCriteria\":[],\"verificationCommands\":[\"npm.cmd run verify\"],\"dependsOn\":[],\"parallelGroup\":\"\"}]}"
+    );
+  }
+
+  function buildRoadmapClaudeImprovePrompt(project = {}, appliedMasterPlan = "", currentRoadmapDraft = "", userFeedback = "") {
+    const masterPlan = asText(appliedMasterPlan);
+    const roadmapDraft = asText(currentRoadmapDraft);
+    if (!masterPlan) throw new Error("Applied master plan is required.");
+    if (!roadmapDraft) throw new Error("Current roadmap draft is required.");
+    const feedback = asText(userFeedback)
+      || "Review this roadmap for missing dependencies, ambiguous scope, and incorrect ordering. Return corrected JSON only.";
+    return [
+      "Correct this task roadmap JSON.",
+      "",
+      `Project name: ${asText(project.name) || "Untitled Project"}`,
+      "",
+      "Applied master plan:",
+      masterPlan,
+      "",
+      "Current roadmap draft JSON:",
+      roadmapDraft,
+      "",
+      "Review instruction:",
+      feedback,
+      "",
+      "Return corrected JSON only. No markdown fences. No commentary."
+    ].join("\n");
+  }
+
   function buildTaskImprovePrompt(project = {}, taskPrompt = {}, activeMasterPlan = "", runHistory = []) {
     const projectName = asText(project.name) || "Untitled Project";
     const projectPath = asText(project.path) || "(project path not set)";
@@ -573,12 +685,32 @@
     };
   }
 
+  function normalizeRoadmapOrder(order, itemId) {
+    if (Number.isInteger(order) && order > 0) return order;
+    if (typeof order === "string" && /^[1-9][0-9]*$/.test(order.trim())) return Number(order.trim());
+    throw new Error(`Roadmap item ${itemId || "(missing id)"} has invalid order.`);
+  }
+
   function validateRoadmap(roadmap = {}) {
-    const normalized = normalizeRoadmap(roadmap);
-    const ids = new Set(normalized.items.map((item) => item.id));
+    const sourceItems = roadmap && Array.isArray(roadmap.items) ? roadmap.items : [];
+    if (!sourceItems.length) throw new Error("Roadmap must include a non-empty items array.");
+    const ids = new Set();
+    const orders = new Set();
+    for (const rawItem of sourceItems) {
+      const itemId = asText(rawItem && rawItem.id);
+      if (!itemId) throw new Error("Every roadmap item must have a non-empty id.");
+      if (ids.has(itemId)) throw new Error(`Roadmap has duplicate item id: ${itemId}.`);
+      ids.add(itemId);
+      const title = asText(rawItem && rawItem.title);
+      if (!title) throw new Error(`Roadmap item ${itemId} must have a non-empty title.`);
+      const normalizedOrder = normalizeRoadmapOrder(rawItem.order, itemId);
+      if (orders.has(normalizedOrder)) throw new Error(`Roadmap has duplicate order: ${normalizedOrder}.`);
+      orders.add(normalizedOrder);
+    }
+    const normalized = normalizeRoadmap({
+      items: sourceItems.map((item) => ({ ...item, order: normalizeRoadmapOrder(item.order, item.id) }))
+    });
     for (const item of normalized.items) {
-      if (!item.title) throw new Error(`Roadmap item ${item.id} must have a non-empty title.`);
-      if (!Number.isFinite(Number(item.order))) throw new Error(`Roadmap item ${item.id} must have numeric order.`);
       if (!Array.isArray(item.verificationCommands)) throw new Error(`Roadmap item ${item.id} must define verificationCommands array.`);
       for (const dependencyId of item.dependsOn) {
         if (dependencyId === item.id) throw new Error(`Roadmap item ${item.id} cannot depend on itself.`);
@@ -588,11 +720,15 @@
     const adjacency = new Map(normalized.items.map((item) => [item.id, item.dependsOn]));
     const visiting = new Set();
     const visited = new Set();
-    function dfs(nodeId) {
-      if (visiting.has(nodeId)) throw new Error(`Roadmap has circular dependency at ${nodeId}.`);
+    function dfs(nodeId, trail = []) {
+      if (visiting.has(nodeId)) {
+        const start = trail.indexOf(nodeId);
+        const cycle = (start >= 0 ? trail.slice(start).concat(nodeId) : trail.concat(nodeId)).join(" -> ");
+        throw new Error(`Roadmap has circular dependency: ${cycle}.`);
+      }
       if (visited.has(nodeId)) return;
       visiting.add(nodeId);
-      for (const dep of adjacency.get(nodeId) || []) dfs(dep);
+      for (const dep of adjacency.get(nodeId) || []) dfs(dep, trail.concat(nodeId));
       visiting.delete(nodeId);
       visited.add(nodeId);
     }
@@ -634,6 +770,11 @@
     createAiProjectBuilderWorkflow,
     createProjectBuilderDebate,
     buildPlanningDebatePrompt,
+    buildMasterPlanGeneratePrompt,
+    buildMasterPlanClaudeImprovePrompt,
+    buildMasterPlanGptRevisionPrompt,
+    buildRoadmapGeneratePrompt,
+    buildRoadmapClaudeImprovePrompt,
     buildRoadmapPrompt,
     buildTaskImprovePrompt,
     parseRoadmapResponse,

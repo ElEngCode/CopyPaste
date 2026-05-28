@@ -658,6 +658,21 @@ Normal Chrome installed-extension wake flow:
 - Updated regression coverage for the no-debug desktop flow, the setup/connect UI, duplicate socket prevention, fresh token reads, and wake-tab close behavior.
 - Verified focused checks: `node --check` for changed desktop/extension scripts, `npm.cmd run desktop:test`, and `npm.cmd --workspace @copypaste/extension run test`.
 - Verified full workspace check with `npm.cmd run verify`.
+
+Explicit planning workflow repair:
+- Investigated the broken flow and confirmed `getPrimaryActionState()` exposed `Apply Master Plan` / `Apply Roadmap`, `improveMasterPlan()` called `triggerWorkflowStep()`, and `renderResponse()` auto-applied master plan drafts.
+- Added Prompt Vault planning sessions keyed by `projectId`, with migration through `migrateDb(db)`, capped `cancelledRequestIds` and `errorLog`, and read/write IPC channels.
+- Added explicit protocol prompt builders for master plan generation, Claude master plan improvement, GPT master plan revision, roadmap generation, and Claude roadmap improvement.
+- Strengthened roadmap validation beyond JSON parsing: non-empty items, unique ids, clean positive orders, unique normalized orders, dependency existence, and cycle detection with cycle ids.
+- Replaced the default Plan workflow with visible explicit buttons. Applying master plan/roadmap is now internal to save actions only.
+- Added request correlation through desktop -> extension -> renderer. AI responses now include `requestId`, `projectId`, `activeContext`, `text`, `provider`, and `error`; stale/cancelled ids are logged and ignored before any draft/file write.
+- Added local-safe cancel behavior: the active request id is recorded in `cancelledRequestIds`, busy state clears, and late browser responses are ignored.
+- Added manual edit snapshot helpers that create `manual_edit` draft versions on button click before Improve/Revise/Save actions.
+- Added idempotent `createAllTaskPromptsFromRoadmap(projectId, { force=false })` and `vault:createAllTasks`; it skips complete tasks, recreates missing/empty/corrupt task files, creates missing DB records from valid files, and returns structured created/skipped/failed details.
+- Decision: removed Apply buttons from the main Plan workflow.
+- Decision: legacy 7-stage debate is gated behind main-process `ENABLE_LEGACY_DEBATE=true`; removal target is the next minor release.
+- DB schema notes: `planningSessions` is an object keyed by project id. A default session is created for every existing project during migration, and DB state wins over any future debug mirror.
+- Verification: `npm.cmd run desktop:test` passed; `npm.cmd run verify` passed.
 - Confirmed the Windows Chrome resolver finds `C:\Program Files\Google\Chrome\Application\chrome.exe`, avoiding the old bare `chrome.exe` spawn path.
 
 Setup extension once robustness pass:
