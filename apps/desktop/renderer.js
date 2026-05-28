@@ -1079,6 +1079,60 @@ function isIgnoredStaleResponseError(session = {}) {
   return /Ignored stale response/i.test(String(session.lastError || ""));
 }
 
+function shouldRepairPlanningSession(session = {}) {
+  const activeContext = String(session.activeContext || "");
+  const activeRequestId = String(session.activeRequestId || "");
+  return isIgnoredStaleResponseError(session)
+    || (Boolean(activeContext) && !activeRequestId)
+    || (Boolean(session.busyState) && !activeRequestId);
+}
+
+function getPlanningSessionControlView(session = {}) {
+  if (!shouldRepairPlanningSession(session)) return { ...session };
+  return {
+    ...session,
+    activeRequestId: "",
+    activeContext: "",
+    busyState: false
+  };
+}
+
+function getPlanningControlState({ session = {}, project = null, currentText = "", createAllFailedCount = 0 } = {}) {
+  const safeSession = getPlanningSessionControlView(session);
+  const hasIdea = Boolean(project && String(project.idea || "").trim());
+  const hasMasterDraft = Boolean(String(currentText || "").trim() || safeSession.masterPlanDraftVersionId);
+  const hasRoadmapDraft = Boolean(String(currentText || "").trim() || safeSession.roadmapDraftVersionId);
+  const busy = Boolean(safeSession.busyState && safeSession.activeRequestId);
+  const staleError = isIgnoredStaleResponseError(safeSession);
+  return {
+    generateMasterPlan: {
+      label: staleError && (safeSession.phase === "idea" || safeSession.phase === "master_draft")
+        ? "Retry Generate Master Plan"
+        : "Generate Master Plan",
+      disabled: busy || !hasIdea
+    },
+    improveMasterPlanClaude: { disabled: busy || !project || !hasMasterDraft },
+    reviseMasterPlanGpt: { disabled: busy || !project || !hasMasterDraft },
+    saveMasterPlanCreateRoadmap: { disabled: busy || !project || !hasMasterDraft },
+    retryCreateRoadmap: {
+      disabled: busy || !project || !(safeSession.masterPlanSaved && !safeSession.roadmapSaved),
+      visible: Boolean(safeSession.masterPlanSaved && !safeSession.roadmapSaved && !safeSession.roadmapDraftVersionId)
+    },
+    improveRoadmapClaude: { disabled: busy || !project || !safeSession.masterPlanSaved || !hasRoadmapDraft },
+    saveRoadmap: { disabled: busy || !project || !hasRoadmapDraft },
+    createNextTask: { disabled: busy || !project || !(safeSession.phase === "tasks" || safeSession.roadmapSaved) },
+    createAllTasks: {
+      disabled: busy || !project || !(safeSession.phase === "tasks" || safeSession.roadmapSaved),
+      label: createAllFailedCount > 0 ? "Retry Failed Tasks" : "Create All Tasks"
+    },
+    cancel: {
+      visible: busy,
+      disabled: !busy
+    },
+    resetPlanningBusy: { disabled: false }
+  };
+}
+
 function getNextRecommendedAction(session, project) {
   const safeSession = session || getPlanningSession(project && project.id);
   let action = "";
@@ -1145,9 +1199,10 @@ async function clearBusyState(projectId) {
 async function repairPlanningSessionAfterStaleResponse(projectId) {
   if (!projectId) return null;
   const session = await readPlanningSession(projectId);
+  const activeContext = String(session.activeContext || "");
   if (
-    isIgnoredStaleResponseError(session)
-    && RECOVERABLE_PLANNING_CONTEXTS.has(String(session.activeContext || ""))
+    shouldRepairPlanningSession(session)
+    && (!activeContext || RECOVERABLE_PLANNING_CONTEXTS.has(activeContext))
   ) {
     return writePlanningSession(projectId, {
       activeRequestId: "",
@@ -1329,14 +1384,24 @@ function getStatusOption(status) {
 
 function renderPlanningStatus() {
   const project = getSelectedProject();
-  const session = getPlanningSession(project && project.id);
+  const rawSession = getPlanningSession(project && project.id);
+  const session = getPlanningSessionControlView(rawSession);
+  if (project && shouldRepairPlanningSession(rawSession)) {
+    repairPlanningSessionAfterStaleResponse(project.id)
+      .then(() => renderPlanningStatus())
+      .catch(() => {});
+  }
   const pack = project ? getCurrentPack(project) : null;
   const currentText = String(elements.currentText ? elements.currentText.value : "").trim();
-  const hasIdea = Boolean(project && String(project.idea || (elements.projectIdea ? elements.projectIdea.value : "") || "").trim());
-  const hasMasterDraft = Boolean(currentText || session.masterPlanDraftVersionId);
-  const hasRoadmapDraft = Boolean(currentText || session.roadmapDraftVersionId);
-  const busy = Boolean(session.busyState);
-  const staleError = isIgnoredStaleResponseError(session);
+  const projectForControls = project
+    ? { ...project, idea: String(project.idea || (elements.projectIdea ? elements.projectIdea.value : "") || "") }
+    : null;
+  const controlState = getPlanningControlState({
+    session,
+    project: projectForControls,
+    currentText,
+    createAllFailedCount: drawerState.lastCreateAllResult && drawerState.lastCreateAllResult.failedCount || 0
+  });
   const masterDraftNumber = project && session.masterPlanDraftVersionId
     ? getVersionNumber(project.masterPlanVersions, session.masterPlanDraftVersionId)
     : 0;
@@ -1360,29 +1425,27 @@ function renderPlanningStatus() {
     elements.planningErrorLog.innerHTML = [...sessionErrors, ...taskFailures].join("") || "";
   }
   if (elements.generateMasterPlanButton) {
-    elements.generateMasterPlanButton.textContent = staleError && (session.phase === "idea" || session.phase === "master_draft")
-      ? "Retry Generate Master Plan"
-      : "Generate Master Plan";
-    elements.generateMasterPlanButton.disabled = busy || !hasIdea;
+    elements.generateMasterPlanButton.textContent = controlState.generateMasterPlan.label;
+    elements.generateMasterPlanButton.disabled = controlState.generateMasterPlan.disabled;
   }
-  if (elements.improveMasterPlanClaudeButton) elements.improveMasterPlanClaudeButton.disabled = busy || !project || !hasMasterDraft;
-  if (elements.reviseMasterPlanGptButton) elements.reviseMasterPlanGptButton.disabled = busy || !project || !hasMasterDraft;
-  if (elements.saveMasterPlanCreateRoadmapButton) elements.saveMasterPlanCreateRoadmapButton.disabled = busy || !project || !hasMasterDraft;
-  if (elements.retryCreateRoadmapButton) elements.retryCreateRoadmapButton.disabled = busy || !project || !(session.masterPlanSaved && !session.roadmapSaved);
-  if (elements.improveRoadmapClaudeButton) elements.improveRoadmapClaudeButton.disabled = busy || !project || !session.masterPlanSaved || !hasRoadmapDraft;
-  if (elements.saveRoadmapButton) elements.saveRoadmapButton.disabled = busy || !project || !hasRoadmapDraft;
-  if (elements.createNextTaskButton) elements.createNextTaskButton.disabled = busy || !project || !(session.phase === "tasks" || session.roadmapSaved);
-  if (elements.createAllTasksButton) elements.createAllTasksButton.disabled = busy || !project || !(session.phase === "tasks" || session.roadmapSaved);
-  if (elements.resetPlanningBusyButton) elements.resetPlanningBusyButton.disabled = false;
+  if (elements.improveMasterPlanClaudeButton) elements.improveMasterPlanClaudeButton.disabled = controlState.improveMasterPlanClaude.disabled;
+  if (elements.reviseMasterPlanGptButton) elements.reviseMasterPlanGptButton.disabled = controlState.reviseMasterPlanGpt.disabled;
+  if (elements.saveMasterPlanCreateRoadmapButton) elements.saveMasterPlanCreateRoadmapButton.disabled = controlState.saveMasterPlanCreateRoadmap.disabled;
+  if (elements.retryCreateRoadmapButton) elements.retryCreateRoadmapButton.disabled = controlState.retryCreateRoadmap.disabled;
+  if (elements.improveRoadmapClaudeButton) elements.improveRoadmapClaudeButton.disabled = controlState.improveRoadmapClaude.disabled;
+  if (elements.saveRoadmapButton) elements.saveRoadmapButton.disabled = controlState.saveRoadmap.disabled;
+  if (elements.createNextTaskButton) elements.createNextTaskButton.disabled = controlState.createNextTask.disabled;
+  if (elements.createAllTasksButton) elements.createAllTasksButton.disabled = controlState.createAllTasks.disabled;
+  if (elements.resetPlanningBusyButton) elements.resetPlanningBusyButton.disabled = controlState.resetPlanningBusy.disabled;
   if (elements.cancelPlanningButton) {
-    elements.cancelPlanningButton.style.display = busy ? "inline-flex" : "none";
-    elements.cancelPlanningButton.disabled = !busy;
+    elements.cancelPlanningButton.style.display = controlState.cancel.visible ? "inline-flex" : "none";
+    elements.cancelPlanningButton.disabled = controlState.cancel.disabled;
   }
   if (elements.retryCreateRoadmapButton) {
-    elements.retryCreateRoadmapButton.style.display = session.masterPlanSaved && !session.roadmapSaved && !session.roadmapDraftVersionId ? "inline-flex" : "none";
+    elements.retryCreateRoadmapButton.style.display = controlState.retryCreateRoadmap.visible ? "inline-flex" : "none";
   }
   if (elements.createAllTasksButton) {
-    elements.createAllTasksButton.textContent = drawerState.lastCreateAllResult && drawerState.lastCreateAllResult.failedCount > 0 ? "Retry Failed Tasks" : "Create All Tasks";
+    elements.createAllTasksButton.textContent = controlState.createAllTasks.label;
   }
 }
 
@@ -1756,6 +1819,17 @@ function saveFinalText() {
 }
 
 async function renderResponse(text) {
+  if (text && typeof text === "object" && !Object.prototype.hasOwnProperty.call(text, "requestId")) {
+    const response = text;
+    const projectId = String(response.projectId || drawerState.selectedProjectId || "");
+    if (projectId) {
+      await appendToErrorLog(projectId, new Error("Ignored stale response (missing requestId)."), null, response.activeContext);
+      await clearBusyState(projectId);
+      renderPlanningStatus();
+    }
+    setStatus("Ignored stale response (missing requestId). Retry the planning action.", "error");
+    return;
+  }
   if (text && typeof text === "object" && Object.prototype.hasOwnProperty.call(text, "requestId")) {
     const response = text;
     const projectId = String(response.projectId || drawerState.selectedProjectId || "");
@@ -2962,6 +3036,8 @@ async function resetPlanningBusyState() {
     activeContext: "",
     busyState: false
   });
+  renderWorkspace();
+  renderPlanningStatus();
   setStatus("Planning busy state reset. Drafts and saved files were left untouched.", "neutral");
 }
 
@@ -3740,6 +3816,9 @@ if (typeof module !== "undefined") {
     cancelActivePlanningRequest,
     resetPlanningBusyState,
     repairPlanningSessionAfterStaleResponse,
+    shouldRepairPlanningSession,
+    getPlanningSessionControlView,
+    getPlanningControlState,
     snapshotManualMasterPlanDraftIfNeeded,
     snapshotManualRoadmapDraftIfNeeded,
     getMasterPlanActionLabel,

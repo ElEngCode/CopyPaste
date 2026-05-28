@@ -24,6 +24,9 @@ const {
   getPlanPrimaryAction,
   getPrimaryActionState,
   getNextRecommendedAction,
+  shouldRepairPlanningSession,
+  getPlanningSessionControlView,
+  getPlanningControlState,
   getMasterPlanActionLabel,
   renderProjectPlanHtml,
   getRoundPreview,
@@ -420,8 +423,11 @@ assert.match(rendererJs, /async function createAllTasks/);
 assert.match(rendererJs, /requestId = crypto\.randomUUID/);
 assert.doesNotMatch(rendererJs, /await triggerWorkflowStep\(\);/);
 assert.match(rendererJs, /async function repairPlanningSessionAfterStaleResponse/);
+assert.match(rendererJs, /typeof text === "object" && !Object\.prototype\.hasOwnProperty\.call\(text, "requestId"\)/);
+assert.match(rendererJs, /Ignored stale response \(missing requestId\)\. Retry the planning action\./);
 assert.match(rendererJs, /\(!response\.requestId \|\| !session\.activeRequestId\) && session\.busyState/);
-assert.match(rendererJs, /elements\.generateMasterPlanButton\.disabled = busy \|\| !hasIdea/);
+assert.match(rendererJs, /getPlanningControlState/);
+assert.match(rendererJs, /elements\.generateMasterPlanButton\.disabled = controlState\.generateMasterPlan\.disabled/);
 assert.doesNotMatch(rendererJs, /lastError[\s\S]{0,120}\.disabled = true/);
 const mainJs = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
 assert.match(mainJs, /pendingWorkflowRequestsBySocket/);
@@ -453,6 +459,57 @@ rememberPendingWorkflowRequest(pendingRegistry, socketMany, { requestId: "req_b"
 const missingRequestConflict = backfillWorkflowResponseMetadata(pendingRegistry, socketMany, { ok: true, text: "Ambiguous" });
 assert.equal(missingRequestConflict.conflict, true);
 assert.equal(missingRequestConflict.pending.length, 2);
+
+const pollutedScreenshotSession = {
+  phase: "idea",
+  busyState: true,
+  activeContext: "master_generate",
+  activeRequestId: "",
+  lastError: "Ignored stale response (missing requestId)",
+  masterPlanSaved: false,
+  roadmapSaved: false,
+  masterPlanDraftVersionId: "",
+  roadmapDraftVersionId: ""
+};
+assert.equal(shouldRepairPlanningSession(pollutedScreenshotSession), true);
+assert.deepEqual(
+  {
+    busyState: getPlanningSessionControlView(pollutedScreenshotSession).busyState,
+    activeContext: getPlanningSessionControlView(pollutedScreenshotSession).activeContext,
+    activeRequestId: getPlanningSessionControlView(pollutedScreenshotSession).activeRequestId,
+    phase: getPlanningSessionControlView(pollutedScreenshotSession).phase,
+    lastError: getPlanningSessionControlView(pollutedScreenshotSession).lastError
+  },
+  {
+    busyState: false,
+    activeContext: "",
+    activeRequestId: "",
+    phase: "idea",
+    lastError: "Ignored stale response (missing requestId)"
+  }
+);
+const pollutedControlState = getPlanningControlState({
+  session: pollutedScreenshotSession,
+  project: { id: "project_1", idea: "Build a game." },
+  currentText: ""
+});
+assert.equal(pollutedControlState.generateMasterPlan.label, "Retry Generate Master Plan");
+assert.equal(pollutedControlState.generateMasterPlan.disabled, false);
+assert.equal(pollutedControlState.cancel.visible, false);
+
+const lastErrorOnlyControlState = getPlanningControlState({
+  session: {
+    phase: "idea",
+    busyState: false,
+    activeContext: "",
+    activeRequestId: "",
+    lastError: "Ignored stale response (missing requestId)"
+  },
+  project: { id: "project_1", idea: "Build a game." },
+  currentText: ""
+});
+assert.equal(lastErrorOnlyControlState.generateMasterPlan.disabled, false);
+assert.equal(lastErrorOnlyControlState.cancel.visible, false);
 assert.match(rootHtml, /Default projects folder/);
 assert.match(rootHtml, /See all projects/);
 assert.match(rootHtml, /id="projectContextMenu"/);

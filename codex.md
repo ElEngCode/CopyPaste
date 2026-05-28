@@ -686,6 +686,16 @@ Stuck busy-state follow-up:
 - Added a UI-safe `Reset Planning Busy State` action that clears only `activeRequestId`, `activeContext`, and `busyState`; drafts and saved files are untouched.
 - Confirmed the Windows Chrome resolver finds `C:\Program Files\Google\Chrome\Application\chrome.exe`, avoiding the old bare `chrome.exe` spawn path.
 
+Stuck Planning UI stale-response recovery:
+- User reproduced the real polluted UI state: `phase="idea"`, `busyState=true`, `activeContext="master_generate"`, `activeRequestId=""`, and `lastError="Ignored stale response (missing requestId)"`.
+- Root cause: button rendering treated `busyState` as blocking even when no active request id existed, and stale-response repair did not always clear `activeContext`/`busyState` before controls were rendered.
+- Added pure control-state helpers so workflow buttons are disabled only by an actual active request (`busyState && activeRequestId`) and missing required input/drafts, never by `lastError` alone.
+- Broadened session repair to clear `busyState`, `activeRequestId`, and `activeContext` when a stale-response error exists, an active context has no request id, or busy state has no request id. Phase, drafts, saved files, and visible `lastError` are preserved.
+- Renderer now explicitly handles old response objects with no `requestId` property by logging `Ignored stale response (missing requestId).`, clearing planning busy fields, and re-rendering controls instead of falling through to legacy response handling.
+- `Reset Planning Busy State` now writes the repaired session to Prompt Vault DB and immediately re-renders workspace/status controls.
+- Added `session-recovery.test.js` with the exact screenshot case as a mandatory regression: `lastError="Ignored stale response (missing requestId)"`, `phase=idea`, `busyState=true`, `activeContext=master_generate`, `activeRequestId=""`.
+- Verification: `npm.cmd run desktop:test` passed after adding the recovery regression.
+
 Setup extension once robustness pass:
 - `Setup extension once` now launches Chrome using `--new-window chrome://extensions` as best-effort and returns explicit fallback text when Chrome opens a blank tab.
 - Added desktop IPC endpoints for `copyExtensionPath`, `copyExtensionsUrl`, and `openExtensionFolder`.

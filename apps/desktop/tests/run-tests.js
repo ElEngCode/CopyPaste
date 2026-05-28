@@ -9,7 +9,8 @@ const tests = [
   "ws-session.test.js",
   "runtime-audit.test.js",
   "controller-ui.test.js",
-  "workflow-integration.test.js"
+  "workflow-integration.test.js",
+  "session-recovery.test.js"
 ];
 
 for (const file of tests) {
