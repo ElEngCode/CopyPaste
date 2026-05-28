@@ -413,6 +413,8 @@ assert.match(rendererJs, /async function saveMasterPlanAndCreateRoadmap/);
 assert.match(rendererJs, /async function createAllTasks/);
 assert.match(rendererJs, /requestId = crypto\.randomUUID/);
 assert.doesNotMatch(rendererJs, /await triggerWorkflowStep\(\);/);
+assert.match(rendererJs, /async function recoverPlanningSessionIfStuck/);
+assert.match(rendererJs, /!response\.requestId && session\.busyState/);
 const mainJs = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
 assert.match(mainJs, /pendingWorkflowRequest = \{/);
 assert.match(mainJs, /parsedData\.requestId \|\| pending\.requestId/);

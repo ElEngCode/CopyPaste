@@ -1129,6 +1129,20 @@ async function clearBusyState(projectId) {
   });
 }
 
+async function recoverPlanningSessionIfStuck(projectId) {
+  if (!projectId) return null;
+  const session = await readPlanningSession(projectId);
+  const staleMissingRequestId = /Ignored stale response \(missing requestId\)\.?/i.test(String(session.lastError || ""));
+  if (session.busyState && staleMissingRequestId) {
+    return writePlanningSession(projectId, {
+      activeRequestId: "",
+      activeContext: "",
+      busyState: false
+    });
+  }
+  return session;
+}
+
 function getCurrentProjectOrThrow() {
   const project = getSelectedProject();
   if (!project) throw new Error("Select and save a project first.");
@@ -1729,6 +1743,9 @@ async function renderResponse(text) {
     }
     if (response.requestId !== session.activeRequestId) {
       await appendToErrorLog(projectId, new Error(`Ignored stale response ${response.requestId || "(missing requestId)"}.`), response.requestId, response.activeContext);
+      if (!response.requestId && session.busyState) {
+        await clearBusyState(projectId);
+      }
       return;
     }
     if (response.error) throw new Error(response.error);
@@ -2043,7 +2060,7 @@ function applyProject(projectId) {
   renderInspector();
   updateWordCount();
   updatePlanPrimaryAction();
-  readPlanningSession(project.id)
+  recoverPlanningSessionIfStuck(project.id)
     .then(() => {
       renderPlanningStatus();
       renderDebateState();
@@ -3621,6 +3638,12 @@ function installEventListeners() {
 
   desktopApi.onVaultState((state) => {
     renderVaultState(state);
+    const project = getSelectedProject();
+    if (project) {
+      recoverPlanningSessionIfStuck(project.id)
+        .then(() => renderPlanningStatus())
+        .catch(() => {});
+    }
   });
 }
 
@@ -3637,6 +3660,12 @@ if (typeof window !== "undefined") {
     renderWorkspace();
     renderInspector();
     refreshVaultState().catch((error) => setStatus(error.message, "error"));
+    const project = getSelectedProject();
+    if (project) {
+      recoverPlanningSessionIfStuck(project.id)
+        .then(() => renderPlanningStatus())
+        .catch((error) => setStatus(error.message, "error"));
+    }
   });
 }
 
@@ -3669,6 +3698,7 @@ if (typeof module !== "undefined") {
     createNextTask,
     createAllTasks,
     cancelActivePlanningRequest,
+    recoverPlanningSessionIfStuck,
     snapshotManualMasterPlanDraftIfNeeded,
     snapshotManualRoadmapDraftIfNeeded,
     getMasterPlanActionLabel,

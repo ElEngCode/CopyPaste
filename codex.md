@@ -678,6 +678,11 @@ Late response compatibility fix:
 - User hit `Ignored stale response (missing requestId)` with a running unpacked extension that returned the old response shape.
 - Added a desktop-main pending request metadata fallback so a response missing `requestId/projectId/activeContext` is correlated to the one dispatched request before reaching the renderer.
 - The extension still echoes request metadata when reloaded; the fallback only covers missing fields.
+
+Stuck busy-state follow-up:
+- The renderer stale-response branch logged missing-requestId responses but did not clear `busyState`, leaving Plan buttons disabled with Cancel visible.
+- Added immediate busy cleanup when a response has no `requestId` and the current session is busy.
+- Added `recoverPlanningSessionIfStuck(projectId)` so reopening/selecting a project clears sessions already stuck on `Ignored stale response (missing requestId)`.
 - Confirmed the Windows Chrome resolver finds `C:\Program Files\Google\Chrome\Application\chrome.exe`, avoiding the old bare `chrome.exe` spawn path.
 
 Setup extension once robustness pass:
