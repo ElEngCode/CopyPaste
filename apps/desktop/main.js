@@ -97,6 +97,7 @@ let extensionSocket = null;
 let extensionState = EXTENSION_STATE.DISCONNECTED;
 let connectionCounter = 0;
 let vaultStore = null;
+let pendingWorkflowRequest = null;
 
 const extensionRoot = path.join(__dirname, "..", "extension");
 const wsSessionToken = createSessionToken();
@@ -252,12 +253,19 @@ function sendWorkflowToExtension(payload) {
   const serialized = JSON.stringify(payload);
   logServer("Dispatching workflow payload to extension.", payload);
   try {
+    pendingWorkflowRequest = {
+      requestId: String(payload.requestId || ""),
+      projectId: String(payload.projectId || ""),
+      activeContext: String(payload.activeContext || ""),
+      provider: String(payload.targetProvider || "")
+    };
     extensionSocket.send(serialized);
     return {
       ok: true,
       extensionState: EXTENSION_STATE.CONNECTED
     };
   } catch (error) {
+    pendingWorkflowRequest = null;
     setExtensionState(EXTENSION_STATE.DISCONNECTED);
     const errorPayload = {
       ok: false,
@@ -1073,12 +1081,14 @@ wss.on("connection", (ws, request) => {
         ? parsedData.error
         : "Extension reported a workflow error.";
       logServer("Extension reported an error.", parsedData);
+      const pending = pendingWorkflowRequest || {};
+      pendingWorkflowRequest = null;
       sendToRenderer(EXTENSION_MESSAGE_CHANNEL, {
-        requestId: parsedData.requestId || "",
-        projectId: parsedData.projectId || "",
-        activeContext: parsedData.activeContext || "",
+        requestId: parsedData.requestId || pending.requestId || "",
+        projectId: parsedData.projectId || pending.projectId || "",
+        activeContext: parsedData.activeContext || pending.activeContext || "",
         text: "",
-        provider: parsedData.provider || parsedData.target || "",
+        provider: parsedData.provider || parsedData.target || pending.provider || "",
         error: errorMessage
       });
       sendStatusToRenderer(errorMessage, "error");
@@ -1087,12 +1097,14 @@ wss.on("connection", (ws, request) => {
 
     logServer("Received AI response from extension.", parsedData);
     if (typeof parsedData.text === "string") {
+      const pending = pendingWorkflowRequest || {};
+      pendingWorkflowRequest = null;
       sendToRenderer(EXTENSION_MESSAGE_CHANNEL, {
-        requestId: parsedData.requestId || "",
-        projectId: parsedData.projectId || "",
-        activeContext: parsedData.activeContext || "",
+        requestId: parsedData.requestId || pending.requestId || "",
+        projectId: parsedData.projectId || pending.projectId || "",
+        activeContext: parsedData.activeContext || pending.activeContext || "",
         text: parsedData.text,
-        provider: parsedData.provider || parsedData.target || "",
+        provider: parsedData.provider || parsedData.target || pending.provider || "",
         error: null
       });
       return;

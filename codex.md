@@ -673,6 +673,11 @@ Explicit planning workflow repair:
 - Decision: legacy 7-stage debate is gated behind main-process `ENABLE_LEGACY_DEBATE=true`; removal target is the next minor release.
 - DB schema notes: `planningSessions` is an object keyed by project id. A default session is created for every existing project during migration, and DB state wins over any future debug mirror.
 - Verification: `npm.cmd run desktop:test` passed; `npm.cmd run verify` passed.
+
+Late response compatibility fix:
+- User hit `Ignored stale response (missing requestId)` with a running unpacked extension that returned the old response shape.
+- Added a desktop-main pending request metadata fallback so a response missing `requestId/projectId/activeContext` is correlated to the one dispatched request before reaching the renderer.
+- The extension still echoes request metadata when reloaded; the fallback only covers missing fields.
 - Confirmed the Windows Chrome resolver finds `C:\Program Files\Google\Chrome\Application\chrome.exe`, avoiding the old bare `chrome.exe` spawn path.
 
 Setup extension once robustness pass:
