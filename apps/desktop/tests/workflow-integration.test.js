@@ -4,6 +4,11 @@ const os = require("node:os");
 const path = require("node:path");
 const protocol = require("../../../packages/protocol");
 const { createVaultStore } = require("../prompt-vault");
+const {
+  rememberPendingWorkflowRequest,
+  backfillWorkflowResponseMetadata,
+  clearPendingWorkflowRequest
+} = require("../main/workflow-request-correlation");
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "next-step-workflow-integration-"));
 
@@ -94,6 +99,55 @@ try {
   assert.ok(fs.existsSync(path.join(projectPath, "plan-roadmap.md")));
   const tasksDirFiles = fs.readdirSync(path.join(projectPath, "tasks")).filter((name) => /^task-001-.*\.md$/i.test(name));
   assert.ok(tasksDirFiles.length >= 1);
+
+  const oldExtensionProjectPath = path.join(tmpRoot, "OldExtension");
+  fs.mkdirSync(oldExtensionProjectPath, { recursive: true });
+  const oldExtensionProject = store.saveProjectBrief({
+    projectName: "Old Extension",
+    projectPath: oldExtensionProjectPath,
+    idea: "Generate a master plan from an old extension response.",
+    masterPlan: ""
+  }).project;
+  const requestId = "req_old_extension";
+  store.writePlanningSession(oldExtensionProject.id, {
+    phase: "idea",
+    activeContext: "master_generate",
+    activeRequestId: requestId,
+    busyState: true,
+    lastProvider: "ChatGPT",
+    lastError: ""
+  });
+  const socket = {};
+  const registry = new WeakMap();
+  rememberPendingWorkflowRequest(registry, socket, {
+    requestId,
+    projectId: oldExtensionProject.id,
+    activeContext: "master_generate",
+    targetProvider: "chatgpt"
+  });
+  const correlated = backfillWorkflowResponseMetadata(registry, socket, {
+    ok: true,
+    target: "chatgpt",
+    text: "Old extension master plan response"
+  });
+  assert.equal(correlated.response.requestId, requestId);
+  const draft = store.addMasterPlanVersion(correlated.response.projectId, {
+    source: correlated.response.activeContext,
+    promptSnapshot: "Generate Master Plan",
+    responseText: correlated.response.text
+  }).version;
+  store.writePlanningSession(oldExtensionProject.id, {
+    phase: "master_draft",
+    masterPlanDraftVersionId: draft.id,
+    activeRequestId: "",
+    activeContext: "",
+    busyState: false
+  });
+  clearPendingWorkflowRequest(registry, socket, requestId);
+  const recoveredSession = store.getOrInitPlanningSession(oldExtensionProject.id).session;
+  assert.equal(recoveredSession.busyState, false);
+  assert.equal(recoveredSession.phase, "master_draft");
+  assert.equal(recoveredSession.masterPlanDraftVersionId, draft.id);
 } finally {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 }

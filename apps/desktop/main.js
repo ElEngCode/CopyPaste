@@ -9,6 +9,11 @@ const {
   writeSessionTokenFile,
   createSessionGate
 } = require("./main/ws-session");
+const {
+  rememberPendingWorkflowRequest,
+  clearPendingWorkflowRequest,
+  backfillWorkflowResponseMetadata
+} = require("./main/workflow-request-correlation");
 
 const WS_PORT = 8080;
 const EXTENSION_MESSAGE_CHANNEL = "AI_RESPONSE_RECEIVED";
@@ -97,7 +102,7 @@ let extensionSocket = null;
 let extensionState = EXTENSION_STATE.DISCONNECTED;
 let connectionCounter = 0;
 let vaultStore = null;
-let pendingWorkflowRequest = null;
+const pendingWorkflowRequestsBySocket = new WeakMap();
 
 const extensionRoot = path.join(__dirname, "..", "extension");
 const wsSessionToken = createSessionToken();
@@ -253,19 +258,14 @@ function sendWorkflowToExtension(payload) {
   const serialized = JSON.stringify(payload);
   logServer("Dispatching workflow payload to extension.", payload);
   try {
-    pendingWorkflowRequest = {
-      requestId: String(payload.requestId || ""),
-      projectId: String(payload.projectId || ""),
-      activeContext: String(payload.activeContext || ""),
-      provider: String(payload.targetProvider || "")
-    };
+    rememberPendingWorkflowRequest(pendingWorkflowRequestsBySocket, extensionSocket, payload);
     extensionSocket.send(serialized);
     return {
       ok: true,
       extensionState: EXTENSION_STATE.CONNECTED
     };
   } catch (error) {
-    pendingWorkflowRequest = null;
+    clearPendingWorkflowRequest(pendingWorkflowRequestsBySocket, extensionSocket, payload && payload.requestId);
     setExtensionState(EXTENSION_STATE.DISCONNECTED);
     const errorPayload = {
       ok: false,
@@ -1081,14 +1081,30 @@ wss.on("connection", (ws, request) => {
         ? parsedData.error
         : "Extension reported a workflow error.";
       logServer("Extension reported an error.", parsedData);
-      const pending = pendingWorkflowRequest || {};
-      pendingWorkflowRequest = null;
+      const correlated = backfillWorkflowResponseMetadata(pendingWorkflowRequestsBySocket, ws, parsedData, logServer);
+      if (correlated.conflict) {
+        correlated.pending.forEach((pending) => {
+          sendToRenderer(EXTENSION_MESSAGE_CHANNEL, {
+            requestId: pending.requestId,
+            projectId: pending.projectId,
+            activeContext: pending.activeContext,
+            text: "",
+            provider: pending.targetProvider,
+            error: "Extension response omitted requestId while multiple workflow requests are pending."
+          });
+        });
+        clearPendingWorkflowRequest(pendingWorkflowRequestsBySocket, ws);
+        sendStatusToRenderer("Extension response omitted requestId while multiple workflow requests are pending.", "error");
+        return;
+      }
+      const responsePayload = correlated.response;
+      clearPendingWorkflowRequest(pendingWorkflowRequestsBySocket, ws, responsePayload.requestId);
       sendToRenderer(EXTENSION_MESSAGE_CHANNEL, {
-        requestId: parsedData.requestId || pending.requestId || "",
-        projectId: parsedData.projectId || pending.projectId || "",
-        activeContext: parsedData.activeContext || pending.activeContext || "",
+        requestId: responsePayload.requestId || "",
+        projectId: responsePayload.projectId || "",
+        activeContext: responsePayload.activeContext || "",
         text: "",
-        provider: parsedData.provider || parsedData.target || pending.provider || "",
+        provider: responsePayload.provider || responsePayload.target || "",
         error: errorMessage
       });
       sendStatusToRenderer(errorMessage, "error");
@@ -1097,14 +1113,30 @@ wss.on("connection", (ws, request) => {
 
     logServer("Received AI response from extension.", parsedData);
     if (typeof parsedData.text === "string") {
-      const pending = pendingWorkflowRequest || {};
-      pendingWorkflowRequest = null;
+      const correlated = backfillWorkflowResponseMetadata(pendingWorkflowRequestsBySocket, ws, parsedData, logServer);
+      if (correlated.conflict) {
+        correlated.pending.forEach((pending) => {
+          sendToRenderer(EXTENSION_MESSAGE_CHANNEL, {
+            requestId: pending.requestId,
+            projectId: pending.projectId,
+            activeContext: pending.activeContext,
+            text: "",
+            provider: pending.targetProvider,
+            error: "Extension response omitted requestId while multiple workflow requests are pending."
+          });
+        });
+        clearPendingWorkflowRequest(pendingWorkflowRequestsBySocket, ws);
+        sendStatusToRenderer("Extension response omitted requestId while multiple workflow requests are pending.", "error");
+        return;
+      }
+      const responsePayload = correlated.response;
+      clearPendingWorkflowRequest(pendingWorkflowRequestsBySocket, ws, responsePayload.requestId);
       sendToRenderer(EXTENSION_MESSAGE_CHANNEL, {
-        requestId: parsedData.requestId || pending.requestId || "",
-        projectId: parsedData.projectId || pending.projectId || "",
-        activeContext: parsedData.activeContext || pending.activeContext || "",
-        text: parsedData.text,
-        provider: parsedData.provider || parsedData.target || pending.provider || "",
+        requestId: responsePayload.requestId || "",
+        projectId: responsePayload.projectId || "",
+        activeContext: responsePayload.activeContext || "",
+        text: responsePayload.text,
+        provider: responsePayload.provider || responsePayload.target || "",
         error: null
       });
       return;

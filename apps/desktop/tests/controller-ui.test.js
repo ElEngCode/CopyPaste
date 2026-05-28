@@ -3,6 +3,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 globalThis.NextStepAiProjectBuilderProtocol = require("../../../packages/protocol");
 const {
+  rememberPendingWorkflowRequest,
+  backfillWorkflowResponseMetadata,
+  clearPendingWorkflowRequest
+} = require("../main/workflow-request-correlation");
+const {
   getWorkflowStatusView,
   getProviderDisplayList,
   getNewProjectDraft,
@@ -402,6 +407,7 @@ assert.match(rootHtml, /id="improveRoadmapClaudeBtn"[^>]*>Improve Roadmap with C
 assert.match(rootHtml, /id="saveRoadmapBtn"[^>]*>Save Roadmap<\/button>/);
 assert.match(rootHtml, /id="createNextTaskBtn"[^>]*>Create Next Task<\/button>/);
 assert.match(rootHtml, /id="createAllTasksBtn"[^>]*>Create All Tasks<\/button>/);
+assert.match(rootHtml, /id="resetPlanningBusyBtn"[^>]*>Reset Planning Busy State<\/button>/);
 assert.match(rootHtml, /id="cancelPlanningBtn"[^>]*>Cancel<\/button>/);
 assert.doesNotMatch(rootHtml, />Apply Master Plan<\/button>/);
 assert.doesNotMatch(rootHtml, />Apply Roadmap<\/button>/);
@@ -413,11 +419,40 @@ assert.match(rendererJs, /async function saveMasterPlanAndCreateRoadmap/);
 assert.match(rendererJs, /async function createAllTasks/);
 assert.match(rendererJs, /requestId = crypto\.randomUUID/);
 assert.doesNotMatch(rendererJs, /await triggerWorkflowStep\(\);/);
-assert.match(rendererJs, /async function recoverPlanningSessionIfStuck/);
-assert.match(rendererJs, /!response\.requestId && session\.busyState/);
+assert.match(rendererJs, /async function repairPlanningSessionAfterStaleResponse/);
+assert.match(rendererJs, /\(!response\.requestId \|\| !session\.activeRequestId\) && session\.busyState/);
+assert.match(rendererJs, /elements\.generateMasterPlanButton\.disabled = busy \|\| !hasIdea/);
+assert.doesNotMatch(rendererJs, /lastError[\s\S]{0,120}\.disabled = true/);
 const mainJs = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
-assert.match(mainJs, /pendingWorkflowRequest = \{/);
-assert.match(mainJs, /parsedData\.requestId \|\| pending\.requestId/);
+assert.match(mainJs, /pendingWorkflowRequestsBySocket/);
+assert.match(mainJs, /backfillWorkflowResponseMetadata\(pendingWorkflowRequestsBySocket/);
+
+const socketOne = {};
+const pendingRegistry = new WeakMap();
+rememberPendingWorkflowRequest(pendingRegistry, socketOne, {
+  requestId: "req_one",
+  projectId: "project_one",
+  activeContext: "master_generate",
+  targetProvider: "chatgpt"
+});
+const backfilledOldResponse = backfillWorkflowResponseMetadata(pendingRegistry, socketOne, {
+  ok: true,
+  target: "chatgpt",
+  text: "Master plan"
+});
+assert.equal(backfilledOldResponse.backfilled, true);
+assert.equal(backfilledOldResponse.response.requestId, "req_one");
+assert.equal(backfilledOldResponse.response.projectId, "project_one");
+assert.equal(backfilledOldResponse.response.activeContext, "master_generate");
+assert.equal(backfilledOldResponse.response.provider, "chatgpt");
+clearPendingWorkflowRequest(pendingRegistry, socketOne, "req_one");
+
+const socketMany = {};
+rememberPendingWorkflowRequest(pendingRegistry, socketMany, { requestId: "req_a", projectId: "project_a", activeContext: "master_generate", targetProvider: "chatgpt" });
+rememberPendingWorkflowRequest(pendingRegistry, socketMany, { requestId: "req_b", projectId: "project_b", activeContext: "roadmap_generate", targetProvider: "chatgpt" });
+const missingRequestConflict = backfillWorkflowResponseMetadata(pendingRegistry, socketMany, { ok: true, text: "Ambiguous" });
+assert.equal(missingRequestConflict.conflict, true);
+assert.equal(missingRequestConflict.pending.length, 2);
 assert.match(rootHtml, /Default projects folder/);
 assert.match(rootHtml, /See all projects/);
 assert.match(rootHtml, /id="projectContextMenu"/);
