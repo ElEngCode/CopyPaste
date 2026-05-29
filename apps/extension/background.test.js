@@ -273,6 +273,48 @@ test("runManualStep echoes request correlation metadata", async () => {
   assert.equal(result.text, "roadmap json");
 });
 
+test("runManualStep times out a lost content-script port and accepts a later retry", async () => {
+  let dropNextWriteResponse = true;
+  const { chromeMock } = createChromeMock({
+    storedNextTarget: "claude",
+    readText: "claude retry answer"
+  });
+  const originalSendMessage = chromeMock.tabs.sendMessage;
+  chromeMock.tabs.sendMessage = (tabId, payload, options, callback) => {
+    if (payload.action === "WRITE_AND_SEND" && dropNextWriteResponse) {
+      dropNextWriteResponse = false;
+      return;
+    }
+    originalSendMessage(tabId, payload, options, callback);
+  };
+  const { runManualStep } = loadBackgroundWithChromeMock(chromeMock);
+
+  await assert.rejects(
+    runManualStep({
+      targetProvider: "claude",
+      text: "first prompt",
+      tabMessageTimeoutMs: 5
+    }),
+    /Timed out waiting for content script action: WRITE_AND_SEND/
+  );
+
+  const retryResult = await runManualStep({
+    targetProvider: "claude",
+    text: "retry prompt",
+    tabMessageTimeoutMs: 50
+  });
+
+  assert.equal(retryResult.text, "claude retry answer");
+});
+
+test("getTabMessageTimeoutMs uses a longer message port timeout for Claude reads", () => {
+  const { getTabMessageTimeoutMs } = loadBackgroundWithChromeMock(createChromeMock().chromeMock);
+
+  assert.equal(getTabMessageTimeoutMs({ action: "WRITE_AND_SEND", target: "claude" }), 30000);
+  assert.equal(getTabMessageTimeoutMs({ action: "READ_RESPONSE", target: "chatgpt" }), 540000);
+  assert.equal(getTabMessageTimeoutMs({ action: "READ_RESPONSE", target: "claude" }), 960000);
+});
+
 test("loadSessionToken reads the extension session token resource", async () => {
   const { chromeMock } = createChromeMock();
   chromeMock.runtime.getURL = (resourcePath) => `chrome-extension://copy/${resourcePath}`;

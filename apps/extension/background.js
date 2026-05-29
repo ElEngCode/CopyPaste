@@ -11,6 +11,9 @@ const ELECTRON_WS_URL = "ws://localhost:8080";
 const HEARTBEAT_INTERVAL_MS = 25000;
 const WAKE_CONNECT_TIMEOUT_MS = 7000;
 const WAKE_POLL_INTERVAL_MS = 25;
+const TAB_MESSAGE_WRITE_TIMEOUT_MS = 30000;
+const CHATGPT_READ_RESPONSE_MESSAGE_TIMEOUT_MS = 540000;
+const CLAUDE_READ_RESPONSE_MESSAGE_TIMEOUT_MS = 960000;
 const SESSION_TOKEN_FILE = "ws-session-token.json";
 const SESSION_HELLO_TYPE = "EXTENSION_SESSION_HELLO";
 const WAKE_MESSAGE_TYPE = "COPYPASTE_WAKE";
@@ -91,9 +94,32 @@ function executeContentScript(tabId) {
   });
 }
 
-function sendTabMessage(tabId, message) {
+function getTabMessageTimeoutMs(message = {}) {
+  if (message.action !== "READ_RESPONSE") {
+    return TAB_MESSAGE_WRITE_TIMEOUT_MS;
+  }
+
+  return String(message.target || "").toLowerCase() === "claude"
+    ? CLAUDE_READ_RESPONSE_MESSAGE_TIMEOUT_MS
+    : CHATGPT_READ_RESPONSE_MESSAGE_TIMEOUT_MS;
+}
+
+function sendTabMessage(tabId, message, timeoutOverrideMs = 0) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeoutMs = Number(timeoutOverrideMs || 0) > 0 ? Number(timeoutOverrideMs) : getTabMessageTimeoutMs(message);
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("Timed out waiting for content script action: " + message.action));
+    }, timeoutMs);
+
     chrome.tabs.sendMessage(tabId, message, (response) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
       const error = getLastErrorMessage();
 
       if (error) {
@@ -278,6 +304,7 @@ async function runManualStep(command) {
       : String(payload.claudePrefix || "");
     const sourceText = String(payload.text || "");
     const combinedText = prefix + sourceText;
+    const tabMessageTimeoutMs = Number(payload.tabMessageTimeoutMs || 0);
 
     if (!combinedText.trim()) {
       throw new Error("Cannot send an empty workflow payload.");
@@ -296,14 +323,14 @@ async function runManualStep(command) {
       action: "WRITE_AND_SEND",
       text: combinedText,
       target
-    });
+    }, tabMessageTimeoutMs);
 
     const readResult = await sendTabMessage(tab.id, {
       action: "READ_RESPONSE",
       target,
       sourceText: combinedText,
       previousText: writeResult.previousText || ""
-    });
+    }, tabMessageTimeoutMs);
     const capturedResult = String(readResult.text || "").trim();
 
     if (!capturedResult) {
@@ -511,6 +538,7 @@ if (typeof module !== "undefined" && module.exports) {
     stopHeartbeat,
     loadSessionToken,
     createSessionHello,
+    getTabMessageTimeoutMs,
     handleWakeMessage,
     handleRuntimeMessage,
     waitForSessionHandshake,

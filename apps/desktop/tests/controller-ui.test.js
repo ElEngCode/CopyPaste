@@ -637,6 +637,8 @@ assert.match(rendererJs, /projectContextMenu\.dataset\.open !== "true"/);
 assert.match(rendererJs, /async function createTaskRoadmap/);
 assert.match(rendererJs, /async function applyRoadmapDraft/);
 assert.match(rendererJs, /async function startNextTask/);
+assert.doesNotMatch(rendererJs, /workspaceMode\s*=\s*hasChunks\s*\?\s*"tasks"\s*:\s*"plan"/);
+assert.doesNotMatch(rendererJs, /selectedChunkId\s*\?\s*"tasks"\s*:\s*hasChunks\s*\?\s*"tasks"\s*:\s*"plan"/);
 assert.doesNotMatch(rendererJs, /desktopApi\.approvePrompt\(/);
 assert.doesNotMatch(rendererJs, /desktopApi\.copyPromptToCodex\(/);
 assert.doesNotMatch(rendererJs, /desktopApi\.markPromptDone\(/);

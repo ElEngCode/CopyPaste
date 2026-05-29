@@ -14,6 +14,27 @@
   - `npm.cmd run extension:verify` passed.
   - `npm.cmd run verify` passed.
 
+## 2026-05-29 Extension Busy Recovery And Workspace Jump Fix
+
+- Investigated the user-visible chain:
+  - `master_generate: Ignored stale response (missing requestId).`
+  - `master_claude_improve: Timed out while waiting for AI response.`
+  - `master_gpt_revision: chrome.tabs.sendMessage failed: The message port closed before a response was received.`
+  - `master_gpt_revision: A workflow step is already running.`
+  - `master_gpt_revision: Ignored cancelled late response ...`
+- Root causes:
+  - A dead/lost content-script message port could leave the extension workflow execution locked until the browser callback returned.
+  - Renderer `renderVaultState()` auto-switched the workspace to Tasks whenever any prompt pack chunks existed, even while the user was working in Plan.
+- Fixes:
+  - Added explicit `chrome.tabs.sendMessage` timeouts in `apps/extension/background.js`.
+  - Claude `READ_RESPONSE` message-port timeout is 16 minutes, matching the longer content wait plus buffer.
+  - ChatGPT `READ_RESPONSE` message-port timeout is 9 minutes.
+  - WRITE_AND_SEND message-port timeout is 30 seconds.
+  - Added regression test proving a lost content-script port times out and the next retry is accepted.
+  - Removed automatic workspace switching to Tasks on vault refresh/project state updates.
+- Verification:
+  - `npm.cmd run verify` passed with 19 extension tests and all desktop tests.
+
 ## 2026-05-29 Desktop UX Full Workflow QA (`codex/cleanup-legacy-runtime-and-docs`)
 
 Human QA map summary:

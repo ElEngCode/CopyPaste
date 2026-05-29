@@ -2511,11 +2511,6 @@ function renderVaultState(state) {
   if (elements.defaultProjectsFolder) {
     elements.defaultProjectsFolder.value = getProjectsBasePath(latestVaultState.projectsBasePath);
   }
-  const hasChunks = packs.some((pack) => Array.isArray(pack.chunks) && pack.chunks.length > 0);
-  if (!drawerState.selectedChunkId && !drawerState.selectedPackId) {
-    drawerState.workspaceMode = hasChunks ? "tasks" : "plan";
-  }
-
   renderProjectSelect(projects);
   renderProjectBrowserTree();
   renderWorkspace();
@@ -2921,8 +2916,7 @@ function selectTreeNode(projectId, packId, chunkId) {
   if (elements.projectSelect && drawerState.selectedProjectId) {
     elements.projectSelect.value = drawerState.selectedProjectId;
   }
-  const hasChunks = Array.isArray(latestVaultState.promptPacks) && latestVaultState.promptPacks.some((pack) => Array.isArray(pack.chunks) && pack.chunks.length > 0);
-  drawerState.workspaceMode = drawerState.selectedChunkId ? "tasks" : hasChunks ? "tasks" : "plan";
+  drawerState.workspaceMode = drawerState.selectedChunkId ? "tasks" : "plan";
   renderProjectBrowserTree();
   renderWorkspace();
   renderInspector();

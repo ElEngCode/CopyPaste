@@ -62,6 +62,11 @@ QA/runtime support:
   - no-progress timeout: 5 minutes
 - No-progress timing resets whenever extracted response text changes. This prevents long Claude responses from being discarded while they are still actively streaming.
 - The hard timeout remains as a final safety cap so a stuck browser tab cannot wait forever.
+- Background `chrome.tabs.sendMessage` calls also have action-level timeouts:
+  - `WRITE_AND_SEND`: 30 seconds
+  - ChatGPT `READ_RESPONSE`: 9 minutes
+  - Claude `READ_RESPONSE`: 16 minutes
+- These message-port timeouts prevent a dead content-script connection from leaving the extension `isExecuting` lock stuck and blocking the next user retry.
 
 ### Electron entrypoints
 
