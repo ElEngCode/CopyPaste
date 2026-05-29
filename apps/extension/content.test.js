@@ -204,6 +204,50 @@ test("handleReadResponse waits for send control and ignores Thought placeholders
   });
 });
 
+test("handleReadResponse gives Claude longer defaults and keeps waiting while response text progresses", async () => {
+  const responseNode = { innerText: "", textContent: "" };
+  let pollCount = 0;
+
+  global.document = {
+    querySelector() {
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector !== ".font-claude-response" && selector !== "[class*='claude-response']") {
+        return [];
+      }
+      pollCount += 1;
+      responseNode.innerText = pollCount < 4 ? `Claude long response part ${pollCount}` : "Claude long response final";
+      responseNode.textContent = responseNode.innerText;
+      return [responseNode];
+    }
+  };
+  global.window = global;
+  global.window.hasExtensionRun = false;
+  global.location = { hostname: "claude.ai" };
+
+  const {
+    getReadResponseNoProgressTimeoutMs,
+    getReadResponseTimeoutMs,
+    handleReadResponse
+  } = loadContentModuleForHost("claude.ai");
+
+  assert.equal(getReadResponseTimeoutMs("claude"), 900000);
+  assert.equal(getReadResponseNoProgressTimeoutMs("claude"), 300000);
+
+  const result = await handleReadResponse({
+    target: "claude",
+    intervalMs: 1,
+    timeoutMs: 100,
+    noProgressTimeoutMs: 25
+  });
+
+  assert.deepEqual(result, {
+    ok: true,
+    text: "Claude long response final"
+  });
+});
+
 test("Claude extraction combines response blocks instead of returning only the last paragraph", () => {
   const blocks = [
     {

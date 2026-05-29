@@ -1,5 +1,19 @@
 # Codex Progress
 
+## 2026-05-29 Claude Long Response Timeout Fix
+
+- Reproduced the user-reported failure path: Claude can keep writing a long response beyond the old fixed 180-second `READ_RESPONSE` timeout, causing the desktop session to record `Timed out while waiting for AI response` even though Claude eventually produced output.
+- Fixed `apps/extension/content.js` response waiting:
+  - ChatGPT hard timeout: 8 minutes.
+  - Claude hard timeout: 15 minutes.
+  - ChatGPT no-progress timeout: 3 minutes.
+  - Claude no-progress timeout: 5 minutes.
+  - The no-progress timer resets whenever the extracted response text changes, so long Claude answers are allowed to keep streaming.
+- Added regression coverage in `apps/extension/content.test.js` for Claude progressive long output.
+- Verification:
+  - `npm.cmd run extension:verify` passed.
+  - `npm.cmd run verify` passed.
+
 ## 2026-05-29 Desktop UX Full Workflow QA (`codex/cleanup-legacy-runtime-and-docs`)
 
 Human QA map summary:

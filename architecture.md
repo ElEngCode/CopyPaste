@@ -51,6 +51,18 @@ QA/runtime support:
 - `COPYPASTE_USER_DATA_DIR` can override the desktop Prompt Vault DB root for isolated Electron smoke tests.
 - Manual smoke covered filesystem artifact discovery, master-plan selection, polluted stale-session repair, and Reset Busy recovery.
 
+### 2026-05-29 Extension Response Timeout Model
+
+- Browser-side response capture lives in `apps/extension/content.js`.
+- ChatGPT response capture uses:
+  - hard timeout: 8 minutes
+  - no-progress timeout: 3 minutes
+- Claude response capture uses:
+  - hard timeout: 15 minutes
+  - no-progress timeout: 5 minutes
+- No-progress timing resets whenever extracted response text changes. This prevents long Claude responses from being discarded while they are still actively streaming.
+- The hard timeout remains as a final safety cap so a stuck browser tab cannot wait forever.
+
 ### Electron entrypoints
 
 - Active main entrypoint: `apps/desktop/package.json` -> `main.js` -> `apps/desktop/main.js`.

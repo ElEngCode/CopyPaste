@@ -10,7 +10,10 @@
   var LOG_PREFIX = "[CopyPaste][Content]";
   var REASONING_PLACEHOLDER_SENTINEL = "__COPYPASTE_REASONING_PLACEHOLDER__";
   var READ_RESPONSE_INTERVAL_MS = 1000;
-  var READ_RESPONSE_TIMEOUT_MS = 180000;
+  var CHATGPT_READ_RESPONSE_TIMEOUT_MS = 480000;
+  var CLAUDE_READ_RESPONSE_TIMEOUT_MS = 900000;
+  var CHATGPT_READ_RESPONSE_NO_PROGRESS_TIMEOUT_MS = 180000;
+  var CLAUDE_READ_RESPONSE_NO_PROGRESS_TIMEOUT_MS = 300000;
   var SUBMIT_READY_TIMEOUT_MS = 7000;
   var SUBMIT_READY_INTERVAL_MS = 100;
   var STABLE_RESPONSE_POLLS = 2;
@@ -115,6 +118,18 @@
 
   function isClaudeHost() {
     return String(root.location && root.location.hostname || "").toLowerCase().indexOf("claude.ai") !== -1;
+  }
+
+  function normalizeTarget(target) {
+    return String(target || "").toLowerCase() === "claude" || isClaudeHost() ? "claude" : "chatgpt";
+  }
+
+  function getReadResponseTimeoutMs(target) {
+    return normalizeTarget(target) === "claude" ? CLAUDE_READ_RESPONSE_TIMEOUT_MS : CHATGPT_READ_RESPONSE_TIMEOUT_MS;
+  }
+
+  function getReadResponseNoProgressTimeoutMs(target) {
+    return normalizeTarget(target) === "claude" ? CLAUDE_READ_RESPONSE_NO_PROGRESS_TIMEOUT_MS : CHATGPT_READ_RESPONSE_NO_PROGRESS_TIMEOUT_MS;
   }
 
   function queryFirst(selectors, scope) {
@@ -896,10 +911,13 @@
   function handleReadResponse(options) {
     var doc = getDocument();
     var intervalMs = options && options.intervalMs ? Number(options.intervalMs) : READ_RESPONSE_INTERVAL_MS;
-    var timeoutMs = options && options.timeoutMs ? Number(options.timeoutMs) : READ_RESPONSE_TIMEOUT_MS;
+    var target = options && options.target ? String(options.target) : "";
+    var timeoutMs = options && options.timeoutMs ? Number(options.timeoutMs) : getReadResponseTimeoutMs(target);
+    var noProgressTimeoutMs = options && options.noProgressTimeoutMs ? Number(options.noProgressTimeoutMs) : getReadResponseNoProgressTimeoutMs(target);
     var previousText = options && options.previousText ? String(options.previousText) : "";
     var sourceText = options && options.sourceText ? String(options.sourceText) : "";
     var startedAt = Date.now();
+    var lastProgressAt = startedAt;
     var lastText = "";
     var stablePolls = 0;
 
@@ -907,6 +925,12 @@
       var intervalId = setInterval(function pollDom() {
         try {
           if (Date.now() - startedAt > timeoutMs) {
+            clearInterval(intervalId);
+            reject(new Error("Timed out while waiting for AI response."));
+            return;
+          }
+
+          if (Date.now() - lastProgressAt > noProgressTimeoutMs) {
             clearInterval(intervalId);
             reject(new Error("Timed out while waiting for AI response."));
             return;
@@ -926,6 +950,7 @@
             stablePolls += 1;
           } else {
             lastText = text;
+            lastProgressAt = Date.now();
             stablePolls = 1;
           }
 
@@ -997,6 +1022,8 @@
       extractLatestFinalAnswerText: extractLatestFinalAnswerText,
       handleReadResponse: handleReadResponse,
       handleWriteAndSend: handleWriteAndSend,
+      getReadResponseNoProgressTimeoutMs: getReadResponseNoProgressTimeoutMs,
+      getReadResponseTimeoutMs: getReadResponseTimeoutMs,
       resolveInputContainer: resolveInputContainer,
       sanitizeText: sanitizeText
     };
