@@ -2,6 +2,55 @@
 
 ## Active Runtime X-Ray (Current)
 
+### 2026-05-29 Planning Product QA X-Ray
+
+CopyPaste is now treated as a project-planning machine, not a generic prompt vault. The primary human workflow is:
+
+`Project Idea -> Generate Master Plan -> Improve/Revise Master Plan -> Save Master Plan & Generate Roadmap -> Improve/Revise Roadmap -> Save Roadmap -> Create Tasks -> Improve/Approve/Copy/Run Tasks`.
+
+Main workflow rules:
+
+- Main Plan UI exposes explicit user-intent buttons only: Generate, Improve, Revise, Save, Retry, Create, Cancel, and Reset Busy.
+- Internal `Apply Master Plan` and `Apply Roadmap` operations remain store/file operations behind Save actions, not primary workflow buttons.
+- Every AI send carries `requestId`, `projectId`, and `activeContext`; responses are ignored unless they match the current project session request.
+- Old extension responses without metadata are backfilled in `apps/desktop/main.js` only when exactly one pending workflow request exists for that socket.
+- Legacy seven-stage debate remains hidden unless enabled by main-process feature flag.
+
+Prompt Vault session source of truth:
+
+- Desktop DB `planningSessions[projectId]` is canonical for planning phase, busy/request fields, draft version ids, save flags, debate round count, last provider, and error log.
+- `planning-session.json` is not used as primary state.
+- `repairPlanningSessionAfterStaleResponse(projectId)` clears dirty busy/request/context fields after stale or missing-request failures while keeping `lastError` visible and non-blocking.
+- Repair writes only when busy/request/context fields are actually dirty; a visible stale `lastError` alone must not trigger repeated DB writes.
+- A valid active request id is never auto-cancelled only because an older stale error remains visible.
+
+Project Browser artifact model:
+
+- `prompt-vault.js` builds normalized per-project artifacts from filesystem and DB:
+  - `idea`, `architecture`, `master_plan`, `roadmap`, `roadmap_version`, `task_file`, `task_prompt`, `task_version`, `prompt_pack`.
+- Browser groups are Overview, Roadmap Versions, Tasks, Generated Task Prompts, Task Versions, and Prompt Packs / Legacy.
+- Filesystem-only artifacts are visible even when DB records are missing.
+- DB-only task prompts are visible even when files are missing.
+- Empty/corrupt/recoverable task files are badged instead of hidden.
+
+Button state model:
+
+- `getPlanningButtonState(...)` and `getTaskButtonState(...)` are pure state contracts for visible/enabled/label/disabled-reason/action.
+- `lastError` never disables workflow actions by itself.
+- `busyState && activeRequestId` is the only planning condition that shows Cancel and wait cursor behavior.
+- Reset Busy clears only `busyState`, `activeRequestId`, and `activeContext`; drafts and saved files stay untouched.
+
+Roadmap and task iteration:
+
+- Roadmap generation creates a draft version shown in the center editor. It is not written to `plan-roadmap.md` until Save Roadmap.
+- Roadmap drafts can be improved with Claude or revised with GPT before save. Invalid roadmap responses are saved as failed versions and never replace the current good draft.
+- Task creation writes draft task prompts. Tasks can be improved with Claude, revised with GPT, saved as proposed versions, applied, approved, copied to Codex, marked done, and improved again from run notes.
+
+QA/runtime support:
+
+- `COPYPASTE_USER_DATA_DIR` can override the desktop Prompt Vault DB root for isolated Electron smoke tests.
+- Manual smoke covered filesystem artifact discovery, master-plan selection, polluted stale-session repair, and Reset Busy recovery.
+
 ### Electron entrypoints
 
 - Active main entrypoint: `apps/desktop/package.json` -> `main.js` -> `apps/desktop/main.js`.

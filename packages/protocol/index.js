@@ -612,7 +612,7 @@
     if (!masterPlan) throw new Error("Applied master plan is required.");
     if (!roadmapDraft) throw new Error("Current roadmap draft is required.");
     const feedback = asText(userFeedback)
-      || "Review this roadmap for missing dependencies, ambiguous scope, and incorrect ordering. Return corrected JSON only.";
+      || "Review this roadmap for missing dependencies, ambiguous scope, incorrect ordering, missing verification steps, and tasks that are too large or too vague. Return corrected JSON only.";
     return [
       "Correct this task roadmap JSON.",
       "",
@@ -629,6 +629,123 @@
       "",
       "Return corrected JSON only. No markdown fences. No commentary."
     ].join("\n");
+  }
+
+  function buildRoadmapGptRevisionPrompt(project = {}, appliedMasterPlan = "", currentRoadmapDraft = "", claudeResponseOrNull = null, userFeedback = "") {
+    const masterPlan = asText(appliedMasterPlan);
+    const roadmapDraft = asText(currentRoadmapDraft);
+    if (!masterPlan) throw new Error("Applied master plan is required.");
+    if (!roadmapDraft) throw new Error("Current roadmap draft is required.");
+    const lines = [
+      "Revise this task roadmap JSON into the final corrected draft.",
+      "",
+      `Project name: ${asText(project.name) || "Untitled Project"}`,
+      asText(project.path) ? `Project path: ${asText(project.path)}` : "",
+      "",
+      "Applied master plan:",
+      masterPlan,
+      "",
+      "Current roadmap draft JSON:",
+      roadmapDraft,
+      ""
+    ];
+    const claudeText = asText(claudeResponseOrNull);
+    if (claudeText) {
+      lines.push("Claude roadmap critique or proposed correction:");
+      lines.push(claudeText);
+      lines.push("");
+    }
+    const feedback = asText(userFeedback);
+    if (feedback) {
+      lines.push("User revision notes:");
+      lines.push(feedback);
+      lines.push("");
+    }
+    lines.push("Return corrected JSON only. No markdown fences. No commentary.");
+    return lines.filter((line) => line !== "").join("\n");
+  }
+
+  function formatRunHistory(runHistory = []) {
+    const runs = Array.isArray(runHistory) ? runHistory : [];
+    return runs.length
+      ? runs.map((run, index) => `- ${index + 1}. ${asText(run.note || run.result || run.verificationSummary || "") || "No details provided."}`)
+      : ["- No previous run history."];
+  }
+
+  function buildTaskClaudeImprovePrompt(project = {}, activeMasterPlan = "", savedRoadmap = "", taskPrompt = {}, roadmapItem = {}, userFeedback = "", runHistory = []) {
+    const feedback = asText(userFeedback)
+      || "Improve this Codex task prompt so it is clearer, more executable, more tightly scoped, and easier to verify. Do not expand scope beyond this one roadmap item. Return the improved task prompt only.";
+    return [
+      "Improve this Codex task prompt.",
+      "",
+      `Project name: ${asText(project.name) || "Untitled Project"}`,
+      `Project path: ${asText(project.path) || "(project path not set)"}`,
+      "",
+      "Applied master plan:",
+      asText(activeMasterPlan) || "No active master plan provided.",
+      "",
+      "Saved roadmap:",
+      asText(savedRoadmap) || "No saved roadmap provided.",
+      "",
+      "Roadmap item:",
+      JSON.stringify(roadmapItem || {}, null, 2),
+      "",
+      "Current task status:",
+      asText(taskPrompt.status) || "draft",
+      "",
+      "Current task prompt:",
+      asText(taskPrompt.content || taskPrompt.prompt) || "(empty task prompt)",
+      "",
+      "Run notes:",
+      ...formatRunHistory(runHistory),
+      "",
+      "User feedback or default improvement instruction:",
+      feedback,
+      "",
+      "Return the improved task prompt text only."
+    ].join("\n");
+  }
+
+  function buildTaskGptRevisionPrompt(project = {}, activeMasterPlan = "", savedRoadmap = "", taskPrompt = {}, roadmapItem = {}, claudeResponseOrNull = null, userFeedback = "", runHistory = []) {
+    const lines = [
+      "Revise this Codex task prompt into a final improved version.",
+      "",
+      `Project name: ${asText(project.name) || "Untitled Project"}`,
+      `Project path: ${asText(project.path) || "(project path not set)"}`,
+      "",
+      "Applied master plan:",
+      asText(activeMasterPlan) || "No active master plan provided.",
+      "",
+      "Saved roadmap:",
+      asText(savedRoadmap) || "No saved roadmap provided.",
+      "",
+      "Roadmap item:",
+      JSON.stringify(roadmapItem || {}, null, 2),
+      "",
+      "Current task status:",
+      asText(taskPrompt.status) || "draft",
+      "",
+      "Current task prompt:",
+      asText(taskPrompt.content || taskPrompt.prompt) || "(empty task prompt)",
+      "",
+      "Run notes:",
+      ...formatRunHistory(runHistory),
+      ""
+    ];
+    const claudeText = asText(claudeResponseOrNull);
+    if (claudeText) {
+      lines.push("Claude task critique or proposed improvement:");
+      lines.push(claudeText);
+      lines.push("");
+    }
+    const feedback = asText(userFeedback);
+    if (feedback) {
+      lines.push("User revision notes:");
+      lines.push(feedback);
+      lines.push("");
+    }
+    lines.push("Return the final improved task prompt text only.");
+    return lines.filter((line) => line !== "").join("\n");
   }
 
   function buildTaskImprovePrompt(project = {}, taskPrompt = {}, activeMasterPlan = "", runHistory = []) {
@@ -775,7 +892,10 @@
     buildMasterPlanGptRevisionPrompt,
     buildRoadmapGeneratePrompt,
     buildRoadmapClaudeImprovePrompt,
+    buildRoadmapGptRevisionPrompt,
     buildRoadmapPrompt,
+    buildTaskClaudeImprovePrompt,
+    buildTaskGptRevisionPrompt,
     buildTaskImprovePrompt,
     parseRoadmapResponse,
     validateRoadmap,

@@ -164,8 +164,13 @@ function getExtensionStatusMessage(state) {
 
 function getVaultStore() {
   if (!vaultStore) {
+    const userDataOverride = String(process.env.COPYPASTE_USER_DATA_DIR || "").trim();
+    const dbRoot = userDataOverride || app.getPath("userData");
+    if (userDataOverride) {
+      fs.mkdirSync(dbRoot, { recursive: true });
+    }
     vaultStore = createVaultStore({
-      dbPath: path.join(app.getPath("userData"), "prompt-vault-db.json")
+      dbPath: path.join(dbRoot, "prompt-vault-db.json")
     });
   }
 

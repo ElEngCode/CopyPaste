@@ -489,7 +489,7 @@ function sanitizeDatabase(rawDatabase) {
   const projects = Array.isArray(source.projects) ? source.projects : [];
   const promptPacks = Array.isArray(source.promptPacks) ? source.promptPacks : [];
 
-  return {
+  const sanitized = {
     version: DB_VERSION,
     schemaVersion: DB_SCHEMA_VERSION,
     projectsBasePath: normalizeWindowsPath(source.projectsBasePath) || DEFAULT_PROJECTS_BASE_PATH,
@@ -1084,7 +1084,7 @@ function createVaultStore({ dbPath }) {
     const sanitized = sanitizeDatabase(database);
     sanitized.updatedAt = createTimestamp();
     writeJsonFile(dbPath, sanitized);
-    return sanitized;
+    return decorateStateWithProjectArtifacts(sanitized);
   }
 
   function getOrInitPlanningSession(projectId) {
@@ -2117,6 +2117,7 @@ function createVaultStore({ dbPath }) {
     const version = {
       id: createId("version"),
       source: normalizeString(input && input.source) || "ai_roadmap",
+      status: normalizeString(input && input.status) || "draft",
       promptSnapshot: String(input && input.promptSnapshot || ""),
       responseText,
       createdAt: createTimestamp(),
@@ -2463,13 +2464,19 @@ function createVaultStore({ dbPath }) {
     const database = readDatabase();
     const taskPrompt = (database.taskPrompts || []).find((item) => item.id === taskPromptId);
     if (!taskPrompt) throw new Error("Task prompt not found.");
+    const noteText = String(input && input.note || "").trim();
+    const resultText = String(input && input.result || "").trim();
+    const verificationText = String(input && input.verificationSummary || "").trim();
+    if (!noteText && !resultText && !verificationText) {
+      throw new Error("Add a run note or completion summary before marking this task done.");
+    }
     const run = sanitizeTaskRun({
       id: createId("task_run"),
       taskPromptId: taskPrompt.id,
-      note: String(input && input.note || ""),
-      result: String(input && input.result || ""),
+      note: noteText,
+      result: resultText,
       commitHash: normalizeString(input && input.commitHash),
-      verificationSummary: String(input && input.verificationSummary || ""),
+      verificationSummary: verificationText,
       createdAt: createTimestamp()
     });
     database.taskRuns.unshift(run);
@@ -2601,7 +2608,278 @@ function createPromptFromRoadmapItem({ project, pack, item, order }) {
       runHistory: [],
       createdAt: createTimestamp()
     });
+}
+
+function hasCompleteTaskPromptContent(content) {
+  const text = String(content || "");
+  if (!text.trim()) return false;
+  return /^#\s+\S/m.test(text)
+    && text.includes("Project path")
+    && text.includes("Goal")
+    && text.includes("Acceptance Criteria")
+    && text.includes("Verification Commands");
+}
+
+function getArtifactFileStatus(filePath, content, scaffoldMatcher) {
+  if (!filePath || !fs.existsSync(filePath)) return "missing";
+  const text = String(content || "");
+  if (!text.trim()) return "empty";
+  if (typeof scaffoldMatcher === "function" && scaffoldMatcher(text)) return "missing";
+  return "saved";
+}
+
+function getContentPreview(content) {
+  return String(content || "").replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
+function getTaskOrderFromFileName(fileName) {
+  const match = String(fileName || "").match(/^task-(\d{3})-/i);
+  return match ? Number(match[1]) : 9999;
+}
+
+function createArtifact(input = {}) {
+  return {
+    id: normalizeString(input.id),
+    projectId: normalizeString(input.projectId),
+    type: normalizeString(input.type),
+    group: normalizeString(input.group),
+    label: normalizeString(input.label) || "Artifact",
+    path: normalizeWindowsPath(input.path),
+    existsOnDisk: Boolean(input.existsOnDisk),
+    existsInDb: Boolean(input.existsInDb),
+    status: normalizeString(input.status) || "missing",
+    order: Number.isFinite(Number(input.order)) ? Number(input.order) : 0,
+    contentPreview: getContentPreview(input.contentPreview || input.content),
+    content: String(input.content || ""),
+    editable: Boolean(input.editable),
+    refId: normalizeString(input.refId),
+    taskPromptId: normalizeString(input.taskPromptId),
+    roadmapItemId: normalizeString(input.roadmapItemId),
+    versionId: normalizeString(input.versionId),
+    packId: normalizeString(input.packId)
+  };
+}
+
+function buildProjectArtifacts(database, project) {
+  if (!project || !project.id) return [];
+  const artifacts = [];
+  const projectFiles = getProjectPaths(project.path || "");
+  const activePack = database.promptPacks.find((pack) => pack.id === project.activePromptPackId)
+    || database.promptPacks.filter((pack) => pack.projectId === project.id)
+      .sort((left, right) => String(right.updatedAt || right.createdAt || "").localeCompare(String(left.updatedAt || left.createdAt || "")))[0]
+    || null;
+  const codexContent = readTextIfExists(projectFiles.codex);
+  const architectureContent = readTextIfExists(projectFiles.architecture);
+  const masterPlanContent = readTextIfExists(projectFiles.masterplan);
+  const roadmapContent = readTextIfExists(projectFiles.roadmap);
+
+  artifacts.push(createArtifact({
+    id: `idea:${project.id}`,
+    projectId: project.id,
+    type: "idea",
+    group: "overview",
+    label: "Project Idea / codex.md",
+    path: projectFiles.codex,
+    existsOnDisk: fs.existsSync(projectFiles.codex),
+    existsInDb: Boolean(String(project.idea || "").trim()),
+    status: codexContent.trim() || String(project.idea || "").trim() ? "draft" : "empty",
+    order: 1,
+    content: codexContent || project.idea || "",
+    editable: true
+  }));
+  artifacts.push(createArtifact({
+    id: `architecture:${project.id}`,
+    projectId: project.id,
+    type: "architecture",
+    group: "overview",
+    label: "Architecture / architecture.md",
+    path: projectFiles.architecture,
+    existsOnDisk: fs.existsSync(projectFiles.architecture),
+    existsInDb: false,
+    status: getArtifactFileStatus(projectFiles.architecture, architectureContent, null),
+    order: 2,
+    content: architectureContent,
+    editable: true
+  }));
+  artifacts.push(createArtifact({
+    id: `master_plan:${project.id}`,
+    projectId: project.id,
+    type: "master_plan",
+    group: "overview",
+    label: "Master Plan / masterplan.md",
+    path: projectFiles.masterplan,
+    existsOnDisk: fs.existsSync(projectFiles.masterplan),
+    existsInDb: Boolean(project.activeMasterPlanVersionId || String(project.masterPlan || "").trim()),
+    status: getArtifactFileStatus(projectFiles.masterplan, masterPlanContent, isMasterPlanScaffold),
+    order: 3,
+    content: isMasterPlanScaffold(masterPlanContent) ? String(project.masterPlan || "") : masterPlanContent,
+    editable: true,
+    versionId: project.activeMasterPlanVersionId
+  }));
+  artifacts.push(createArtifact({
+    id: `roadmap:${project.id}`,
+    projectId: project.id,
+    type: "roadmap",
+    group: "overview",
+    label: "Task Roadmap / plan-roadmap.md",
+    path: projectFiles.roadmap,
+    existsOnDisk: fs.existsSync(projectFiles.roadmap),
+    existsInDb: Boolean(project.activeRoadmapVersionId || (activePack && activePack.roadmap && activePack.roadmap.items && activePack.roadmap.items.length)),
+    status: getArtifactFileStatus(projectFiles.roadmap, roadmapContent, isRoadmapScaffold),
+    order: 4,
+    content: roadmapContent,
+    editable: true,
+    versionId: project.activeRoadmapVersionId,
+    packId: activePack && activePack.id
+  }));
+
+  if (activePack && Array.isArray(activePack.roadmapVersions)) {
+    activePack.roadmapVersions
+      .slice()
+      .reverse()
+      .forEach((version, index) => {
+        artifacts.push(createArtifact({
+          id: `roadmap_version:${version.id}`,
+          projectId: project.id,
+          type: "roadmap_version",
+          group: "roadmap_versions",
+          label: `${String(version.status || "").toLowerCase() === "failed" ? "Failed" : version.appliedAt ? "Saved" : "Draft"} Roadmap v${index + 1}`,
+          existsOnDisk: false,
+          existsInDb: true,
+          status: normalizeString(version.status) || (version.appliedAt ? "saved" : "draft"),
+          order: index + 1,
+          content: version.responseText,
+          editable: true,
+          versionId: version.id,
+          packId: activePack.id
+        }));
+      });
   }
+
+  const taskFiles = listTaskFiles(projectFiles.tasksDir).map((fileName) => {
+    const filePath = path.join(projectFiles.tasksDir, fileName);
+    return { fileName, filePath, content: readTextIfExists(filePath) };
+  });
+  const taskFileByPath = new Map(taskFiles.map((file) => [file.filePath.toLowerCase(), file]));
+  const consumedTaskFilePaths = new Set();
+  const taskPrompts = (database.taskPrompts || []).filter((prompt) => prompt.projectId === project.id);
+
+  for (const prompt of taskPrompts) {
+    const expectedPath = prompt.taskFilePath || path.join(projectFiles.tasksDir, prompt.taskFileName || `task-${String(prompt.order || 1).padStart(3, "0")}-${slugify(prompt.title)}.md`);
+    const file = taskFileByPath.get(String(expectedPath || "").toLowerCase());
+    if (file) consumedTaskFilePaths.add(file.filePath.toLowerCase());
+    const content = file ? file.content : prompt.content;
+    const status = file
+      ? hasCompleteTaskPromptContent(file.content) ? normalizeString(prompt.status) || "draft" : file.content.trim() ? "corrupt" : "empty"
+      : "missing";
+    artifacts.push(createArtifact({
+      id: `task_prompt:${prompt.id}`,
+      projectId: project.id,
+      type: "task_prompt",
+      group: "tasks",
+      label: `Task ${String(prompt.order || 1).padStart(3, "0")} - ${prompt.title}`,
+      path: expectedPath,
+      existsOnDisk: Boolean(file),
+      existsInDb: true,
+      status,
+      order: prompt.order,
+      content,
+      editable: true,
+      refId: prompt.id,
+      taskPromptId: prompt.id,
+      roadmapItemId: prompt.roadmapItemId,
+      packId: activePack && activePack.id
+    }));
+    artifacts.push(createArtifact({
+      id: `generated_task_prompt:${prompt.id}`,
+      projectId: project.id,
+      type: "task_prompt",
+      group: "generated_task_prompts",
+      label: `Prompt ${String(prompt.order || 1).padStart(3, "0")} - ${prompt.title}`,
+      path: expectedPath,
+      existsOnDisk: Boolean(file),
+      existsInDb: true,
+      status: normalizeString(prompt.status) || "draft",
+      order: prompt.order,
+      content: prompt.content,
+      editable: true,
+      refId: prompt.id,
+      taskPromptId: prompt.id,
+      roadmapItemId: prompt.roadmapItemId,
+      packId: activePack && activePack.id
+    }));
+    for (const version of (database.taskPromptVersions || []).filter((item) => item.taskPromptId === prompt.id)) {
+      artifacts.push(createArtifact({
+        id: `task_version:${version.id}`,
+        projectId: project.id,
+        type: "task_version",
+        group: "task_versions",
+        label: `${version.source || "Version"} - ${prompt.title}`,
+        existsOnDisk: false,
+        existsInDb: true,
+        status: normalizeString(version.status) || "proposed",
+        order: prompt.order,
+        content: version.content,
+        editable: false,
+        refId: version.id,
+        taskPromptId: prompt.id,
+        roadmapItemId: prompt.roadmapItemId,
+        versionId: version.id
+      }));
+    }
+  }
+
+  for (const file of taskFiles) {
+    if (consumedTaskFilePaths.has(file.filePath.toLowerCase())) continue;
+    const complete = hasCompleteTaskPromptContent(file.content);
+    artifacts.push(createArtifact({
+      id: `task_file:${file.filePath}`,
+      projectId: project.id,
+      type: "task_file",
+      group: "tasks",
+      label: file.fileName,
+      path: file.filePath,
+      existsOnDisk: true,
+      existsInDb: false,
+      status: complete ? "recoverable" : file.content.trim() ? "corrupt" : "empty",
+      order: getTaskOrderFromFileName(file.fileName),
+      content: file.content,
+      editable: complete
+    }));
+  }
+
+  for (const pack of (database.promptPacks || []).filter((entry) => entry.projectId === project.id)) {
+    artifacts.push(createArtifact({
+      id: `prompt_pack:${pack.id}`,
+      projectId: project.id,
+      type: "prompt_pack",
+      group: "prompt_packs",
+      label: pack.title,
+      path: pack.exportPath,
+      existsOnDisk: Boolean(pack.exportPath && fs.existsSync(pack.exportPath)),
+      existsInDb: true,
+      status: pack.legacy ? "legacy" : "generated",
+      order: 0,
+      content: pack.sourceText,
+      editable: false,
+      packId: pack.id
+    }));
+  }
+
+  return artifacts.sort((left, right) => {
+    if (left.group !== right.group) return left.group.localeCompare(right.group);
+    return Number(left.order || 0) - Number(right.order || 0) || left.label.localeCompare(right.label);
+  });
+}
+
+function decorateStateWithProjectArtifacts(database) {
+  const state = JSON.parse(JSON.stringify(database));
+  state.projectArtifacts = {};
+  for (const project of state.projects || []) {
+    state.projectArtifacts[project.id] = buildProjectArtifacts(database, project);
+  }
+  return state;
+}
 
   function getTaskFileName(taskPrompt) {
     const stableNumber = Number(taskPrompt.order || 0) || 1;
@@ -2618,13 +2896,7 @@ function createPromptFromRoadmapItem({ project, pack, item, order }) {
   }
 
   function isCompleteTaskPromptFile(filePath) {
-    const content = readTextIfExists(filePath);
-    if (!content.trim()) return false;
-    return /^#\s+\S/m.test(content)
-      && content.includes("Project path")
-      && content.includes("Goal")
-      && content.includes("Acceptance Criteria")
-      && content.includes("Verification Commands");
+    return hasCompleteTaskPromptContent(readTextIfExists(filePath));
   }
 
   function findTaskPromptForItem(database, projectId, roadmapItemId) {

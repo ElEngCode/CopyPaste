@@ -48,6 +48,9 @@ assert.match(preloadSource, /connectInstalledExtension:\s*\(\)\s*=>\s*ipcRendere
 assert.match(preloadSource, /copyExtensionPath:\s*\(\)\s*=>\s*ipcRenderer\.invoke\(EXTENSION_COPY_PATH_CHANNEL\)/);
 assert.match(preloadSource, /copyExtensionsUrl:\s*\(\)\s*=>\s*ipcRenderer\.invoke\(EXTENSION_COPY_URL_CHANNEL\)/);
 assert.match(preloadSource, /openExtensionFolder:\s*\(\)\s*=>\s*ipcRenderer\.invoke\(EXTENSION_OPEN_FOLDER_CHANNEL\)/);
+assert.match(preloadSource, /buildRoadmapGptRevisionPrompt/);
+assert.match(preloadSource, /buildTaskClaudeImprovePrompt/);
+assert.match(preloadSource, /buildTaskGptRevisionPrompt/);
 assert.doesNotMatch(preloadSource, /EXTENSION_LAUNCH_CHROME/);
 assert.match(mainSource, /ipcMain\.handle\(TRIGGER_WORKFLOW_CHANNEL/);
 assert.doesNotMatch(mainSource, /ipcMain\.on\(TRIGGER_WORKFLOW_CHANNEL/);
@@ -71,6 +74,7 @@ assert.doesNotMatch(mainSource, /chrome-copypaste-profile-v3/);
 assert.doesNotMatch(mainSource, /runProcessCapture\("powershell\.exe"/);
 assert.match(mainSource, /COPYPASTE_EXTENSION_ID\s*=\s*"akbkdpfnbkafgnfanoddlkdlgdlkacdk"/);
 assert.match(mainSource, /chrome-extension:\/\/\$\{COPYPASTE_EXTENSION_ID\}\/wake\.html/);
+assert.match(mainSource, /COPYPASTE_USER_DATA_DIR/);
 assert.match(mainSource, /EXTENSION_SETUP_ONCE_CHANNEL/);
 assert.match(mainSource, /EXTENSION_CONNECT_INSTALLED_CHANNEL/);
 assert.match(mainSource, /EXTENSION_COPY_PATH_CHANNEL/);

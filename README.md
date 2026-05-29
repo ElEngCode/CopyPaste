@@ -34,16 +34,22 @@ npm.cmd run verify
 
 ## Workflow
 
-`Project Idea -> Master Plan Draft -> Task Roadmap Draft -> Tasks -> Codex`
+`Project Idea -> Master Plan Draft -> Task Roadmap Draft -> Task Prompts -> Approved Codex Handoff`
 
 Operational flow:
 1. Create/select project.
 2. Write the project idea, then click **Generate Master Plan**.
-3. Optionally click **Improve with Claude** and **Revise with GPT** as manual debate rounds.
+3. Optionally click **Improve with Claude** and **Revise with GPT** as manual master-plan rounds.
 4. Click **Save Master Plan & Create Task Roadmap**.
-5. Optionally click **Improve Roadmap with Claude**, then click **Save Roadmap**.
-6. Use **Create Next Task** for dependency-gated task creation or **Create All Tasks** for local idempotent bulk task files.
-7. Improve/approve/copy Codex handoff, then mark tasks done to unblock dependency-gated next-task work.
+5. Review the roadmap draft. Optionally click **Improve Roadmap with Claude** or **Revise Roadmap with GPT** before saving.
+6. Click **Save Roadmap** to write `plan-roadmap.md`.
+7. Use **Create Next Task** for dependency-gated task creation or **Create All Tasks** for local idempotent bulk task files.
+8. Open each task in Project Browser, edit or improve it with Claude/GPT, apply the preferred proposed version, then approve it.
+9. **Copy to Codex** is gated by approved task status. Add run notes and use **Improve Again from Run Notes** when execution fails or needs a tighter prompt.
+
+The main workflow does not expose internal **Apply Master Plan** or **Apply Roadmap** controls. Those happen internally when the user clicks the corresponding Save action.
+
+If an AI response is stale, missing a request id, cancelled, or delayed, the session recovers locally: busy state is cleared, Cancel hides, the error remains visible, and retry buttons stay enabled when prerequisites are present.
 
 ## Where project files are saved
 

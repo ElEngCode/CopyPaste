@@ -165,6 +165,52 @@ const improveTaskPrompt = protocol.buildTaskImprovePrompt(
 );
 assert.match(improveTaskPrompt, /Return only improved prompt/);
 
+const roadmapGptRevisionPrompt = protocol.buildRoadmapGptRevisionPrompt(
+  { name: "Planner", path: "F:\\Projects\\Planner" },
+  "# Master Plan\n\nBody",
+  "{\"items\":[{\"id\":\"roadmap_1\",\"order\":1,\"title\":\"Task\",\"goal\":\"Goal\",\"why\":\"Why\",\"targetFiles\":[],\"researchNeeded\":[],\"acceptanceCriteria\":[],\"verificationCommands\":[\"npm.cmd run verify\"],\"dependsOn\":[],\"parallelGroup\":\"\"}]}",
+  "Claude roadmap critique",
+  ""
+);
+assert.match(roadmapGptRevisionPrompt, /Claude roadmap critique/);
+assert.match(roadmapGptRevisionPrompt, /Return corrected JSON only/);
+const roadmapGptRevisionNoClaude = protocol.buildRoadmapGptRevisionPrompt(
+  { name: "Planner" },
+  "# Master Plan\n\nBody",
+  "{\"items\":[]}",
+  null,
+  "tighten scope"
+);
+assert.doesNotMatch(roadmapGptRevisionNoClaude, /Claude roadmap critique/);
+assert.match(roadmapGptRevisionNoClaude, /tighten scope/);
+
+const taskClaudePrompt = protocol.buildTaskClaudeImprovePrompt(
+  { name: "Planner", path: "F:\\Projects\\Planner" },
+  "# Master Plan\n\nBody",
+  "# Roadmap\n\nTask 1",
+  { title: "Task 1", status: "draft", content: "Current task prompt" },
+  { id: "roadmap_1", title: "Task 1", goal: "Goal" },
+  "",
+  [{ note: "Codex failed verification." }]
+);
+assert.match(taskClaudePrompt, /Improve this Codex task prompt/);
+assert.match(taskClaudePrompt, /Codex failed verification/);
+assert.match(taskClaudePrompt, /Current task status:\ndraft/);
+
+const taskGptPrompt = protocol.buildTaskGptRevisionPrompt(
+  { name: "Planner", path: "F:\\Projects\\Planner" },
+  "# Master Plan\n\nBody",
+  "# Roadmap\n\nTask 1",
+  { title: "Task 1", status: "draft", content: "Current task prompt" },
+  { id: "roadmap_1", title: "Task 1", goal: "Goal" },
+  "Claude improved task prompt",
+  "",
+  []
+);
+assert.match(taskGptPrompt, /Claude task critique or proposed improvement/);
+assert.match(taskGptPrompt, /Claude improved task prompt/);
+assert.match(taskGptPrompt, /Return the final improved task prompt text only/);
+
 const parsedDirectRoadmap = protocol.parseRoadmapResponse(JSON.stringify({
   items: [{
     id: "roadmap_1",

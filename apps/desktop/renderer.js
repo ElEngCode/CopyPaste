@@ -61,6 +61,7 @@ const elements = {
   connectionText: null,
   readinessText: null,
   statusDetail: null,
+  workspaceHeading: null,
   extensionSetupHint: null,
   nextTarget: null,
   currentStage: null,
@@ -79,7 +80,10 @@ const elements = {
   saveWorkspaceTaskButton: null,
   copyWorkspaceTaskButton: null,
   sendWorkspaceTaskButton: null,
+  reviseWorkspaceTaskGptButton: null,
+  applyImprovedTaskVersionButton: null,
   copyWorkspaceLauncherButton: null,
+  improveFromRunNotesButton: null,
   workspacePromptRunNote: null,
   saveProjectBriefButton: null,
   planPrimaryActionButton: null,
@@ -90,6 +94,7 @@ const elements = {
   saveMasterPlanCreateRoadmapButton: null,
   retryCreateRoadmapButton: null,
   improveRoadmapClaudeButton: null,
+  reviseRoadmapGptButton: null,
   saveRoadmapButton: null,
   createNextTaskButton: null,
   createAllTasksButton: null,
@@ -127,6 +132,7 @@ const elements = {
 let latestVaultState = {
   projects: [],
   promptPacks: [],
+  projectArtifacts: {},
   projectsBasePath: DEFAULT_PROJECTS_BASE_PATH
 };
 let latestWorkflowStatus = {
@@ -139,6 +145,9 @@ const drawerState = {
   selectedProjectId: "",
   selectedPackId: "",
   selectedChunkId: "",
+  selectedTaskPromptId: "",
+  selectedTaskVersionId: "",
+  selectedArtifactId: "",
   workspaceMode: "plan",
   inspectorTab: "ai",
   activeWorkflowContext: "debate_plan",
@@ -147,6 +156,7 @@ const drawerState = {
   activeDebateWorkflowId: "",
   activeTaskPromptId: "",
   pendingDebatePrompt: null,
+  pendingTaskRequests: {},
   currentPlanningSession: null,
   lastCreateAllResult: null,
   showAllProjects: false
@@ -762,6 +772,49 @@ function getVisibleProjectBrowserNodes(nodes, options = {}) {
   return safeNodes.slice(0, 1);
 }
 
+function getProjectArtifacts(projectId) {
+  const artifactsByProject = latestVaultState && latestVaultState.projectArtifacts && typeof latestVaultState.projectArtifacts === "object"
+    ? latestVaultState.projectArtifacts
+    : {};
+  return Array.isArray(artifactsByProject[projectId]) ? artifactsByProject[projectId] : [];
+}
+
+function findProjectArtifact(projectId, artifactId) {
+  const safeArtifactId = String(artifactId || "");
+  return getProjectArtifacts(projectId).find((artifact) => artifact.id === safeArtifactId) || null;
+}
+
+function getArtifactStatusLabel(status) {
+  const normalized = String(status || "missing").replace(/_/g, " ");
+  return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function getArtifactGroupLabel(group) {
+  const labels = {
+    overview: "Overview",
+    roadmap_versions: "Roadmap Versions",
+    tasks: "Tasks",
+    generated_task_prompts: "Generated Task Prompts",
+    task_versions: "Task Versions",
+    prompt_packs: "Prompt Packs / Legacy"
+  };
+  return labels[group] || group;
+}
+
+function getTaskPromptById(taskPromptId) {
+  const id = String(taskPromptId || "");
+  if (!id) return null;
+  return (Array.isArray(latestVaultState.taskPrompts) ? latestVaultState.taskPrompts : [])
+    .find((item) => item.id === id) || null;
+}
+
+function getTaskPromptVersionById(versionId) {
+  const id = String(versionId || "");
+  if (!id) return null;
+  return (Array.isArray(latestVaultState.taskPromptVersions) ? latestVaultState.taskPromptVersions : [])
+    .find((item) => item.id === id) || null;
+}
+
 function getSelectedChunk() {
   const packs = Array.isArray(latestVaultState.promptPacks) ? latestVaultState.promptPacks : [];
   const pack = packs.find((item) => item.id === drawerState.selectedPackId);
@@ -784,6 +837,27 @@ function getTaskPromptForChunk(chunk) {
 }
 
 function getSelectedTaskPrompt() {
+  if (drawerState.selectedTaskPromptId) {
+    const taskPrompt = getTaskPromptById(drawerState.selectedTaskPromptId);
+    if (taskPrompt) {
+      const packs = Array.isArray(latestVaultState.promptPacks) ? latestVaultState.promptPacks : [];
+      const pack = packs.find((item) => item.id === taskPrompt.packId)
+        || packs.find((item) => item.projectId === taskPrompt.projectId && (item.chunks || []).some((chunk) => chunk.id === taskPrompt.sourceChunkId || chunk.roadmapItemId === taskPrompt.roadmapItemId))
+        || packs.find((item) => item.projectId === taskPrompt.projectId)
+        || null;
+      const chunk = pack && (pack.chunks || []).find((item) => item.id === taskPrompt.sourceChunkId || item.roadmapItemId === taskPrompt.roadmapItemId)
+        || {
+          id: taskPrompt.sourceChunkId || "",
+          title: taskPrompt.title,
+          prompt: taskPrompt.content,
+          status: taskPrompt.status,
+          order: taskPrompt.order,
+          roadmapItemId: taskPrompt.roadmapItemId,
+          runHistory: []
+        };
+      return { pack, chunk, taskPrompt };
+    }
+  }
   const selected = getSelectedChunk();
   if (!selected) return null;
   const taskPrompt = getTaskPromptForChunk(selected.chunk);
@@ -1072,7 +1146,10 @@ const RECOVERABLE_PLANNING_CONTEXTS = new Set([
   "roadmap_generate",
   "master_claude_improve",
   "master_gpt_revision",
-  "roadmap_claude_improve"
+  "roadmap_claude_improve",
+  "roadmap_gpt_revision",
+  "task_claude_improve",
+  "task_gpt_revision"
 ]);
 
 function isIgnoredStaleResponseError(session = {}) {
@@ -1082,9 +1159,13 @@ function isIgnoredStaleResponseError(session = {}) {
 function shouldRepairPlanningSession(session = {}) {
   const activeContext = String(session.activeContext || "");
   const activeRequestId = String(session.activeRequestId || "");
-  return isIgnoredStaleResponseError(session)
+  return (isIgnoredStaleResponseError(session) && !activeRequestId)
     || (Boolean(activeContext) && !activeRequestId)
     || (Boolean(session.busyState) && !activeRequestId);
+}
+
+function needsPlanningSessionRepairWrite(session = {}) {
+  return Boolean(session.busyState || session.activeRequestId || session.activeContext);
 }
 
 function getPlanningSessionControlView(session = {}) {
@@ -1097,39 +1178,166 @@ function getPlanningSessionControlView(session = {}) {
   };
 }
 
-function getPlanningControlState({ session = {}, project = null, currentText = "", createAllFailedCount = 0 } = {}) {
+function getPlanningControlState({ session = {}, project = null, currentText = "", createAllFailedCount = 0, artifacts = [], selectedArtifact = null } = {}) {
+  const buttonState = getPlanningButtonState({ session, project, artifacts, selectedArtifact, currentText, createAllFailedCount });
+  return {
+    generateMasterPlan: { label: buttonState.generateMasterPlan.label, disabled: !buttonState.generateMasterPlan.enabled },
+    improveMasterPlanClaude: { disabled: !buttonState.improveMasterPlanClaude.enabled },
+    reviseMasterPlanGpt: { disabled: !buttonState.reviseMasterPlanGpt.enabled },
+    saveMasterPlanCreateRoadmap: { disabled: !buttonState.saveMasterPlanCreateRoadmap.enabled },
+    retryCreateRoadmap: { disabled: !buttonState.retryCreateRoadmap.enabled, visible: buttonState.retryCreateRoadmap.visible },
+    improveRoadmapClaude: { disabled: !buttonState.improveRoadmapClaude.enabled },
+    reviseRoadmapGpt: { disabled: !buttonState.reviseRoadmapGpt.enabled },
+    saveRoadmap: { disabled: !buttonState.saveRoadmap.enabled },
+    createNextTask: { disabled: !buttonState.createNextTask.enabled },
+    createAllTasks: { disabled: !buttonState.createAllTasks.enabled, label: buttonState.createAllTasks.label },
+    cancel: { visible: buttonState.cancel.visible, disabled: !buttonState.cancel.enabled },
+    resetPlanningBusy: { visible: buttonState.resetPlanningBusy.visible, disabled: !buttonState.resetPlanningBusy.enabled },
+    isBusy: buttonState.isBusy,
+    raw: buttonState
+  };
+}
+
+function createButtonState({ visible = true, enabled = true, label = "", reasonDisabled = "", action = "" } = {}) {
+  return { visible, enabled, label, reasonDisabled, action };
+}
+
+function getPlanningButtonState({ session = {}, project = null, artifacts = [], selectedArtifact = null, currentText = "", createAllFailedCount = 0 } = {}) {
   const safeSession = getPlanningSessionControlView(session);
   const hasIdea = Boolean(project && String(project.idea || "").trim());
-  const hasMasterDraft = Boolean(String(currentText || "").trim() || safeSession.masterPlanDraftVersionId);
-  const hasRoadmapDraft = Boolean(String(currentText || "").trim() || safeSession.roadmapDraftVersionId);
+  const hasMasterDraft = Boolean(String(currentText || "").trim() || safeSession.masterPlanDraftVersionId || (artifacts || []).some((artifact) => artifact.type === "master_plan" && artifact.status !== "missing"));
+  const hasRoadmapDraft = Boolean(String(currentText || "").trim() || safeSession.roadmapDraftVersionId || (artifacts || []).some((artifact) => artifact.type === "roadmap_version" && artifact.status !== "failed"));
   const busy = Boolean(safeSession.busyState && safeSession.activeRequestId);
   const staleError = isIgnoredStaleResponseError(safeSession);
-  return {
-    generateMasterPlan: {
-      label: staleError && (safeSession.phase === "idea" || safeSession.phase === "master_draft")
-        ? "Retry Generate Master Plan"
-        : "Generate Master Plan",
-      disabled: busy || !hasIdea
-    },
-    improveMasterPlanClaude: { disabled: busy || !project || !hasMasterDraft },
-    reviseMasterPlanGpt: { disabled: busy || !project || !hasMasterDraft },
-    saveMasterPlanCreateRoadmap: { disabled: busy || !project || !hasMasterDraft },
-    retryCreateRoadmap: {
-      disabled: busy || !project || !(safeSession.masterPlanSaved && !safeSession.roadmapSaved),
-      visible: Boolean(safeSession.masterPlanSaved && !safeSession.roadmapSaved && !safeSession.roadmapDraftVersionId)
-    },
-    improveRoadmapClaude: { disabled: busy || !project || !safeSession.masterPlanSaved || !hasRoadmapDraft },
-    saveRoadmap: { disabled: busy || !project || !hasRoadmapDraft },
-    createNextTask: { disabled: busy || !project || !(safeSession.phase === "tasks" || safeSession.roadmapSaved) },
-    createAllTasks: {
-      disabled: busy || !project || !(safeSession.phase === "tasks" || safeSession.roadmapSaved),
-      label: createAllFailedCount > 0 ? "Retry Failed Tasks" : "Create All Tasks"
-    },
-    cancel: {
+  const phase = String(safeSession.phase || "idea");
+  const disableForBusy = busy ? "A request is running. Use Cancel or wait for the response." : "";
+  const needProject = project ? "" : "Select and save a project first.";
+  const needIdea = hasIdea ? "" : "Write a project idea first.";
+  const needMasterDraft = hasMasterDraft ? "" : "Generate or select a master plan draft first.";
+  const needRoadmapDraft = hasRoadmapDraft ? "" : "Generate or select a roadmap draft first.";
+  const dirtyRecovery = shouldRepairPlanningSession(session);
+  const resetVisible = busy || dirtyRecovery || Boolean(session.activeRequestId || session.activeContext);
+  const inIdea = phase === "idea";
+  const inMaster = phase === "master_draft" && !safeSession.masterPlanSaved;
+  const roadmapRetry = Boolean(safeSession.masterPlanSaved && !safeSession.roadmapSaved && !safeSession.roadmapDraftVersionId);
+  const inRoadmap = phase === "roadmap_draft" && !safeSession.roadmapSaved || Boolean(safeSession.masterPlanSaved && !safeSession.roadmapSaved && safeSession.roadmapDraftVersionId);
+  const inTasks = phase === "tasks" || safeSession.roadmapSaved;
+  const generateLabel = staleError && (phase === "idea" || phase === "master_draft")
+    ? "Retry Generate Master Plan"
+    : "Generate Master Plan";
+  const taskLabel = createAllFailedCount > 0 ? "Retry Failed Tasks" : "Create All Tasks";
+  const result = {
+    isBusy: busy,
+    generateMasterPlan: createButtonState({
+      visible: inIdea || (staleError && (phase === "idea" || phase === "master_draft")),
+      enabled: !busy && Boolean(project) && hasIdea,
+      label: generateLabel,
+      reasonDisabled: disableForBusy || needProject || needIdea,
+      action: "sendGenerateMasterPlan"
+    }),
+    improveMasterPlanClaude: createButtonState({
+      visible: inMaster,
+      enabled: !busy && Boolean(project) && hasMasterDraft,
+      label: "Improve Master Plan with Claude",
+      reasonDisabled: disableForBusy || needProject || needMasterDraft,
+      action: "sendClaudeMasterPlanImprove"
+    }),
+    reviseMasterPlanGpt: createButtonState({
+      visible: inMaster,
+      enabled: !busy && Boolean(project) && hasMasterDraft,
+      label: "Revise Master Plan with GPT",
+      reasonDisabled: disableForBusy || needProject || needMasterDraft,
+      action: "sendGptMasterPlanRevision"
+    }),
+    saveMasterPlanCreateRoadmap: createButtonState({
+      visible: inMaster,
+      enabled: !busy && Boolean(project) && hasMasterDraft,
+      label: "Save Master Plan & Create Task Roadmap",
+      reasonDisabled: disableForBusy || needProject || needMasterDraft,
+      action: "saveMasterPlanAndCreateRoadmap"
+    }),
+    retryCreateRoadmap: createButtonState({
+      visible: roadmapRetry,
+      enabled: !busy && Boolean(project) && Boolean(safeSession.masterPlanSaved && !safeSession.roadmapSaved),
+      label: "Retry Create Roadmap",
+      reasonDisabled: disableForBusy || needProject || "Save the master plan first.",
+      action: "retryCreateRoadmap"
+    }),
+    improveRoadmapClaude: createButtonState({
+      visible: inRoadmap,
+      enabled: !busy && Boolean(project) && Boolean(safeSession.masterPlanSaved) && hasRoadmapDraft,
+      label: "Improve Roadmap with Claude",
+      reasonDisabled: disableForBusy || needProject || (safeSession.masterPlanSaved ? needRoadmapDraft : "Save the master plan first."),
+      action: "sendClaudeRoadmapImprove"
+    }),
+    reviseRoadmapGpt: createButtonState({
+      visible: inRoadmap,
+      enabled: !busy && Boolean(project) && Boolean(safeSession.masterPlanSaved) && hasRoadmapDraft,
+      label: "Revise Roadmap with GPT",
+      reasonDisabled: disableForBusy || needProject || (safeSession.masterPlanSaved ? needRoadmapDraft : "Save the master plan first."),
+      action: "sendGptRoadmapRevision"
+    }),
+    saveRoadmap: createButtonState({
+      visible: inRoadmap,
+      enabled: !busy && Boolean(project) && hasRoadmapDraft,
+      label: "Save Roadmap",
+      reasonDisabled: disableForBusy || needProject || needRoadmapDraft,
+      action: "saveRoadmap"
+    }),
+    createNextTask: createButtonState({
+      visible: inTasks,
+      enabled: !busy && Boolean(project) && inTasks,
+      label: "Create Next Task",
+      reasonDisabled: disableForBusy || needProject || "Save the roadmap first.",
+      action: "createNextTask"
+    }),
+    createAllTasks: createButtonState({
+      visible: inTasks,
+      enabled: !busy && Boolean(project) && inTasks,
+      label: taskLabel,
+      reasonDisabled: disableForBusy || needProject || "Save the roadmap first.",
+      action: "createAllTasks"
+    }),
+    cancel: createButtonState({
       visible: busy,
-      disabled: !busy
-    },
-    resetPlanningBusy: { disabled: false }
+      enabled: busy,
+      label: "Cancel",
+      reasonDisabled: busy ? "" : "No active request.",
+      action: "cancelActivePlanningRequest"
+    }),
+    resetPlanningBusy: createButtonState({
+      visible: resetVisible,
+      enabled: true,
+      label: "Reset Planning Busy State",
+      reasonDisabled: "",
+      action: "resetPlanningBusyState"
+    })
+  };
+  if (selectedArtifact && selectedArtifact.type === "roadmap_version" && selectedArtifact.status === "failed") {
+    result.saveRoadmap.enabled = false;
+    result.saveRoadmap.reasonDisabled = "Selected roadmap version failed validation.";
+  }
+  return {
+    ...result
+  };
+}
+
+function getTaskButtonState({ taskPrompt = null, selectedVersion = null, runNote = "", busy = false } = {}) {
+  const hasTask = Boolean(taskPrompt && taskPrompt.id);
+  const content = String(taskPrompt && taskPrompt.content || "").trim();
+  const hasValidContent = hasTask && content.length > 0;
+  const approved = String(taskPrompt && taskPrompt.status || "") === "approved" || String(taskPrompt && taskPrompt.status || "") === "copied";
+  const hasRunNote = Boolean(String(runNote || "").trim());
+  const busyReason = busy ? "A request is running." : "";
+  return {
+    saveTask: createButtonState({ visible: true, enabled: !busy && hasTask, label: "Save Task", reasonDisabled: busyReason || "Select a task first.", action: "saveWorkspaceTask" }),
+    improveTaskClaude: createButtonState({ visible: true, enabled: !busy && hasValidContent, label: "Improve Task with Claude", reasonDisabled: busyReason || "Select a task with content first.", action: "sendTaskImproveWithClaude" }),
+    reviseTaskGpt: createButtonState({ visible: true, enabled: !busy && hasValidContent, label: "Revise Task with GPT", reasonDisabled: busyReason || "Select a task with content first.", action: "sendTaskRevisionWithGpt" }),
+    applyImprovedVersion: createButtonState({ visible: true, enabled: !busy && hasTask && Boolean(selectedVersion && selectedVersion.id), label: "Apply Improved Version", reasonDisabled: busyReason || "Select a proposed task version first.", action: "applySelectedTaskVersion" }),
+    approveTask: createButtonState({ visible: true, enabled: !busy && hasValidContent, label: "Approve Task", reasonDisabled: busyReason || "Select a task with content first.", action: "approveSelectedPrompt" }),
+    copyToCodex: createButtonState({ visible: true, enabled: !busy && hasTask && approved, label: "Copy to Codex", reasonDisabled: busyReason || "Task must be approved before copying it to Codex.", action: "copySelectedPromptToCodex" }),
+    markDone: createButtonState({ visible: true, enabled: !busy && hasTask && hasRunNote, label: "Mark Done", reasonDisabled: busyReason || "Add a run note before marking done.", action: "markSelectedPromptDone" }),
+    improveFromRunNotes: createButtonState({ visible: true, enabled: !busy && hasValidContent && hasRunNote, label: "Improve Again from Run Notes", reasonDisabled: busyReason || "Add run notes before improving again.", action: "improveTaskAgainFromRunNotes" })
   };
 }
 
@@ -1202,6 +1410,7 @@ async function repairPlanningSessionAfterStaleResponse(projectId) {
   const activeContext = String(session.activeContext || "");
   if (
     shouldRepairPlanningSession(session)
+    && needsPlanningSessionRepairWrite(session)
     && (!activeContext || RECOVERABLE_PLANNING_CONTEXTS.has(activeContext))
   ) {
     return writePlanningSession(projectId, {
@@ -1341,11 +1550,46 @@ function renderProjectBrowserTree() {
     return;
   }
 
+  const renderArtifactButton = (artifact) => {
+    const isActive = drawerState.selectedArtifactId === artifact.id ? " active" : "";
+    const badge = artifact.existsInDb && artifact.existsOnDisk
+      ? artifact.status
+      : artifact.existsInDb
+        ? `${artifact.status || "draft"} db-only`
+        : artifact.existsOnDisk
+          ? `${artifact.status || "saved"} file`
+          : artifact.status || "missing";
+    return `<button type="button" class="tree-item${isActive}" data-action="select-artifact" data-project-id="${escapeHtml(artifact.projectId)}" data-artifact-id="${escapeHtml(artifact.id)}">
+      <span>${escapeHtml(artifact.label)}</span>
+      <span class="status-pill ${escapeHtml(artifact.status || "missing")}">${escapeHtml(getArtifactStatusLabel(badge))}</span>
+    </button>`;
+  };
+
   elements.projectBrowserTree.innerHTML = nodes.map((project) => {
     const projectActive = drawerState.selectedProjectId === project.id ? " active" : "";
+    const artifacts = getProjectArtifacts(project.id);
+    const byGroup = artifacts.reduce((groups, artifact) => {
+      const group = artifact.group || "overview";
+      if (!groups[group]) groups[group] = [];
+      groups[group].push(artifact);
+      return groups;
+    }, {});
+    const groupHtml = ["overview", "roadmap_versions", "tasks", "generated_task_prompts", "task_versions", "prompt_packs"]
+      .map((group) => {
+        const groupArtifacts = (byGroup[group] || []).filter((artifact) => {
+          if (group !== "task_versions") return true;
+          return drawerState.selectedTaskPromptId && artifact.taskPromptId === drawerState.selectedTaskPromptId;
+        });
+        if (!groupArtifacts.length) return "";
+        return `<div class="tree-section">${escapeHtml(getArtifactGroupLabel(group))}</div>${groupArtifacts.map(renderArtifactButton).join("")}`;
+      })
+      .join("");
     const packsHtml = project.packs.map((pack) => {
       const packActive = drawerState.selectedPackId === pack.id ? " active" : "";
       const roadmap = pack.roadmap && Array.isArray(pack.roadmap.items) ? pack.roadmap.items : [];
+      if (!pack.legacy && !roadmap.length && !(pack.chunks || []).length) {
+        return "";
+      }
       const serialItems = roadmap.filter((item) => !item.parallelGroup);
       const parallelItems = roadmap.filter((item) => item.parallelGroup);
       const serialHtml = serialItems.length
@@ -1364,22 +1608,25 @@ function renderProjectBrowserTree() {
         </button>`;
       }).join("");
 
-      return `<button type="button" class="tree-pack${packActive}" data-action="select-tree-pack" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(pack.id)}">Task Roadmap</button>${serialHtml}${parallelHtml}<button type="button" class="tree-pack${packActive}" data-action="select-tree-pack" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(pack.id)}">Tasks</button>${chunksHtml}`;
-    }).join("");
+      return `<button type="button" class="tree-pack${packActive}" data-action="select-tree-pack" data-project-id="${escapeHtml(project.id)}" data-pack-id="${escapeHtml(pack.id)}">Legacy Pack: ${escapeHtml(pack.title || "Pack")}</button>${serialHtml}${parallelHtml}${chunksHtml}`;
+    }).filter(Boolean).join("");
 
     const stage = escapeHtml(project.stage || "Idea");
     const nextAction = escapeHtml(project.nextAction || "Capture project idea");
     const draftAttr = project.id === "__draft__" ? " data-draft-project=\"true\"" : "";
-    return `<button type="button" class="tree-project${projectActive}" data-action="select-tree-project" data-project-id="${escapeHtml(project.id)}"${draftAttr}>${escapeHtml(project.name)}<br><span class="muted">Stage: ${stage}</span><br><span class="muted">Next: ${nextAction}</span></button><button type="button" class="tree-pack" data-action="select-master-plan" data-project-id="${escapeHtml(project.id)}"${draftAttr}>Master Plan</button>${packsHtml}`;
+    const artifactHtml = project.id === "__draft__"
+      ? `<button type="button" class="tree-pack" data-action="select-master-plan" data-project-id="${escapeHtml(project.id)}"${draftAttr}>Master Plan</button>`
+      : groupHtml || `<div class="drawer-empty">No project artifacts discovered yet.</div>`;
+    return `<button type="button" class="tree-project${projectActive}" data-action="select-tree-project" data-project-id="${escapeHtml(project.id)}"${draftAttr}>${escapeHtml(project.name)}<br><span class="muted">Stage: ${stage}</span><br><span class="muted">Next: ${nextAction}</span></button>${artifactHtml}${packsHtml ? `<div class="tree-section">Prompt Packs / Legacy</div>${packsHtml}` : ""}`;
   }).join("");
 }
 
 function getStatusOption(status) {
   const normalized = String(status || "").toLowerCase();
-  if (normalized === "done" || normalized === "copied" || normalized === "in_progress" || normalized === "approved") {
+  if (normalized === "done" || normalized === "copied" || normalized === "in_progress" || normalized === "approved" || normalized === "draft" || normalized === "needs_improvement") {
     return normalized;
   }
-  return "in_progress";
+  return "draft";
 }
 
 function renderPlanningStatus() {
@@ -1400,8 +1647,13 @@ function renderPlanningStatus() {
     session,
     project: projectForControls,
     currentText,
-    createAllFailedCount: drawerState.lastCreateAllResult && drawerState.lastCreateAllResult.failedCount || 0
+    createAllFailedCount: drawerState.lastCreateAllResult && drawerState.lastCreateAllResult.failedCount || 0,
+    artifacts: project ? getProjectArtifacts(project.id) : [],
+    selectedArtifact: project ? findProjectArtifact(project.id, drawerState.selectedArtifactId) : null
   });
+  if (typeof document !== "undefined" && document.body) {
+    document.body.dataset.planningBusy = controlState.isBusy ? "true" : "false";
+  }
   const masterDraftNumber = project && session.masterPlanDraftVersionId
     ? getVersionNumber(project.masterPlanVersions, session.masterPlanDraftVersionId)
     : 0;
@@ -1427,31 +1679,38 @@ function renderPlanningStatus() {
   if (elements.generateMasterPlanButton) {
     elements.generateMasterPlanButton.textContent = controlState.generateMasterPlan.label;
     elements.generateMasterPlanButton.disabled = controlState.generateMasterPlan.disabled;
+    elements.generateMasterPlanButton.style.display = controlState.raw.generateMasterPlan.visible ? "inline-flex" : "none";
+    elements.generateMasterPlanButton.title = controlState.raw.generateMasterPlan.enabled ? "" : controlState.raw.generateMasterPlan.reasonDisabled;
   }
-  if (elements.improveMasterPlanClaudeButton) elements.improveMasterPlanClaudeButton.disabled = controlState.improveMasterPlanClaude.disabled;
-  if (elements.reviseMasterPlanGptButton) elements.reviseMasterPlanGptButton.disabled = controlState.reviseMasterPlanGpt.disabled;
-  if (elements.saveMasterPlanCreateRoadmapButton) elements.saveMasterPlanCreateRoadmapButton.disabled = controlState.saveMasterPlanCreateRoadmap.disabled;
-  if (elements.retryCreateRoadmapButton) elements.retryCreateRoadmapButton.disabled = controlState.retryCreateRoadmap.disabled;
-  if (elements.improveRoadmapClaudeButton) elements.improveRoadmapClaudeButton.disabled = controlState.improveRoadmapClaude.disabled;
-  if (elements.saveRoadmapButton) elements.saveRoadmapButton.disabled = controlState.saveRoadmap.disabled;
-  if (elements.createNextTaskButton) elements.createNextTaskButton.disabled = controlState.createNextTask.disabled;
-  if (elements.createAllTasksButton) elements.createAllTasksButton.disabled = controlState.createAllTasks.disabled;
-  if (elements.resetPlanningBusyButton) elements.resetPlanningBusyButton.disabled = controlState.resetPlanningBusy.disabled;
+  const bindPlanButton = (button, state) => {
+    if (!button || !state) return;
+    button.style.display = state.visible ? "inline-flex" : "none";
+    button.disabled = !state.enabled;
+    button.title = state.enabled ? "" : state.reasonDisabled || "";
+    if (state.label) button.textContent = state.label;
+  };
+  bindPlanButton(elements.improveMasterPlanClaudeButton, controlState.raw.improveMasterPlanClaude);
+  bindPlanButton(elements.reviseMasterPlanGptButton, controlState.raw.reviseMasterPlanGpt);
+  bindPlanButton(elements.saveMasterPlanCreateRoadmapButton, controlState.raw.saveMasterPlanCreateRoadmap);
+  bindPlanButton(elements.retryCreateRoadmapButton, controlState.raw.retryCreateRoadmap);
+  bindPlanButton(elements.improveRoadmapClaudeButton, controlState.raw.improveRoadmapClaude);
+  bindPlanButton(elements.reviseRoadmapGptButton, controlState.raw.reviseRoadmapGpt);
+  bindPlanButton(elements.saveRoadmapButton, controlState.raw.saveRoadmap);
+  bindPlanButton(elements.createNextTaskButton, controlState.raw.createNextTask);
+  bindPlanButton(elements.createAllTasksButton, controlState.raw.createAllTasks);
+  bindPlanButton(elements.resetPlanningBusyButton, controlState.raw.resetPlanningBusy);
   if (elements.cancelPlanningButton) {
     elements.cancelPlanningButton.style.display = controlState.cancel.visible ? "inline-flex" : "none";
     elements.cancelPlanningButton.disabled = controlState.cancel.disabled;
-  }
-  if (elements.retryCreateRoadmapButton) {
-    elements.retryCreateRoadmapButton.style.display = controlState.retryCreateRoadmap.visible ? "inline-flex" : "none";
-  }
-  if (elements.createAllTasksButton) {
-    elements.createAllTasksButton.textContent = controlState.createAllTasks.label;
   }
 }
 
 function renderWorkspace() {
   const selected = getSelectedChunk();
-  const hasSelection = Boolean(selected);
+  const selectedTaskPrompt = getSelectedTaskPrompt();
+  const selectedTaskVersion = getTaskPromptVersionById(drawerState.selectedTaskVersionId);
+  const selectedArtifact = drawerState.selectedArtifactId ? findProjectArtifact(drawerState.selectedProjectId, drawerState.selectedArtifactId) : null;
+  const hasSelection = Boolean(selected || selectedTaskPrompt || (selectedArtifact && (selectedArtifact.type === "task_file" || selectedArtifact.type === "task_version")));
   const project = (latestVaultState.projects || []).find((item) => item.id === drawerState.selectedProjectId)
     || (projectDraftState.isActive ? null : (latestVaultState.projects || [])[0]);
 
@@ -1477,22 +1736,56 @@ function renderWorkspace() {
     node.classList.toggle("active", node.getAttribute("data-workspace-tab") === drawerState.workspaceMode);
   });
 
-  if (!selected) {
+  if (!selected && !selectedTaskPrompt && !(selectedArtifact && (selectedArtifact.type === "task_file" || selectedArtifact.type === "task_version"))) {
+    if (elements.workspaceHeading) {
+      elements.workspaceHeading.textContent = selectedArtifact && selectedArtifact.type !== "task_file" && selectedArtifact.type !== "task_prompt" && selectedArtifact.type !== "task_version"
+        ? selectedArtifact.label
+        : "Workspace";
+    }
     renderPlanningStatus();
     return;
   }
 
-  const chunk = selected.chunk;
-  const taskPrompt = getTaskPromptForChunk(chunk);
-  if (elements.workspaceTaskName) elements.workspaceTaskName.value = String((taskPrompt && taskPrompt.title) || chunk.title || "");
-  if (elements.workspaceTaskContent) elements.workspaceTaskContent.value = String((taskPrompt && taskPrompt.content) || chunk.prompt || "");
+  const chunk = selectedTaskPrompt && selectedTaskPrompt.chunk || (selected && selected.chunk) || {
+    title: selectedArtifact && selectedArtifact.label || "Task",
+    prompt: selectedArtifact && selectedArtifact.content || "",
+    status: selectedArtifact && selectedArtifact.status || "draft",
+    order: selectedArtifact && selectedArtifact.order || 1,
+    runHistory: []
+  };
+  const taskPrompt = selectedTaskPrompt && selectedTaskPrompt.taskPrompt || getTaskPromptForChunk(chunk);
+  const content = selectedTaskVersion ? selectedTaskVersion.content : selectedArtifact && selectedArtifact.type === "task_file" && !taskPrompt ? selectedArtifact.content : (taskPrompt && taskPrompt.content) || chunk.prompt || "";
+  if (elements.workspaceHeading) elements.workspaceHeading.textContent = taskPrompt ? `Task ${String(taskPrompt.order || chunk.order || 1).padStart(3, "0")} - ${taskPrompt.title}` : `Task - ${chunk.title || "File"}`;
+  if (elements.workspaceTaskName) elements.workspaceTaskName.value = String((taskPrompt && taskPrompt.title) || chunk.title || selectedArtifact && selectedArtifact.label || "");
+  if (elements.workspaceTaskContent) elements.workspaceTaskContent.value = String(content || "");
   if (elements.workspaceTaskStatus) elements.workspaceTaskStatus.value = getStatusOption((taskPrompt && taskPrompt.status) || chunk.status);
+  const taskButtonState = getTaskButtonState({
+    taskPrompt,
+    selectedVersion: selectedTaskVersion,
+    runNote: elements.workspacePromptRunNote ? elements.workspacePromptRunNote.value : "",
+    busy: false
+  });
+  const bindTaskButton = (button, state) => {
+    if (!button || !state) return;
+    button.disabled = !state.enabled;
+    button.title = state.enabled ? "" : state.reasonDisabled || "";
+    if (state.label) button.textContent = state.label;
+  };
+  bindTaskButton(elements.saveWorkspaceTaskButton, taskButtonState.saveTask);
+  bindTaskButton(elements.sendWorkspaceTaskButton, taskButtonState.improveTaskClaude);
+  bindTaskButton(elements.reviseWorkspaceTaskGptButton, taskButtonState.reviseTaskGpt);
+  bindTaskButton(elements.applyImprovedTaskVersionButton, taskButtonState.applyImprovedVersion);
+  bindTaskButton(elements.approvePromptButton, taskButtonState.approveTask);
+  bindTaskButton(elements.copyWorkspaceLauncherButton, taskButtonState.copyToCodex);
+  bindTaskButton(elements.markPromptDoneButton, taskButtonState.markDone);
+  bindTaskButton(elements.improveFromRunNotesButton, taskButtonState.improveFromRunNotes);
   renderPlanningStatus();
 }
 
 function renderInspector() {
   const selected = getSelectedChunk();
-  const hasSelection = Boolean(selected);
+  const selectedTaskPrompt = getSelectedTaskPrompt();
+  const hasSelection = Boolean(selected || selectedTaskPrompt);
   const sectionName = drawerState.inspectorTab;
 
   if (elements.inspectorImproveForm) elements.inspectorImproveForm.style.display = hasSelection ? "block" : "none";
@@ -1507,15 +1800,15 @@ function renderInspector() {
     node.classList.toggle("active", node.getAttribute("data-inspector-tab") === sectionName);
   });
 
-  if (!selected) {
+  if (!selected && !selectedTaskPrompt) {
     if (elements.inspectorVersionsList) elements.inspectorVersionsList.innerHTML = '<div class="muted">No versions yet.</div>';
     if (elements.inspectorRunHistoryList) elements.inspectorRunHistoryList.innerHTML = '<div class="muted">No run history yet.</div>';
     if (elements.inspectorDetails) elements.inspectorDetails.innerHTML = "Select a project item to view details.";
     return;
   }
 
-  const chunk = selected.chunk;
-  const taskPrompt = getTaskPromptForChunk(chunk);
+  const chunk = selectedTaskPrompt && selectedTaskPrompt.chunk || selected.chunk;
+  const taskPrompt = selectedTaskPrompt && selectedTaskPrompt.taskPrompt || getTaskPromptForChunk(chunk);
   if (elements.inspectorImprovePrompt) elements.inspectorImprovePrompt.value = drawerState.lastImprovePrompt || "";
 
   const versions = taskPrompt
@@ -1528,7 +1821,7 @@ function renderInspector() {
           <div><strong>${escapeHtml(version.source || "ai_improve")}</strong> | ${escapeHtml(version.createdAt || "")}</div>
           <div class="field-help">${escapeHtml(String(version.content || version.responseText || "").slice(0, 160))}</div>
           <div class="actions" style="margin-top:6px;">
-            <button type="button" class="secondary-btn compact-btn" data-action="${taskPrompt ? "apply-task-prompt-version" : "apply-version"}" data-pack-id="${escapeHtml(selected.pack.id)}" data-chunk-id="${escapeHtml(chunk.id)}" data-task-prompt-id="${escapeHtml(taskPrompt ? taskPrompt.id : "")}" data-version-id="${escapeHtml(version.id)}">Apply</button>
+            <button type="button" class="secondary-btn compact-btn" data-action="${taskPrompt ? "apply-task-prompt-version" : "apply-version"}" data-pack-id="${escapeHtml(selected && selected.pack ? selected.pack.id : "")}" data-chunk-id="${escapeHtml(chunk.id)}" data-task-prompt-id="${escapeHtml(taskPrompt ? taskPrompt.id : "")}" data-version-id="${escapeHtml(version.id)}">Apply</button>
           </div>
         </div>`).join("")
       : '<div class="muted">No versions yet.</div>';
@@ -1542,7 +1835,7 @@ function renderInspector() {
   }
 
   if (elements.inspectorDetails) {
-    elements.inspectorDetails.innerHTML = `<strong>${escapeHtml((taskPrompt && taskPrompt.title) || chunk.title || "")}</strong><br>${escapeHtml(getTaskStatusLabel((taskPrompt && taskPrompt.status) || chunk.status || "ready"))}<br>${escapeHtml(selected.pack.title || "")}`;
+    elements.inspectorDetails.innerHTML = `<strong>${escapeHtml((taskPrompt && taskPrompt.title) || chunk.title || "")}</strong><br>${escapeHtml(getTaskStatusLabel((taskPrompt && taskPrompt.status) || chunk.status || "ready"))}<br>${escapeHtml(selected && selected.pack ? selected.pack.title || "" : "")}`;
   }
 }
 
@@ -1892,9 +2185,23 @@ async function renderResponse(text) {
       setStatus("Claude improvement round saved.", "success");
       return;
     }
-    if (response.activeContext === "roadmap_generate" || response.activeContext === "roadmap_claude_improve") {
-      const roadmap = projectBuilderProtocol.parseRoadmapResponse(responseText);
-      projectBuilderProtocol.validateRoadmap(roadmap);
+    if (response.activeContext === "roadmap_generate" || response.activeContext === "roadmap_claude_improve" || response.activeContext === "roadmap_gpt_revision") {
+      let roadmap = null;
+      try {
+        roadmap = projectBuilderProtocol.parseRoadmapResponse(responseText);
+        projectBuilderProtocol.validateRoadmap(roadmap);
+      } catch (error) {
+        if (pack) {
+          await desktopApi.addRoadmapVersion({
+            packId: pack.id,
+            source: `${response.activeContext}_failed`,
+            status: "failed",
+            promptSnapshot: drawerState.lastImprovePrompt,
+            responseText
+          }).catch(() => null);
+        }
+        throw error;
+      }
       if (!pack) throw new Error("Active project pack not found.");
       const versionResponse = await desktopApi.addRoadmapVersion({
         packId: pack.id,
@@ -1911,6 +2218,27 @@ async function renderResponse(text) {
       });
       updateWordCount();
       setStatus("Roadmap draft saved.", "success");
+      return;
+    }
+    if (response.activeContext === "task_claude_improve" || response.activeContext === "task_gpt_revision") {
+      const pending = drawerState.pendingTaskRequests && drawerState.pendingTaskRequests[response.requestId] || {};
+      const taskPromptId = pending.taskPromptId || drawerState.activeTaskPromptId || drawerState.selectedTaskPromptId;
+      if (!taskPromptId) throw new Error("Task prompt not found for AI response.");
+      const versionResponse = await desktopApi.addTaskPromptVersion({
+        taskPromptId,
+        source: response.activeContext,
+        content: responseText,
+        status: "proposed"
+      });
+      if (!versionResponse || versionResponse.ok === false) throw new Error(versionResponse && versionResponse.error ? versionResponse.error : "Could not save improved task version.");
+      delete drawerState.pendingTaskRequests[response.requestId];
+      drawerState.selectedTaskPromptId = taskPromptId;
+      drawerState.selectedTaskVersionId = versionResponse.version.id;
+      drawerState.activeTaskPromptId = taskPromptId;
+      renderVaultState(versionResponse.state);
+      renderWorkspace();
+      renderInspector();
+      setStatus("Improved task version saved. Review it, then Apply Improved Version when ready.", "success");
       return;
     }
     if (response.activeContext === "task_improve") {
@@ -2120,6 +2448,9 @@ function applyProject(projectId) {
     drawerState.selectedProjectId = "";
     drawerState.selectedPackId = "";
     drawerState.selectedChunkId = "";
+    drawerState.selectedTaskPromptId = "";
+    drawerState.selectedTaskVersionId = "";
+    drawerState.selectedArtifactId = "";
     renderProjectBrowserTree();
     renderWorkspace();
     renderInspector();
@@ -2138,6 +2469,9 @@ function applyProject(projectId) {
   drawerState.selectedProjectId = project.id;
   drawerState.selectedPackId = "";
   drawerState.selectedChunkId = "";
+  drawerState.selectedTaskPromptId = "";
+  drawerState.selectedTaskVersionId = "";
+  drawerState.selectedArtifactId = "";
   projectDraftState.isActive = false;
   projectDraftState.pathManuallyEdited = false;
   projectDraftState.previousAutoPath = "";
@@ -2168,7 +2502,8 @@ function applyProject(projectId) {
 function renderVaultState(state) {
   latestVaultState = state || {
     projects: [],
-    promptPacks: []
+    promptPacks: [],
+    projectArtifacts: {}
   };
 
   const packs = Array.isArray(latestVaultState.promptPacks) ? latestVaultState.promptPacks : [];
@@ -2580,6 +2915,9 @@ function selectTreeNode(projectId, packId, chunkId) {
   drawerState.selectedProjectId = String(projectId || "");
   drawerState.selectedPackId = String(packId || "");
   drawerState.selectedChunkId = String(chunkId || "");
+  drawerState.selectedTaskPromptId = "";
+  drawerState.selectedTaskVersionId = "";
+  drawerState.selectedArtifactId = "";
   if (elements.projectSelect && drawerState.selectedProjectId) {
     elements.projectSelect.value = drawerState.selectedProjectId;
   }
@@ -2600,6 +2938,65 @@ function setWorkspaceMode(modeName) {
   renderWorkspace();
 }
 
+async function selectArtifact(projectId, artifactId) {
+  const artifact = findProjectArtifact(projectId, artifactId);
+  if (!artifact) return;
+  drawerState.showAllProjects = false;
+  drawerState.selectedProjectId = projectId;
+  drawerState.selectedArtifactId = artifact.id;
+  drawerState.selectedTaskVersionId = artifact.type === "task_version" ? artifact.versionId : "";
+  if (artifact.taskPromptId) drawerState.selectedTaskPromptId = artifact.taskPromptId;
+  if (artifact.packId) drawerState.selectedPackId = artifact.packId;
+  if (elements.projectSelect) elements.projectSelect.value = projectId;
+
+  if (artifact.type === "task_prompt" || artifact.type === "task_file" || artifact.type === "task_version") {
+    drawerState.workspaceMode = "tasks";
+    const taskPrompt = artifact.taskPromptId ? getTaskPromptById(artifact.taskPromptId) : null;
+    if (taskPrompt) {
+      drawerState.selectedTaskPromptId = taskPrompt.id;
+      const packs = Array.isArray(latestVaultState.promptPacks) ? latestVaultState.promptPacks : [];
+      const pack = packs.find((item) => item.id === artifact.packId)
+        || packs.find((item) => item.projectId === projectId && (item.chunks || []).some((chunk) => chunk.id === taskPrompt.sourceChunkId || chunk.roadmapItemId === taskPrompt.roadmapItemId));
+      if (pack) {
+        drawerState.selectedPackId = pack.id;
+        const chunk = (pack.chunks || []).find((item) => item.id === taskPrompt.sourceChunkId || item.roadmapItemId === taskPrompt.roadmapItemId);
+        drawerState.selectedChunkId = chunk ? chunk.id : "";
+      }
+    } else {
+      drawerState.selectedTaskPromptId = "";
+      drawerState.selectedChunkId = "";
+    }
+  } else {
+    drawerState.workspaceMode = "plan";
+    drawerState.selectedChunkId = "";
+    drawerState.selectedTaskPromptId = "";
+    drawerState.selectedTaskVersionId = "";
+    if (elements.currentText) elements.currentText.value = String(artifact.content || "");
+    if (elements.responseView) {
+      const title = artifact.type === "master_plan"
+        ? "Master Plan"
+        : artifact.type === "roadmap"
+          ? "Task Roadmap"
+          : artifact.type === "roadmap_version"
+            ? artifact.label
+            : artifact.label;
+      elements.responseView.innerHTML = renderProjectPlanHtml(`# ${title}\n\n${artifact.content || "No content yet."}`);
+    }
+    if (artifact.type === "roadmap_version" && artifact.versionId && artifact.status !== "failed") {
+      const session = await readPlanningSession(projectId);
+      await writePlanningSession(projectId, {
+        ...session,
+        phase: "roadmap_draft",
+        roadmapDraftVersionId: artifact.versionId
+      });
+    }
+  }
+  renderProjectBrowserTree();
+  renderWorkspace();
+  renderInspector();
+  updateWordCount();
+}
+
 async function handleProjectBrowserClick(event) {
   const actionEl = event.target.closest("[data-action]");
   if (!actionEl) return;
@@ -2608,6 +3005,10 @@ async function handleProjectBrowserClick(event) {
   if (action === "select-master-plan") {
     selectTreeNode(actionEl.dataset.projectId, "", "");
     setWorkspaceMode("plan");
+    return;
+  }
+  if (action === "select-artifact") {
+    await selectArtifact(actionEl.dataset.projectId, actionEl.dataset.artifactId);
     return;
   }
   if (action === "select-tree-project") {
@@ -2712,6 +3113,9 @@ async function deleteSelectedProjectFromContext() {
   drawerState.selectedProjectId = "";
   drawerState.selectedPackId = "";
   drawerState.selectedChunkId = "";
+  drawerState.selectedTaskPromptId = "";
+  drawerState.selectedTaskVersionId = "";
+  drawerState.selectedArtifactId = "";
   drawerState.showAllProjects = true;
   renderVaultState(response.state);
   setStatus(`Project removed from browser: ${project.name}`, "success");
@@ -2774,12 +3178,12 @@ function handleProjectBrowserDoubleClick(event) {
 
 async function saveWorkspaceTask() {
   const selected = getSelectedChunk();
-  if (!selected) {
+  const selectedTask = getSelectedTaskPrompt();
+  if (!selected && !selectedTask) {
     setStatus("Select a task first.", "error");
     return;
   }
-  const selectedTask = getSelectedTaskPrompt();
-  const requestedStatus = elements.workspaceTaskStatus ? elements.workspaceTaskStatus.value : String(selected.chunk.status || "ready");
+  const requestedStatus = elements.workspaceTaskStatus ? elements.workspaceTaskStatus.value : String(selected && selected.chunk ? selected.chunk.status || "ready" : selectedTask.taskPrompt.status || "draft");
   if (selectedTask) {
     const response = await desktopApi.updateTaskPromptContentById({
       taskPromptId: selectedTask.taskPrompt.id,
@@ -2982,6 +3386,38 @@ async function sendClaudeRoadmapImprove() {
   });
 }
 
+function getLatestRoadmapClaudeResponse(pack) {
+  const versions = Array.isArray(pack && pack.roadmapVersions) ? pack.roadmapVersions : [];
+  const version = versions
+    .filter((item) => String(item.source || "").includes("roadmap_claude_improve") && String(item.status || "draft") !== "failed")
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))[0];
+  return version && String(version.responseText || "").trim() ? String(version.responseText || "") : null;
+}
+
+async function sendGptRoadmapRevision() {
+  const project = getCurrentProjectOrThrow();
+  const pack = getCurrentPack(project);
+  if (!pack) throw new Error("Active roadmap pack not found.");
+  let session = await readPlanningSession(project.id);
+  const snap = await snapshotManualRoadmapDraftIfNeeded(project, pack, session);
+  const prompt = projectBuilderProtocol.buildRoadmapGptRevisionPrompt(
+    project,
+    project.masterPlan,
+    snap.content,
+    getLatestRoadmapClaudeResponse(pack),
+    elements.planningNotes ? elements.planningNotes.value : ""
+  );
+  drawerState.lastImprovePrompt = prompt;
+  await sendPlanningRequest({
+    project,
+    activeContext: "roadmap_gpt_revision",
+    targetProvider: "chatgpt",
+    text: prompt,
+    stageLabel: "Revise Roadmap with GPT",
+    role: "planner"
+  });
+}
+
 async function saveRoadmap() {
   const project = getCurrentProjectOrThrow();
   const pack = getCurrentPack(project);
@@ -3014,6 +3450,109 @@ async function createAllTasks() {
   } else {
     setStatus(`Created ${response.createdCount} tasks; skipped ${response.skippedCount} complete tasks.`, "success");
   }
+}
+
+function getTaskRunHistory(taskPromptId) {
+  const id = String(taskPromptId || "");
+  return (Array.isArray(latestVaultState.taskRuns) ? latestVaultState.taskRuns : [])
+    .filter((run) => run.taskPromptId === id);
+}
+
+function getRoadmapItemForTask(project, taskPrompt) {
+  const pack = getCurrentPack(project);
+  const itemId = String(taskPrompt && taskPrompt.roadmapItemId || "");
+  return pack && pack.roadmap && Array.isArray(pack.roadmap.items)
+    ? pack.roadmap.items.find((item) => item.id === itemId) || {}
+    : {};
+}
+
+function getSavedRoadmapText(project) {
+  const roadmapArtifact = findProjectArtifact(project.id, `roadmap:${project.id}`);
+  if (roadmapArtifact && String(roadmapArtifact.content || "").trim()) return roadmapArtifact.content;
+  const pack = getCurrentPack(project);
+  return pack && pack.roadmap ? JSON.stringify(pack.roadmap, null, 2) : "";
+}
+
+async function snapshotManualTaskPromptIfNeeded() {
+  const selected = getSelectedTaskPrompt();
+  if (!selected || !selected.taskPrompt) throw new Error("Select a generated task first.");
+  const title = String(elements.workspaceTaskName ? elements.workspaceTaskName.value : selected.taskPrompt.title || "").trim();
+  const content = String(elements.workspaceTaskContent ? elements.workspaceTaskContent.value : selected.taskPrompt.content || "");
+  if (title === String(selected.taskPrompt.title || "") && content === String(selected.taskPrompt.content || "")) {
+    return selected.taskPrompt;
+  }
+  const response = await desktopApi.updateTaskPromptContentById({
+    taskPromptId: selected.taskPrompt.id,
+    title,
+    content
+  });
+  if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not snapshot manual task edit.");
+  renderVaultState(response.state);
+  drawerState.selectedTaskPromptId = response.taskPrompt.id;
+  return response.taskPrompt;
+}
+
+function getLatestClaudeTaskVersion(taskPromptId) {
+  return (Array.isArray(latestVaultState.taskPromptVersions) ? latestVaultState.taskPromptVersions : [])
+    .filter((version) => version.taskPromptId === taskPromptId && String(version.source || "") === "task_claude_improve")
+    .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))[0] || null;
+}
+
+async function sendTaskImproveWithClaude({ fromRunNotes = false } = {}) {
+  const project = getCurrentProjectOrThrow();
+  const taskPrompt = await snapshotManualTaskPromptIfNeeded();
+  const runHistory = getTaskRunHistory(taskPrompt.id);
+  const note = elements.workspacePromptRunNote && String(elements.workspacePromptRunNote.value || "").trim()
+    ? [{ note: elements.workspacePromptRunNote.value, source: "current_note" }, ...runHistory]
+    : runHistory;
+  if (fromRunNotes && !note.length) throw new Error("Add run notes before improving from run notes.");
+  const prompt = projectBuilderProtocol.buildTaskClaudeImprovePrompt(
+    project,
+    project.masterPlan,
+    getSavedRoadmapText(project),
+    taskPrompt,
+    getRoadmapItemForTask(project, taskPrompt),
+    elements.planningNotes ? elements.planningNotes.value : "",
+    note
+  );
+  drawerState.lastImprovePrompt = prompt;
+  drawerState.activeTaskPromptId = taskPrompt.id;
+  const request = await sendPlanningRequest({
+    project,
+    activeContext: "task_claude_improve",
+    targetProvider: "claude",
+    text: prompt,
+    stageLabel: fromRunNotes ? "Improve Again from Run Notes" : "Improve Task with Claude",
+    role: "critic"
+  });
+  drawerState.pendingTaskRequests[request.requestId] = { taskPromptId: taskPrompt.id };
+}
+
+async function sendTaskRevisionWithGpt() {
+  const project = getCurrentProjectOrThrow();
+  const taskPrompt = await snapshotManualTaskPromptIfNeeded();
+  const latestClaude = getLatestClaudeTaskVersion(taskPrompt.id);
+  const prompt = projectBuilderProtocol.buildTaskGptRevisionPrompt(
+    project,
+    project.masterPlan,
+    getSavedRoadmapText(project),
+    taskPrompt,
+    getRoadmapItemForTask(project, taskPrompt),
+    latestClaude ? latestClaude.content : null,
+    elements.planningNotes ? elements.planningNotes.value : "",
+    getTaskRunHistory(taskPrompt.id)
+  );
+  drawerState.lastImprovePrompt = prompt;
+  drawerState.activeTaskPromptId = taskPrompt.id;
+  const request = await sendPlanningRequest({
+    project,
+    activeContext: "task_gpt_revision",
+    targetProvider: "chatgpt",
+    text: prompt,
+    stageLabel: "Revise Task with GPT",
+    role: "planner"
+  });
+  drawerState.pendingTaskRequests[request.requestId] = { taskPromptId: taskPrompt.id };
 }
 
 async function cancelActivePlanningRequest() {
@@ -3232,32 +3771,7 @@ async function buildImprovePromptForDrawer() {
 }
 
 async function sendImprovePrompt() {
-  const selected = getSelectedTaskPrompt();
-  if (!selected) {
-    setStatus("Select a task first.", "error");
-    return;
-  }
-  if (!drawerState.lastImprovePrompt.trim()) {
-    await buildImprovePromptForDrawer();
-  }
-  drawerState.activeWorkflowContext = "task_improve";
-  drawerState.activeTaskPromptId = selected.taskPrompt.id;
-  setBusy(true);
-  const improvePayload = getTaskImprovePayload(selected.taskPrompt, [], drawerState.lastImprovePrompt);
-  const response = await desktopApi.sendWorkflow({
-    chatgptPrefix: "",
-    claudePrefix: "",
-    text: improvePayload.text,
-    targetProvider: improvePayload.targetProvider,
-    currentStageId: improvePayload.currentStageId,
-    currentStageLabel: improvePayload.currentStageLabel,
-    currentRole: improvePayload.currentRole
-  });
-  if (!response || response.ok === false) {
-    drawerState.activeWorkflowContext = "debate_plan";
-    throw new Error(response && response.error ? response.error : "Could not send improve prompt.");
-  }
-  setStatus("Improve task sent. Waiting for AI response.", "busy");
+  return sendTaskImproveWithClaude();
 }
 
 async function addInspectorRunNote() {
@@ -3302,6 +3816,9 @@ function startNewProjectDraft() {
   drawerState.selectedProjectId = "";
   drawerState.selectedPackId = "";
   drawerState.selectedChunkId = "";
+  drawerState.selectedTaskPromptId = "";
+  drawerState.selectedTaskVersionId = "";
+  drawerState.selectedArtifactId = "";
   drawerState.workspaceMode = "plan";
   projectDraftState.isActive = true;
   projectDraftState.pathManuallyEdited = false;
@@ -3365,38 +3882,29 @@ async function openSelectedProjectFolder() {
 }
 
 async function approveSelectedPrompt() {
-  const selected = getSelectedTaskPrompt();
-  if (!selected) {
+  const taskPrompt = await snapshotManualTaskPromptIfNeeded().catch((error) => {
     setStatus("Select a task first.", "error");
-    return;
-  }
-  const response = await desktopApi.approveTaskPrompt({ taskPromptId: selected.taskPrompt.id });
+    throw error;
+  });
+  const response = await desktopApi.approveTaskPrompt({ taskPromptId: taskPrompt.id });
   if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not approve prompt.");
   renderVaultState(response.state);
   setStatus("Task approved.", "success");
 }
 
 async function copySelectedPromptToCodex() {
-  const selected = getSelectedTaskPrompt();
-  if (!selected) {
-    setStatus("Select a task first.", "error");
-    return;
-  }
-  const response = await desktopApi.copyCodexHandoff({ taskPromptId: selected.taskPrompt.id });
+  const taskPrompt = await snapshotManualTaskPromptIfNeeded();
+  const response = await desktopApi.copyCodexHandoff({ taskPromptId: taskPrompt.id });
   if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not copy prompt to Codex.");
   renderVaultState(response.state);
   setStatus("Approved task copied for Codex.", "success");
 }
 
 async function markSelectedPromptDone() {
-  const selected = getSelectedTaskPrompt();
-  if (!selected) {
-    setStatus("Select a task first.", "error");
-    return;
-  }
+  const taskPrompt = await snapshotManualTaskPromptIfNeeded();
   const note = elements.workspacePromptRunNote ? elements.workspacePromptRunNote.value : "";
   const response = await desktopApi.markTaskPromptDone({
-    taskPromptId: selected.taskPrompt.id,
+    taskPromptId: taskPrompt.id,
     note,
     result: "",
     commitHash: "",
@@ -3406,6 +3914,20 @@ async function markSelectedPromptDone() {
   if (elements.workspacePromptRunNote) elements.workspacePromptRunNote.value = "";
   renderVaultState(response.state);
   setStatus("Task marked done.", "success");
+}
+
+async function applySelectedTaskVersion() {
+  const selected = getSelectedTaskPrompt();
+  const versionId = drawerState.selectedTaskVersionId;
+  if (!selected || !selected.taskPrompt || !versionId) throw new Error("Select a proposed task version first.");
+  const response = await desktopApi.applyTaskPromptVersion({
+    taskPromptId: selected.taskPrompt.id,
+    versionId
+  });
+  if (!response || response.ok === false) throw new Error(response && response.error ? response.error : "Could not apply task prompt version.");
+  drawerState.selectedTaskVersionId = "";
+  renderVaultState(response.state);
+  setStatus("Improved task version applied.", "success");
 }
 
 async function copySelectedRoadmapHandoff() {
@@ -3453,6 +3975,7 @@ function installDomReferences() {
   elements.connectionText = byId("connectionText");
   elements.readinessText = byId("readinessText");
   elements.statusDetail = byId("statusDetail");
+  elements.workspaceHeading = byId("workspaceHeading");
   elements.extensionSetupHint = byId("extensionSetupHint");
   elements.nextTarget = byId("nextTarget");
   elements.currentStage = byId("currentStage");
@@ -3471,7 +3994,10 @@ function installDomReferences() {
   elements.saveWorkspaceTaskButton = byId("saveWorkspaceTaskBtn");
   elements.copyWorkspaceTaskButton = byId("copyWorkspaceTaskBtn");
   elements.sendWorkspaceTaskButton = byId("sendWorkspaceTaskBtn");
+  elements.reviseWorkspaceTaskGptButton = byId("reviseWorkspaceTaskGptBtn");
+  elements.applyImprovedTaskVersionButton = byId("applyImprovedTaskVersionBtn");
   elements.copyWorkspaceLauncherButton = byId("copyWorkspaceLauncherBtn");
+  elements.improveFromRunNotesButton = byId("improveFromRunNotesBtn");
   elements.workspacePromptRunNote = byId("workspacePromptRunNote");
   elements.saveProjectBriefButton = byId("saveProjectBriefBtn");
   elements.planPrimaryActionButton = byId("planPrimaryActionBtn");
@@ -3482,6 +4008,7 @@ function installDomReferences() {
   elements.saveMasterPlanCreateRoadmapButton = byId("saveMasterPlanCreateRoadmapBtn");
   elements.retryCreateRoadmapButton = byId("retryCreateRoadmapBtn");
   elements.improveRoadmapClaudeButton = byId("improveRoadmapClaudeBtn");
+  elements.reviseRoadmapGptButton = byId("reviseRoadmapGptBtn");
   elements.saveRoadmapButton = byId("saveRoadmapBtn");
   elements.createNextTaskButton = byId("createNextTaskBtn");
   elements.createAllTasksButton = byId("createAllTasksBtn");
@@ -3561,6 +4088,7 @@ function installEventListeners() {
     [elements.saveMasterPlanCreateRoadmapButton, saveMasterPlanAndCreateRoadmap],
     [elements.retryCreateRoadmapButton, retryCreateRoadmap],
     [elements.improveRoadmapClaudeButton, sendClaudeRoadmapImprove],
+    [elements.reviseRoadmapGptButton, sendGptRoadmapRevision],
     [elements.saveRoadmapButton, saveRoadmap],
     [elements.createNextTaskButton, createNextTask],
     [elements.createAllTasksButton, createAllTasks],
@@ -3682,7 +4210,22 @@ function installEventListeners() {
   }
   if (elements.sendWorkspaceTaskButton) {
     elements.sendWorkspaceTaskButton.addEventListener("click", () => {
-      sendImprovePrompt().catch((error) => setStatus(error.message, "error"));
+      sendTaskImproveWithClaude().catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  if (elements.reviseWorkspaceTaskGptButton) {
+    elements.reviseWorkspaceTaskGptButton.addEventListener("click", () => {
+      sendTaskRevisionWithGpt().catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  if (elements.applyImprovedTaskVersionButton) {
+    elements.applyImprovedTaskVersionButton.addEventListener("click", () => {
+      applySelectedTaskVersion().catch((error) => setStatus(error.message, "error"));
+    });
+  }
+  if (elements.improveFromRunNotesButton) {
+    elements.improveFromRunNotesButton.addEventListener("click", () => {
+      sendTaskImproveWithClaude({ fromRunNotes: true }).catch((error) => setStatus(error.message, "error"));
     });
   }
   if (elements.copyWorkspaceLauncherButton) {
@@ -3725,6 +4268,9 @@ function installEventListeners() {
     elements.addRunNoteButton.addEventListener("click", () => {
       addInspectorRunNote().catch((error) => setStatus(error.message, "error"));
     });
+  }
+  if (elements.workspacePromptRunNote) {
+    elements.workspacePromptRunNote.addEventListener("input", renderWorkspace);
   }
 
   desktopApi.onResponse((response) => {
@@ -3810,14 +4356,21 @@ if (typeof module !== "undefined") {
     saveMasterPlanAndCreateRoadmap,
     retryCreateRoadmap,
     sendClaudeRoadmapImprove,
+    sendGptRoadmapRevision,
     saveRoadmap,
     createNextTask,
     createAllTasks,
+    sendTaskImproveWithClaude,
+    sendTaskRevisionWithGpt,
+    applySelectedTaskVersion,
     cancelActivePlanningRequest,
     resetPlanningBusyState,
     repairPlanningSessionAfterStaleResponse,
     shouldRepairPlanningSession,
+    needsPlanningSessionRepairWrite,
     getPlanningSessionControlView,
+    getPlanningButtonState,
+    getTaskButtonState,
     getPlanningControlState,
     snapshotManualMasterPlanDraftIfNeeded,
     snapshotManualRoadmapDraftIfNeeded,

@@ -25,7 +25,10 @@ const {
   getPrimaryActionState,
   getNextRecommendedAction,
   shouldRepairPlanningSession,
+  needsPlanningSessionRepairWrite,
   getPlanningSessionControlView,
+  getPlanningButtonState,
+  getTaskButtonState,
   getPlanningControlState,
   getMasterPlanActionLabel,
   renderProjectPlanHtml,
@@ -371,6 +374,90 @@ assert.equal(getMasterPlanActionLabel(""), "Create Master Plan");
 assert.equal(getMasterPlanActionLabel("# Master Plan\n\n"), "Create Master Plan");
 assert.equal(getMasterPlanActionLabel("# Master Plan\n\nReal plan"), "Improve Master Plan");
 
+const planningButtonIdeaState = getPlanningButtonState({
+  session: { phase: "idea", busyState: false, activeRequestId: "", activeContext: "", lastError: "" },
+  project: { id: "project_1", idea: "Build a planner." },
+  artifacts: [],
+  selectedArtifact: null
+});
+assert.equal(planningButtonIdeaState.generateMasterPlan.visible, true);
+assert.equal(planningButtonIdeaState.generateMasterPlan.enabled, true);
+assert.equal(planningButtonIdeaState.improveMasterPlanClaude.visible, false);
+assert.equal(planningButtonIdeaState.cancel.visible, false);
+assert.equal(planningButtonIdeaState.resetPlanningBusy.visible, false);
+
+const planningButtonBusyState = getPlanningButtonState({
+  session: { phase: "idea", busyState: true, activeRequestId: "req_1", activeContext: "master_generate", lastError: "" },
+  project: { id: "project_1", idea: "Build a planner." },
+  artifacts: [],
+  selectedArtifact: null
+});
+assert.equal(planningButtonBusyState.generateMasterPlan.enabled, false);
+assert.match(planningButtonBusyState.generateMasterPlan.reasonDisabled, /request is running/i);
+assert.equal(planningButtonBusyState.cancel.visible, true);
+assert.equal(planningButtonBusyState.cancel.enabled, true);
+assert.equal(planningButtonBusyState.resetPlanningBusy.visible, true);
+
+const planningButtonPollutedState = getPlanningButtonState({
+  session: {
+    phase: "idea",
+    busyState: true,
+    activeRequestId: "",
+    activeContext: "master_generate",
+    lastError: "Ignored stale response (missing requestId)"
+  },
+  project: { id: "project_1", idea: "Build a planner." },
+  artifacts: [],
+  selectedArtifact: null
+});
+assert.equal(planningButtonPollutedState.generateMasterPlan.label, "Retry Generate Master Plan");
+assert.equal(planningButtonPollutedState.generateMasterPlan.enabled, true);
+assert.equal(planningButtonPollutedState.cancel.visible, false);
+assert.equal(planningButtonPollutedState.resetPlanningBusy.visible, true);
+
+const planningButtonRoadmapState = getPlanningButtonState({
+  session: {
+    phase: "roadmap_draft",
+    busyState: false,
+    activeRequestId: "",
+    activeContext: "",
+    masterPlanSaved: true,
+    roadmapSaved: false,
+    roadmapDraftVersionId: "roadmap_v1",
+    lastError: ""
+  },
+  project: { id: "project_1", idea: "Build a planner.", masterPlan: "# Master Plan\n\nSaved" },
+  artifacts: [{ type: "roadmap_version", id: "roadmap_v1", status: "draft" }],
+  selectedArtifact: { type: "roadmap_version", id: "roadmap_v1", status: "draft" }
+});
+assert.equal(planningButtonRoadmapState.improveRoadmapClaude.visible, true);
+assert.equal(planningButtonRoadmapState.improveRoadmapClaude.enabled, true);
+assert.equal(planningButtonRoadmapState.reviseRoadmapGpt.visible, true);
+assert.equal(planningButtonRoadmapState.reviseRoadmapGpt.enabled, true);
+assert.equal(planningButtonRoadmapState.saveRoadmap.visible, true);
+assert.equal(planningButtonRoadmapState.saveRoadmap.enabled, true);
+
+const draftTaskButtons = getTaskButtonState({
+  taskPrompt: { id: "task_prompt_1", status: "draft", content: "# Task\n\nProject path\n\nGoal\n\nAcceptance Criteria\n\nVerification Commands" },
+  selectedVersion: null,
+  runNote: ""
+});
+assert.equal(draftTaskButtons.improveTaskClaude.enabled, true);
+assert.equal(draftTaskButtons.reviseTaskGpt.enabled, true);
+assert.equal(draftTaskButtons.copyToCodex.enabled, false);
+assert.match(draftTaskButtons.copyToCodex.reasonDisabled, /approved/i);
+assert.equal(draftTaskButtons.markDone.enabled, false);
+assert.match(draftTaskButtons.markDone.reasonDisabled, /run note/i);
+
+const approvedTaskButtons = getTaskButtonState({
+  taskPrompt: { id: "task_prompt_1", status: "approved", content: "# Task\n\nProject path\n\nGoal\n\nAcceptance Criteria\n\nVerification Commands" },
+  selectedVersion: { id: "task_version_2", status: "proposed" },
+  runNote: "Implemented and verified."
+});
+assert.equal(approvedTaskButtons.applyImprovedVersion.enabled, true);
+assert.equal(approvedTaskButtons.copyToCodex.enabled, true);
+assert.equal(approvedTaskButtons.markDone.enabled, true);
+
 const rootHtml = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
 const rendererJs = fs.readFileSync(path.join(__dirname, "..", "renderer.js"), "utf8");
 assert.match(rootHtml, /AI Project Builder/);
@@ -407,11 +494,18 @@ assert.match(rootHtml, /id="reviseMasterPlanGptBtn"[^>]*>Revise with GPT<\/butto
 assert.match(rootHtml, /id="saveMasterPlanCreateRoadmapBtn"[^>]*>Save Master Plan &amp; Create Task Roadmap<\/button>/);
 assert.match(rootHtml, /id="retryCreateRoadmapBtn"[^>]*>Retry Create Roadmap<\/button>/);
 assert.match(rootHtml, /id="improveRoadmapClaudeBtn"[^>]*>Improve Roadmap with Claude<\/button>/);
+assert.match(rootHtml, /id="reviseRoadmapGptBtn"[^>]*>Revise Roadmap with GPT<\/button>/);
 assert.match(rootHtml, /id="saveRoadmapBtn"[^>]*>Save Roadmap<\/button>/);
 assert.match(rootHtml, /id="createNextTaskBtn"[^>]*>Create Next Task<\/button>/);
 assert.match(rootHtml, /id="createAllTasksBtn"[^>]*>Create All Tasks<\/button>/);
 assert.match(rootHtml, /id="resetPlanningBusyBtn"[^>]*>Reset Planning Busy State<\/button>/);
 assert.match(rootHtml, /id="cancelPlanningBtn"[^>]*>Cancel<\/button>/);
+assert.match(rootHtml, /id="sendWorkspaceTaskBtn"[^>]*>Improve Task with Claude<\/button>/);
+assert.match(rootHtml, /id="reviseWorkspaceTaskGptBtn"[^>]*>Revise Task with GPT<\/button>/);
+assert.match(rootHtml, /id="applyImprovedTaskVersionBtn"[^>]*>Apply Improved Version<\/button>/);
+assert.match(rootHtml, /id="improveFromRunNotesBtn"[^>]*>Improve Again from Run Notes<\/button>/);
+assert.match(rootHtml, /button:disabled\s*\{[^}]*cursor:\s*not-allowed/);
+assert.match(rootHtml, /body\[data-planning-busy="true"\] button:disabled\s*\{[^}]*cursor:\s*wait/);
 assert.doesNotMatch(rootHtml, />Apply Master Plan<\/button>/);
 assert.doesNotMatch(rootHtml, />Apply Roadmap<\/button>/);
 assert.match(rootHtml, /Planning Status/);
@@ -472,6 +566,7 @@ const pollutedScreenshotSession = {
   roadmapDraftVersionId: ""
 };
 assert.equal(shouldRepairPlanningSession(pollutedScreenshotSession), true);
+assert.equal(needsPlanningSessionRepairWrite(pollutedScreenshotSession), true);
 assert.deepEqual(
   {
     busyState: getPlanningSessionControlView(pollutedScreenshotSession).busyState,
@@ -510,6 +605,27 @@ const lastErrorOnlyControlState = getPlanningControlState({
 });
 assert.equal(lastErrorOnlyControlState.generateMasterPlan.disabled, false);
 assert.equal(lastErrorOnlyControlState.cancel.visible, false);
+assert.equal(shouldRepairPlanningSession({
+  phase: "idea",
+  busyState: false,
+  activeContext: "",
+  activeRequestId: "",
+  lastError: "Ignored stale response (missing requestId)"
+}), true);
+assert.equal(needsPlanningSessionRepairWrite({
+  phase: "idea",
+  busyState: false,
+  activeContext: "",
+  activeRequestId: "",
+  lastError: "Ignored stale response (missing requestId)"
+}), false);
+assert.equal(shouldRepairPlanningSession({
+  phase: "idea",
+  busyState: true,
+  activeContext: "master_generate",
+  activeRequestId: "new-valid-request",
+  lastError: "Ignored stale response (missing requestId)"
+}), false);
 assert.match(rootHtml, /Default projects folder/);
 assert.match(rootHtml, /See all projects/);
 assert.match(rootHtml, /id="projectContextMenu"/);

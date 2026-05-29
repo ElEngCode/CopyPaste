@@ -306,6 +306,25 @@ try {
   assert.equal(savedBrief.project.masterPlan, "Master plan v1");
   assert.ok(savedBrief.project.activePromptPackId);
 
+  const filesystemOnlyProjectPath = path.join(tmpRoot, "FilesystemOnly");
+  fs.mkdirSync(path.join(filesystemOnlyProjectPath, "tasks"), { recursive: true });
+  fs.writeFileSync(path.join(filesystemOnlyProjectPath, "codex.md"), "Raw idea from file", "utf8");
+  fs.writeFileSync(path.join(filesystemOnlyProjectPath, "architecture.md"), "# Architecture\n\nReal architecture", "utf8");
+  fs.writeFileSync(path.join(filesystemOnlyProjectPath, "masterplan.md"), "# Master Plan\n\nSaved from disk", "utf8");
+  fs.writeFileSync(path.join(filesystemOnlyProjectPath, "plan-roadmap.md"), "# Plan Roadmap\n\nSaved roadmap", "utf8");
+  fs.writeFileSync(path.join(filesystemOnlyProjectPath, "tasks", "task-001-existing.md"), "# Existing Task\n\nProject path\n\nGoal\n\nAcceptance Criteria\n\nVerification Commands", "utf8");
+  fs.writeFileSync(path.join(filesystemOnlyProjectPath, "tasks", "task-002-corrupt.md"), "broken", "utf8");
+  const filesystemStore = createVaultStore({ dbPath: path.join(tmpRoot, "filesystem-db.json") });
+  filesystemStore.updateSettings({ projectsBasePath: tmpRoot });
+  const filesystemState = filesystemStore.getState();
+  const filesystemProject = filesystemState.projects.find((project) => project.name === "FilesystemOnly");
+  assert.ok(filesystemProject, "filesystem-only project should be discovered");
+  const filesystemArtifacts = filesystemState.projectArtifacts[filesystemProject.id] || [];
+  assert.ok(filesystemArtifacts.find((artifact) => artifact.type === "master_plan" && artifact.existsOnDisk && artifact.status === "saved"));
+  assert.ok(filesystemArtifacts.find((artifact) => artifact.type === "roadmap" && artifact.existsOnDisk && artifact.status === "saved"));
+  assert.ok(filesystemArtifacts.find((artifact) => artifact.type === "task_file" && artifact.label.includes("task-001-existing") && artifact.existsOnDisk && !artifact.existsInDb));
+  assert.ok(filesystemArtifacts.find((artifact) => artifact.type === "task_file" && artifact.label.includes("task-002-corrupt") && artifact.status === "corrupt"));
+
   const createdWorkflow = store.createDebateWorkflow(savedBrief.project.id);
   assert.equal(createdWorkflow.workflow.projectId, savedBrief.project.id);
   assert.equal(createdWorkflow.workflow.currentStageId, "gpt_clarifier");

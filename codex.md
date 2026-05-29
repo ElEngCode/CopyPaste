@@ -1,5 +1,52 @@
 # Codex Progress
 
+## 2026-05-29 Desktop UX Full Workflow QA (`codex/cleanup-legacy-runtime-and-docs`)
+
+Human QA map summary:
+
+- Planning buttons now have explicit contracts through `getPlanningButtonState(...)`: visible phase, enabled prerequisites, label, disabled reason, and action.
+- Task workspace buttons now have explicit contracts through `getTaskButtonState(...)`: save, improve with Claude, revise with GPT, apply version, approve, copy to Codex, mark done, and improve again from run notes.
+- Main Plan workflow hides internal Apply actions; save buttons perform internal apply/write steps.
+- Project Browser is an artifact navigator: Overview, Roadmap Versions, Tasks, Generated Task Prompts, Task Versions, Prompt Packs / Legacy.
+- Reset Busy is a recovery action only: it clears request/busy fields and leaves drafts/files untouched.
+
+Bugs found during QA:
+
+- Stale-response repair kept writing to DB because `lastError="Ignored stale response..."` remained visible after repair. That created a render/write loop and could freeze button state.
+- A visible stale error could auto-repair a later valid active request because the repair predicate did not require missing `activeRequestId`.
+- The renderer used new roadmap/task prompt builders that preload did not expose, so real Electron clicks could fail even though direct module tests passed.
+- Project Browser duplicated empty non-legacy prompt packs in both artifact and legacy sections.
+- Playwright smoke initially wrote into the real Electron userData DB; a safe `COPYPASTE_USER_DATA_DIR` override was added and the temporary real DB entries were removed.
+
+Fixes made:
+
+- Added roadmap GPT revision and task Claude/GPT improvement prompt builders in `packages/protocol/index.js`.
+- Exposed those builders through `apps/desktop/preload.js`.
+- Added normalized artifact generation in `apps/desktop/prompt-vault.js` and attached `projectArtifacts` to returned vault state.
+- Added filesystem/DB merged Project Browser rendering in `apps/desktop/renderer.js`.
+- Added roadmap GPT revision flow and task prompt improvement/revision/apply actions.
+- Saved invalid roadmap AI output as failed versions without replacing current good draft.
+- Changed disabled-button cursor behavior so ordinary disabled buttons are not shown as busy.
+- Added isolated desktop DB override for smoke QA via `COPYPASTE_USER_DATA_DIR`.
+- Fixed session repair so stale-error-only sessions do not loop writes, and old stale errors do not cancel new active requests.
+
+Manual QA smoke:
+
+- Launched Electron with isolated `COPYPASTE_USER_DATA_DIR`.
+- Created an isolated filesystem project with `codex.md`, `architecture.md`, `masterplan.md`, `plan-roadmap.md`, one complete task file, and one corrupt task file.
+- Verified Project Browser showed Overview, Architecture, Master Plan, Task Roadmap, filesystem task, and corrupt task badge.
+- Selected Master Plan and verified center editor loaded `masterplan.md`.
+- Seeded the real polluted case: `phase=idea`, `busyState=true`, `activeContext=master_generate`, `activeRequestId=""`, `lastError="Ignored stale response (missing requestId)"`.
+- Verified auto-repair cleared busy/request/context, hid Cancel, kept lastError visible, and left Generate/Retry Generate enabled.
+- Forced an active busy request and verified Reset Planning Busy State cleared busy/request/context and hid Cancel.
+- Smoke progress log: `%TEMP%\copypaste-smoke-progress.log`; screenshot: `%TEMP%\copypaste-qa-smoke.png`.
+
+Verification status:
+
+- `npm.cmd run desktop:test` passed after implementation and repair-loop fixes.
+- `npm.cmd run extension:verify` passed.
+- `npm.cmd run verify` passed.
+
 ## 2026-05-28 Runtime Cleanup Audit (`codex/cleanup-legacy-runtime-and-docs`)
 
 - Audited active desktop runtime entrypoint and usage paths:
